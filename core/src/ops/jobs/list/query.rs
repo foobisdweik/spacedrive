@@ -59,6 +59,7 @@ impl LibraryQuery for JobListQuery {
 				created_at: j.created_at,
 				started_at: j.started_at,
 				completed_at: j.completed_at,
+				error_message: j.error_message,
 			})
 			.collect();
 		Ok(JobListOutput { jobs: items })

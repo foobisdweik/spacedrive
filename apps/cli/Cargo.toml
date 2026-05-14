@@ -25,6 +25,7 @@ qr2term     = "0.3"
 ratatui     = "0.26"
 reqwest     = { version = "0.12", features = ["json"] }
 sd-core     = { path = "../../core", features = ["cli"] }
+semver      = "1.0"
 serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
 tokio       = { version = "1", features = ["full"] }

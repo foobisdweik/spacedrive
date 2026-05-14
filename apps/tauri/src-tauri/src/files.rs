@@ -44,6 +44,7 @@ pub async fn share_files(paths: Vec<String>) -> Result<(), String> {
 
 	#[cfg(not(target_os = "macos"))]
 	{
+		let _ = paths;
 		Err("Share sheet is only supported on macOS".to_string())
 	}
 }

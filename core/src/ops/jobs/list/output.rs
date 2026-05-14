@@ -16,6 +16,7 @@ pub struct JobListItem {
 	pub created_at: DateTime<Utc>,
 	pub started_at: Option<DateTime<Utc>>,
 	pub completed_at: Option<DateTime<Utc>>,
+	pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

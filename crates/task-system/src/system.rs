@@ -621,7 +621,7 @@ impl<E: RunError> Clone for BaseDispatcher<E> {
 impl<E: RunError> Dispatcher<E> for BaseDispatcher<E> {
 	type DispatchError = DispatcherShutdownError<E>;
 
-	#[allow(clippy::missing_panics_doc)]
+	#[allow(clippy::missing_panics_doc, deprecated_in_future)]
 	async fn dispatch_boxed(
 		&self,
 		task: Box<dyn Task<E>>,

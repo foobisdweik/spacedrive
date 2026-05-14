@@ -154,9 +154,9 @@ impl TagSource {
 
 // Syncable Implementation
 //
-// UserMetadataTag is a SHARED M2M junction table with dynamic ownership enforcement.
-// When the parent user_metadata is entry-scoped (device-owned), only the owning device
-// can modify the tag associations. When content-scoped (shared), all devices can modify.
+// UserMetadataTag is a SHARED M2M junction table.
+// Tag applications sync across all devices to ensure a consistent semantic fabric.
+// This matches the behavior of user_metadata (favorites, notes) which also syncs globally.
 impl Syncable for Model {
 	const SYNC_MODEL: &'static str = "user_metadata_tag";
 
@@ -278,59 +278,6 @@ impl Syncable for Model {
 						.clone(),
 				)
 				.map_err(|e| sea_orm::DbErr::Custom(format!("Invalid device_uuid: {}", e)))?;
-
-				// Dynamic ownership enforcement: check parent user_metadata scope
-				use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-				let parent_metadata = super::user_metadata::Entity::find()
-					.filter(super::user_metadata::Column::Id.eq(user_metadata_id))
-					.one(db)
-					.await?
-					.ok_or_else(|| {
-						sea_orm::DbErr::Custom(format!(
-							"Parent user_metadata not found for id: {}",
-							user_metadata_id
-						))
-					})?;
-
-				// If entry-scoped, verify the change came from the entry's owning device
-				if let Some(entry_uuid) = parent_metadata.entry_uuid {
-					// Entry ownership is tracked through locations
-					// First find the entry
-					let entry = super::entry::Entity::find()
-						.filter(super::entry::Column::Uuid.eq(entry_uuid))
-						.one(db)
-						.await?;
-
-					if let Some(entry_model) = entry {
-						// Find the location that contains this entry
-						let location = super::location::Entity::find()
-							.filter(super::location::Column::EntryId.eq(entry_model.id))
-							.one(db)
-							.await?;
-
-						if let Some(location_model) = location {
-							// Get the device from the location
-							let device = super::device::Entity::find()
-								.filter(super::device::Column::Id.eq(location_model.device_id))
-								.one(db)
-								.await?;
-
-							if let Some(device_model) = device {
-								// Check if the change came from the owning device
-								if device_model.uuid != device_uuid {
-									tracing::warn!(
-										entry_uuid = %entry_uuid,
-										owning_device = %device_model.uuid,
-										sync_device = %device_uuid,
-										"Rejecting user_metadata_tag sync - entry-scoped metadata can only be modified by owning device"
-									);
-									return Ok(()); // Silently ignore changes from non-owning devices
-								}
-							}
-						}
-					}
-				}
-				// If content-scoped, no ownership enforcement needed
 
 				let applied_context: Option<String> = serde_json::from_value(
 					data.get("applied_context")

@@ -7,7 +7,7 @@ use crate::{
 };
 
 use ffmpeg_sys_next::{
-	av_cmp_q, av_display_rotation_get, av_read_frame, av_reduce, av_stream_get_side_data,
+	av_cmp_q, av_display_rotation_get, av_packet_side_data_get, av_read_frame, av_reduce,
 	avformat_close_input, avformat_find_stream_info, avformat_open_input, AVChapter, AVCodecID,
 	AVDictionary, AVFormatContext, AVMediaType, AVPacket, AVPacketSideDataType, AVRational,
 	AVStream, AV_DISPOSITION_ATTACHED_PIC, AV_DISPOSITION_CAPTIONS, AV_DISPOSITION_CLEAN_EFFECTS,
@@ -85,25 +85,27 @@ impl FFmpegFormatContext {
 			return 0.0;
 		};
 
-		/*
-		 * This side data contains a 3x3 transformation matrix describing an affine transformation
-		 * that needs to be applied to the decoded video frames for correct presentation.
-		 *
-		 * See libavutil/display.h for a detailed description of the data.
-		 * https://github.com/FFmpeg/FFmpeg/blob/n6.1.1/libavutil/display.h#L32-L71
-		 *
-		 * The pointer conversion is due to the fact that av_stream_get_side_data is a generic function that has no prior
-		 * knowledge of the type of the side data it is retrieving.
-		 */
-		#[allow(clippy::cast_ptr_alignment)]
-		let matrix = (unsafe {
-			av_stream_get_side_data(
-				stream,
-				AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX,
-				ptr::null_mut(),
-			)
-		} as *const i32);
+		// ffmpeg 8 moved display-matrix side data from AVStream into the stream's
+		// AVCodecParameters; look it up via av_packet_side_data_get instead of the
+		// removed av_stream_get_side_data helper.
+		let codecpar = stream.codecpar;
+		if codecpar.is_null() {
+			return 0.0;
+		}
 
+		let sd = unsafe {
+			av_packet_side_data_get(
+				(*codecpar).coded_side_data,
+				(*codecpar).nb_coded_side_data,
+				AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX,
+			)
+		};
+		if sd.is_null() {
+			return 0.0;
+		}
+
+		#[allow(clippy::cast_ptr_alignment)]
+		let matrix = unsafe { (*sd).data } as *const i32;
 		if matrix.is_null() {
 			0.0
 		} else {

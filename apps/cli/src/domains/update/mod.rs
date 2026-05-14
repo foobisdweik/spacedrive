@@ -10,6 +10,7 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 struct GitHubRelease {
 	tag_name: String,
 	name: String,
+	body: String,
 	assets: Vec<GitHubAsset>,
 	prerelease: bool,
 }
@@ -36,8 +37,11 @@ pub async fn run(data_dir: PathBuf, force: bool) -> Result<()> {
 	let latest_version = latest_release.tag_name.trim_start_matches('v');
 	println!("Latest version: {}", latest_version);
 
-	if latest_version == CURRENT_VERSION && !force {
-		println!("You are already on the latest version!");
+	let current_semver = semver::Version::parse(CURRENT_VERSION)?;
+	let latest_semver = semver::Version::parse(latest_version)?;
+
+	if latest_semver <= current_semver && !force {
+		println!("You are already on the latest version (or a newer development version)!");
 		return Ok(());
 	}
 
@@ -47,6 +51,8 @@ pub async fn run(data_dir: PathBuf, force: bool) -> Result<()> {
 			"Update available: {} -> {}",
 			CURRENT_VERSION, latest_version
 		);
+		println!("\nChangelog:\n{}", latest_release.body);
+		println!();
 		println!("Do you want to update? (y/N)");
 
 		let mut response = String::new();

@@ -16,7 +16,6 @@ use std::sync::Arc;
 use tauri::menu::MenuItem;
 use tauri::Emitter;
 use tauri::{AppHandle, Manager};
-use tauri_plugin_global_shortcut::ShortcutState;
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -344,6 +343,23 @@ struct MenuItemState {
 /// Menu state - stores references to menu items for dynamic updates
 struct MenuState {
 	items: Arc<RwLock<HashMap<String, MenuItem<tauri::Wry>>>>,
+}
+
+/// Directory path supplied on launch (e.g. via xdg-open when Spacedrive is the
+/// default file manager). Held until the frontend consumes it once through
+/// `get_launch_path`, so the renderer can decide how to route there.
+struct LaunchPath(std::sync::Mutex<Option<PathBuf>>);
+
+/// Called from frontend after startup. Returns and clears any directory path
+/// passed on the command line so the explorer can navigate to it.
+#[tauri::command]
+fn get_launch_path(state: tauri::State<'_, LaunchPath>) -> Option<String> {
+	state
+		.0
+		.lock()
+		.ok()
+		.and_then(|mut g| g.take())
+		.map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Called from frontend when app is ready to be shown
@@ -1495,14 +1511,13 @@ async fn open_macos_settings() -> Result<(), String> {
 			.arg("x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
 			.spawn()
 			.map_err(|e| format!("Failed to open settings: {}", e))?;
+		Ok(())
 	}
 
 	#[cfg(not(target_os = "macos"))]
 	{
-		return Err("Not supported on this platform".to_string());
+		Err("Not supported on this platform".to_string())
 	}
-
-	Ok(())
 }
 
 /// Check if daemon is running by trying to connect and send a ping
@@ -1927,7 +1942,20 @@ fn main() {
 		.with(tracing_subscriber::fmt::layer())
 		.init();
 
+	// Capture the first argv that resolves to an existing directory. Lets
+	// Spacedrive act as an xdg-open target for inode/directory MIME without
+	// crashing on unexpected args; the frontend pulls this via get_launch_path.
+	let launch_path = std::env::args().skip(1).find_map(|arg| {
+		std::fs::canonicalize(&arg)
+			.ok()
+			.filter(|p| p.is_dir())
+	});
+	if let Some(ref p) = launch_path {
+		tracing::info!(path = %p.display(), "launched with directory argument");
+	}
+
 	tauri::Builder::default()
+		.manage(LaunchPath(std::sync::Mutex::new(launch_path)))
 		.plugin(tauri_plugin_clipboard_manager::init())
 		.plugin(tauri_plugin_dialog::init())
 		.plugin(tauri_plugin_fs::init())
@@ -1936,10 +1964,10 @@ fn main() {
 		.plugin(tauri_plugin_updater::Builder::new().build())
 		.plugin(
 			tauri_plugin_global_shortcut::Builder::new()
-				.with_shortcut("Alt+Space")
-				.expect("failed to register Alt+Space global shortcut")
-				.with_handler(|app, _shortcut, event| {
-					if event.state() == ShortcutState::Pressed {
+				.with_handler(|app, shortcut, event| {
+					if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed
+						&& shortcut.to_string() == "Alt+Space"
+					{
 						if let Err(error) = windows::toggle_voice_overlay_internal(app.clone()) {
 							tracing::warn!(
 								?error,
@@ -1992,7 +2020,8 @@ fn main() {
 			file_opening::open_paths_with_app,
 			keybinds::register_keybind,
 			keybinds::unregister_keybind,
-			keybinds::get_registered_keybinds
+			keybinds::get_registered_keybinds,
+			get_launch_path
 		])
 		.setup(|app| {
 			// Setup native menu
@@ -2011,6 +2040,21 @@ fn main() {
 			}
 
 			tracing::info!("Spacedrive Tauri app starting...");
+
+			// Wayland reliably refuses global shortcuts and X11 ones often collide
+			// with the DE; register at runtime so a conflict logs a warning rather
+			// than panicking the app.
+			#[cfg(not(target_os = "linux"))]
+			{
+				use tauri_plugin_global_shortcut::GlobalShortcutExt;
+				match app.handle().global_shortcut().register("Alt+Space") {
+					Ok(_) => tracing::info!("Registered Alt+Space global shortcut"),
+					Err(error) => tracing::warn!(
+						?error,
+						"Failed to register Alt+Space global shortcut, voice overlay disabled"
+					),
+				}
+			}
 
 			// Apply Windows-specific window customizations (dark titlebar)
 			#[cfg(target_os = "windows")]

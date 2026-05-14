@@ -84,7 +84,9 @@
 	clippy::separated_literal_suffix,
 	deprecated
 )]
-#![forbid(deprecated_in_future)]
+// Downgraded from forbid to deny so we can scope-allow the AtomicUsize::fetch_update
+// call in system.rs until upstream switches to its 1.99 replacement (try_update).
+#![deny(deprecated_in_future)]
 #![allow(clippy::missing_errors_doc, clippy::module_name_repetitions)]
 
 mod error;

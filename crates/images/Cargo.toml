@@ -28,5 +28,4 @@ resvg       = "0.44.0"
 [dependencies.pdfium-render]
 default-features = false
 features         = ["image", "pdfium_6666", "sync", "thread_safe"]
-git              = "https://github.com/spacedriveapp/pdfium-render.git"
-rev              = "983f8d8"
+version = "=0.8.35"

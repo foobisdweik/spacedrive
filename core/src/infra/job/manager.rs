@@ -44,6 +44,7 @@ struct RunningJob {
 	latest_progress: Arc<Mutex<Option<Progress>>>,
 	persistence_complete_rx: Option<tokio::sync::oneshot::Receiver<()>>,
 	job_name: String,
+	created_at: chrono::DateTime<chrono::Utc>,
 	action_context: Option<crate::infra::action::context::ActionContext>,
 	should_emit_events: bool,
 }
@@ -368,6 +369,7 @@ impl JobManager {
 						latest_progress,
 						persistence_complete_rx: Some(persistence_complete_rx),
 						job_name: job_name.to_string(),
+						created_at: Utc::now(),
 						action_context: action_context.clone(),
 						should_emit_events,
 					},
@@ -803,6 +805,7 @@ impl JobManager {
 						latest_progress: latest_progress.clone(),
 						persistence_complete_rx: Some(persistence_complete_rx),
 						job_name: J::NAME.to_string(),
+						created_at: Utc::now(),
 						action_context: action_context.clone(),
 						should_emit_events,
 					},
@@ -1141,7 +1144,7 @@ impl JobManager {
 				device_id,
 				status: current_status,
 				progress: progress_percentage,
-				created_at: chrono::Utc::now(), // Running jobs use current time as fallback
+				created_at: running_job.created_at,
 				started_at: Some(chrono::Utc::now()), // Running jobs have started
 				completed_at: None,
 				error_message: None,
@@ -1153,7 +1156,9 @@ impl JobManager {
 		drop(running_jobs_map);
 
 		// Now query database for jobs not in memory
-		let mut query = database::jobs::Entity::find();
+		use sea_orm::QueryOrder;
+		let mut query = database::jobs::Entity::find()
+			.order_by_desc(database::jobs::Column::CreatedAt);
 
 		if let Some(status) = status {
 			use sea_orm::ColumnTrait;
@@ -1227,6 +1232,9 @@ impl JobManager {
 				action_context,
 			});
 		}
+
+		// Sort all jobs by created_at descending
+		all_jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
 		Ok(all_jobs)
 	}
@@ -1549,6 +1557,7 @@ impl JobManager {
 										latest_progress,
 										persistence_complete_rx: Some(persistence_complete_rx),
 										job_name: job_record.name.clone(),
+										created_at: job_record.created_at,
 										action_context,
 										should_emit_events: true, // Resumed jobs were persisted, so they should emit events
 									},
@@ -1900,13 +1909,14 @@ impl JobManager {
 				Some((
 					job_record.name.clone(),
 					job_record.state.clone(),
+					job_record.created_at,
 					action_context,
 				))
 			}
 		};
 
 		// If job was not in memory, recreate and dispatch it
-		if let Some((job_name, job_state, action_context)) = job_info {
+		if let Some((job_name, job_state, created_at, action_context)) = job_info {
 			// Deserialize job from binary data
 			info!(
 				"RESUME_STATE_LOAD: Job {} loading {} bytes of state from database (manual resume)",
@@ -2042,6 +2052,7 @@ impl JobManager {
 					latest_progress,
 					persistence_complete_rx: Some(persistence_complete_rx),
 					job_name: job_name.clone(),
+					created_at,
 					action_context,
 					should_emit_events: true, // Manually resumed jobs were persisted, so they should emit events
 				},

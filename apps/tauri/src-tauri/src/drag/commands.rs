@@ -1,5 +1,4 @@
 use super::*;
-use crate::windows::SpacedriveWindow;
 use tauri::{AppHandle, Manager};
 
 #[tauri::command]
@@ -28,7 +27,7 @@ pub async fn begin_drag(
 			.get_webview_window(&source_window_label)
 			.ok_or("Source window not found")?;
 
-		let _overlay_window = SpacedriveWindow::DragOverlay {
+		let _overlay_window = crate::windows::SpacedriveWindow::DragOverlay {
 			session_id: session_id.clone(),
 		}
 		.show(&app)
@@ -101,14 +100,14 @@ pub async fn begin_drag(
 		}
 
 		tracing::info!("Drag started successfully: session_id={}", session_id);
+		Ok(session_id)
 	}
 
 	#[cfg(not(target_os = "macos"))]
 	{
-		return Err("Drag and drop is only supported on macOS currently".to_string());
+		let _ = session_id;
+		Err("Drag and drop is only supported on macOS currently".to_string())
 	}
-
-	Ok(session_id)
 }
 
 #[tauri::command]

@@ -1,7 +1,8 @@
 {{#nativeDeps}}
 [env]
 PROTOC = { force = true, value = "{{{protoc}}}" }
-FFMPEG_DIR = { force = true, value = "{{{nativeDeps}}}" }
+# FFMPEG_DIR intentionally omitted on Linux: vendored ffmpeg 7.1 in native-deps
+# v0.26 collides with ffmpeg-sys-next 8.x; we let pkg-config find system ffmpeg 8.x.
 CPATH = { force = true, value = "{{{nativeDeps}}}/include" }
 {{#isMacOS}}
 BINDGEN_EXTRA_CLANG_ARGS = { force = true, value = "-isysroot {{{sdkPath}}}" }
@@ -72,6 +73,7 @@ linker = "clang"
 {{/hasLLD}}
 rustflags = [
 	"-L", "{{{nativeDeps}}}/lib", "-C", "link-arg=-Wl,-rpath=${ORIGIN}/../lib/spacedrive",
+	"-C", "target-cpu=x86-64-v3",
 	{{#hasLLD}}
 	"-C", "link-arg=-fuse-ld={{{linker}}}",
 	{{/hasLLD}}
