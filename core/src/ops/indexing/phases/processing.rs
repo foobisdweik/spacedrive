@@ -20,7 +20,7 @@ use crate::{
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
 use std::{path::Path, sync::Arc};
-use tracing::warn;
+use tracing::{trace, warn};
 use uuid::Uuid;
 
 /// Detects SQLite unique constraint violations from concurrent watcher and indexer writes.
@@ -221,6 +221,18 @@ pub async fn run_processing_phase(
 	let mut total_processed = 0;
 	let mut batch_number = 0;
 
+	// Throttle UI-facing ResourceChangedBatch events during high-volume indexing.
+	// Without this the daemon emits one batch per 1000 entries (~10/s on fast disks);
+	// every active useNormalizedQuery hook then validates the payload, filters it,
+	// and triggers a React reconciliation — saturating the renderer and blocking
+	// user input. We accumulate uuids across multiple processed batches and flush
+	// at most every EMIT_INTERVAL, or when EMIT_MAX_PENDING is reached. Live
+	// progress is still visible via the per-batch IndexerProgress events.
+	let mut pending_emit_uuids: Vec<Uuid> = Vec::new();
+	let mut last_emit = std::time::Instant::now();
+	const EMIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+	const EMIT_MAX_PENDING: usize = 5000;
+
 	while let Some(batch) = state.entry_batches.pop() {
 		ctx.check_interrupt().await?;
 
@@ -302,11 +314,12 @@ pub async fn run_processing_phase(
 					{
 						Ok(entry_model) => {
 							let entry_id = entry_model.id;
-							ctx.log(format!(
-								"Created entry {}: {}",
+							trace!(
+								job_id = %ctx.id(),
 								entry_id,
-								entry.path.display()
-							));
+								path = %entry.path.display(),
+								"created entry"
+							);
 							total_processed += 1;
 
 							if mode >= IndexMode::Content && entry.kind == EntryKind::File {
@@ -317,10 +330,11 @@ pub async fn run_processing_phase(
 						}
 						Err(e) => {
 							if is_unique_constraint_violation(&e) {
-								ctx.log(format!(
-									"Entry already exists (created by watcher): {}",
-									entry.path.display()
-								));
+								trace!(
+									job_id = %ctx.id(),
+									path = %entry.path.display(),
+									"entry already exists (created by watcher)"
+								);
 							} else {
 								let error_msg = format!(
 									"Failed to create entry for {}: {}",
@@ -340,11 +354,12 @@ pub async fn run_processing_phase(
 				Some(Change::Modified { entry_id, .. }) => {
 					match DatabaseStorage::update_entry_in_conn(entry_id, &entry, &txn).await {
 						Ok(()) => {
-							ctx.log(format!(
-								"Updated entry {}: {}",
+							trace!(
+								job_id = %ctx.id(),
 								entry_id,
-								entry.path.display()
-							));
+								path = %entry.path.display(),
+								"updated entry"
+							);
 							total_processed += 1;
 
 							if mode >= IndexMode::Content && entry.kind == EntryKind::File {
@@ -368,23 +383,26 @@ pub async fn run_processing_phase(
 					entry_id,
 					..
 				}) => {
-					ctx.log(format!(
-						"Detected move: {} -> {}",
-						old_path.display(),
-						new_path.display()
-					));
+					trace!(
+						job_id = %ctx.id(),
+						entry_id,
+						old_path = %old_path.display(),
+						new_path = %new_path.display(),
+						"detected move"
+					);
 					match DatabaseStorage::simple_move_entry_in_conn(
 						state, entry_id, &old_path, &new_path, &txn,
 					)
 					.await
 					{
 						Ok(()) => {
-							ctx.log(format!(
-								"Moved entry {}: {} -> {}",
+							trace!(
+								job_id = %ctx.id(),
 								entry_id,
-								old_path.display(),
-								new_path.display()
-							));
+								old_path = %old_path.display(),
+								new_path = %new_path.display(),
+								"moved entry"
+							);
 							total_processed += 1;
 
 							if mode >= IndexMode::Content && entry.kind == EntryKind::File {
@@ -408,8 +426,11 @@ pub async fn run_processing_phase(
 				}
 
 				None => {
-					// No change - skip
-					ctx.log(format!(" No change for: {}", entry.path.display()));
+					trace!(
+						job_id = %ctx.id(),
+						path = %entry.path.display(),
+						"no change"
+					);
 				}
 			}
 		}
@@ -472,23 +493,34 @@ pub async fn run_processing_phase(
 				}
 			}
 
-			// Emit ResourceChangedBatch events for UI
-			if !entry_uuids.is_empty() {
-				let library = ctx.library();
-				let events = library.event_bus().clone();
-				let db = Arc::new(ctx.library_db().clone());
+			// Defer ResourceChangedBatch emission. We coalesce uuids from multiple
+			// processed batches and flush below when the interval/size threshold trips.
+			pending_emit_uuids.extend(entry_uuids);
+		}
 
-				let resource_manager = crate::domain::ResourceManager::new(db, events);
+		if !pending_emit_uuids.is_empty()
+			&& (pending_emit_uuids.len() >= EMIT_MAX_PENDING
+				|| last_emit.elapsed() >= EMIT_INTERVAL)
+		{
+			let uuids_to_emit = std::mem::take(&mut pending_emit_uuids);
+			let uuid_count = uuids_to_emit.len();
+			let library = ctx.library();
+			let events = library.event_bus().clone();
+			let db = Arc::new(ctx.library_db().clone());
+			let resource_manager = crate::domain::ResourceManager::new(db, events);
 
-				if let Err(e) = resource_manager
-					.emit_resource_events("entry", entry_uuids)
-					.await
-				{
-					tracing::warn!("Failed to emit resource events for created entries: {}", e);
-				} else {
-					ctx.log("Emitted resource events for created entries");
-				}
+			if let Err(e) = resource_manager
+				.emit_resource_events("entry", uuids_to_emit)
+				.await
+			{
+				tracing::warn!("Failed to emit resource events for created entries: {}", e);
+			} else {
+				ctx.log(format!(
+					"Emitted resource events for {} created entries (coalesced)",
+					uuid_count
+				));
 			}
+			last_emit = std::time::Instant::now();
 		}
 
 		ctx.log(format!(
@@ -497,6 +529,27 @@ pub async fn run_processing_phase(
 		));
 
 		// Note: State will be automatically saved during job serialization on shutdown
+	}
+
+	// Final flush of any pending uuids the throttled emitter held back.
+	if !pending_emit_uuids.is_empty() {
+		let uuid_count = pending_emit_uuids.len();
+		let library = ctx.library();
+		let events = library.event_bus().clone();
+		let db = Arc::new(ctx.library_db().clone());
+		let resource_manager = crate::domain::ResourceManager::new(db, events);
+
+		if let Err(e) = resource_manager
+			.emit_resource_events("entry", pending_emit_uuids)
+			.await
+		{
+			tracing::warn!("Failed to emit final resource events: {}", e);
+		} else {
+			ctx.log(format!(
+				"Emitted final {} resource events for created entries",
+				uuid_count
+			));
+		}
 	}
 
 	// Explicitly update the root entry metadata (including inode).
@@ -647,11 +700,12 @@ pub async fn run_processing_phase(
 						continue;
 					}
 
-					ctx.log(format!(
-						"Deleting missing entry from database: {} (id: {})",
-						path.display(),
-						entry_id
-					));
+					trace!(
+						job_id = %ctx.id(),
+						entry_id,
+						path = %path.display(),
+						"deleting missing entry from database"
+					);
 
 					// Check for interruption before deletion
 					ctx.check_interrupt().await?;

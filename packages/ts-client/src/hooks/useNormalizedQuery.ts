@@ -176,30 +176,67 @@ export function useNormalizedQuery<I, O = any, TSelected = O>(
 		const capturedPathScope = options.pathScope;
 		const capturedQueryKey = queryKey;
 
-		const handleEvent = (event: Event) => {
-			const isDebug = optionsRef.current.debug;
-			if (isDebug) {
-				console.log(`[useNormalizedQuery] RAW EVENT received:`, typeof event, event);
-			}
+		// Event coalescing: a high-volume backend (e.g. an indexing job) can fire
+		// ResourceChangedBatch events faster than React can reconcile. Each event
+		// triggers Valibot validation, client-side filtering, and a setQueryData
+		// merge — all on the main thread. Processing them synchronously starves
+		// user input (right-click handlers, hover, etc). We queue events as they
+		// arrive and drain on idle, letting user input land between batches.
+		const eventQueue: Event[] = [];
+		let drainScheduled = false;
 
-			// Guard: only process events if pathScope hasn't changed since subscription
-			if (
-				JSON.stringify(optionsRef.current.pathScope) !==
-				JSON.stringify(capturedPathScope)
-			) {
-				if (isDebug) {
-					console.log(`[useNormalizedQuery] STALE pathScope, skipping event`);
-				}
+		const drainQueue = () => {
+			drainScheduled = false;
+			if (isCancelled) {
+				eventQueue.length = 0;
 				return;
 			}
+			const queued = eventQueue.splice(0);
+			const isDebug = optionsRef.current.debug;
+			const currentPathScopeJson = JSON.stringify(optionsRef.current.pathScope);
+			const capturedPathScopeJson = JSON.stringify(capturedPathScope);
 
-			handleResourceEvent(
-				event,
-				optionsRef.current,
-				capturedQueryKey, // Use captured queryKey, not ref
-				queryClient,
-				optionsRef.current.debug, // Pass debug flag
-			);
+			for (const event of queued) {
+				if (currentPathScopeJson !== capturedPathScopeJson) {
+					if (isDebug) {
+						console.log(`[useNormalizedQuery] STALE pathScope, skipping event`);
+					}
+					continue;
+				}
+				handleResourceEvent(
+					event,
+					optionsRef.current,
+					capturedQueryKey,
+					queryClient,
+					isDebug,
+				);
+			}
+		};
+
+		const scheduleDrain = () => {
+			if (drainScheduled) return;
+			drainScheduled = true;
+			// Prefer requestIdleCallback (true idle scheduling) with a 100ms
+			// deadline so events still process promptly under steady-state load.
+			// Falls back to rAF (next frame) then setTimeout(0) for SSR/test envs.
+			// Indexed through `any` because this package's tsconfig only loads
+			// the ES2020 lib (no DOM types).
+			const g = globalThis as any;
+			if (typeof g.requestIdleCallback === "function") {
+				g.requestIdleCallback(drainQueue, { timeout: 100 });
+			} else if (typeof g.requestAnimationFrame === "function") {
+				g.requestAnimationFrame(drainQueue);
+			} else {
+				setTimeout(drainQueue, 0);
+			}
+		};
+
+		const handleEvent = (event: Event) => {
+			if (optionsRef.current.debug) {
+				console.log(`[useNormalizedQuery] RAW EVENT received:`, typeof event, event);
+			}
+			eventQueue.push(event);
+			scheduleDrain();
 		};
 
 		if (options.debug) {
