@@ -32,10 +32,10 @@ export function WebContextMenuProvider({ children }: PropsWithChildren) {
 
 	const show = useCallback(
 		(items: ContextMenuItem[], x: number, y: number) => {
-			// If a menu is already open, close it first so Radix re-anchors
-			// at the new cursor position on the next tick.
-			setState(null);
-			requestAnimationFrame(() => setState({ items, x, y }));
+			// Reposition via a key change on Root (below), not via close/reopen,
+			// which raced with Radix's focus management and caused the menu to
+			// self-dismiss on Wayland.
+			setState({ items, x, y });
 		},
 		[],
 	);
@@ -59,7 +59,16 @@ function WebContextMenu({
 }) {
 	return (
 		<DropdownMenu.Root
+			// Force remount on position change so Radix re-anchors to the new
+			// trigger location. With a stable Root, reopening at a new cursor
+			// position keeps the old anchor — visible as a stale-position menu.
+			key={state ? `${state.x}-${state.y}` : "closed"}
 			open={state !== null}
+			// modal=false disables Radix's focus trap. The trap tries to focus
+			// the Trigger (an aria-hidden, pointer-events:none span at the
+			// cursor), the focus call silently fails on Wayland, Radix reads
+			// that as "trigger lost focus" and dismisses the menu instantly.
+			modal={false}
 			onOpenChange={(open) => {
 				if (!open) onClose();
 			}}
