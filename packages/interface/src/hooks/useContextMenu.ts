@@ -146,7 +146,16 @@ export function useContextMenu(config: ContextMenuConfig): ContextMenuResult {
 			const isTauri = platform.platform === 'tauri';
 			const nativeShow = (window as any).__SPACEDRIVE__?.showContextMenu;
 
-			if (isTauri && nativeShow) {
+			// Tauri's Menu.popup() resolves into an xdg_popup on Wayland that
+			// KDE/KWin dismisses almost immediately for non-modal-grabbing
+			// surfaces. Verified by forcing the Radix fallback and watching the
+			// menu stay open. Skip native on Linux until upstream Tauri offers
+			// a popup-grab option or we ship our own wlr-layer-shell surface.
+			const isLinux =
+				typeof navigator !== 'undefined' &&
+				navigator.userAgent.toLowerCase().includes('linux');
+
+			if (isTauri && nativeShow && !isLinux) {
 				try {
 					await nativeShow(visibleItems, { x: e.clientX, y: e.clientY });
 					return;
