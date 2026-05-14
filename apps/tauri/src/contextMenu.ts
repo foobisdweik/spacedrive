@@ -1,4 +1,5 @@
 import { Menu, MenuItem, Submenu, PredefinedMenuItem } from '@tauri-apps/api/menu';
+import { LogicalPosition } from '@tauri-apps/api/dpi';
 import type { ContextMenuItem } from '@sd/interface';
 
 /**
@@ -8,13 +9,13 @@ export async function showNativeContextMenu(
 	items: ContextMenuItem[],
 	position: { x: number; y: number }
 ) {
-	console.log('[Tauri ContextMenu] Building native menu from items:', items);
-
 	const menuItems = await buildMenuItems(items);
 	const menu = await Menu.new({ items: menuItems });
 
-	console.log('[Tauri ContextMenu] Showing menu at position:', position);
-	await menu.popup();
+	// Wayland places client surfaces by compositor policy when no anchor is
+	// given; native menus end up center-screen. Passing logical CSS-pixel
+	// coords routes through xdg_popup with a positioner anchored at the cursor.
+	await menu.popup(new LogicalPosition(position.x, position.y));
 }
 
 /**

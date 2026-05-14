@@ -378,15 +378,14 @@ impl SpacedriveWindow {
 			Self::ContextMenu { context_id } => {
 				let url = format!("/contextmenu?context={}", context_id);
 				let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
-					.title("Context Menu Debug")
+					.title("")
 					.inner_size(250.0, 300.0) // Initial size, will be adjusted by content
 					.resizable(false)
-					.decorations(true) // TEMP: Show decorations for debugging
-					.transparent(false) // TEMP: Not transparent for debugging
+					.decorations(false)
+					.transparent(true)
 					.always_on_top(true)
-					.skip_taskbar(false) // TEMP: Show in taskbar for debugging
-					.visible(true) // TEMP: Make visible immediately for debugging
-					.focused(true)
+					.skip_taskbar(true)
+					.visible(false) // shown by position_context_menu after cursor placement
 					.build()
 					.map_err(|e| format!("Failed to create context menu: {}", e))?;
 
@@ -569,7 +568,10 @@ pub fn apply_macos_styling(app: AppHandle) -> Result<(), String> {
 	}
 
 	#[cfg(not(target_os = "macos"))]
-	Ok(())
+	{
+		let _ = app;
+		Ok(())
+	}
 }
 
 /// Tauri command to list all open windows
