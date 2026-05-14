@@ -1910,6 +1910,14 @@ fn setup_menu(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() {
+	// WebKitGTK's DMABUF renderer fails to attach buffers to webview subsurfaces
+	// on NVIDIA-open + Wayland, leaving content areas blank. Force the legacy
+	// path before any WebKit init. Linux-only; no effect elsewhere.
+	#[cfg(target_os = "linux")]
+	if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+		std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+	}
+
 	// Initialize logging
 	tracing_subscriber::registry()
 		.with(
