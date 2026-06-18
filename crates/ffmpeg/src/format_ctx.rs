@@ -95,7 +95,7 @@ impl FFmpegFormatContext {
 		 * FFmpeg 8 stores global stream side data on codec parameters instead of exposing
 		 * av_stream_get_side_data.
 		 */
-		let Some(codec_params) = (unsafe { stream.codecpar.as_ref() }) else {
+		let Some(codec_params) = (unsafe { (*stream).codecpar.as_ref() }) else {
 			return 0.0;
 		};
 
@@ -152,7 +152,7 @@ impl FFmpegFormatContext {
 				continue;
 			};
 
-			let Some((codec_type, codec_id)) = unsafe { stream.codecpar.as_ref() }
+			let Some((codec_type, codec_id)) = unsafe { (*stream).codecpar.as_ref() }
 				.map(|codec_params| (codec_params.codec_type, codec_params.codec_id))
 			else {
 				continue;

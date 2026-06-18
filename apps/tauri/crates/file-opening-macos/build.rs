@@ -5,10 +5,14 @@ fn main() {
 		.link();
 
 	let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-	for configuration in ["Release", "Debug"] {
-		println!(
-			"cargo:rustc-link-search=native={}/swift-rs/FileOpening/out/Products/{}",
-			out_dir, configuration
-		);
-	}
+	let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+	let configuration = if profile == "release" {
+		"Release"
+	} else {
+		"Debug"
+	};
+	println!(
+		"cargo:rustc-link-search=native={}/swift-rs/FileOpening/out/Products/{}",
+		out_dir, configuration
+	);
 }

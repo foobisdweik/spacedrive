@@ -61,8 +61,8 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum sd-server-${{ matrix.settings.platform }} > sd-server-${{ matrix.settings.platform }}.sha256
-          sha256sum sd-cli-${{ matrix.settings.platform }} > sd-cli-${{ matrix.settings.platform }}.sha256
+          shasum -a 256 sd-server-${{ matrix.settings.platform }} > sd-server-${{ matrix.settings.platform }}.sha256
+          shasum -a 256 sd-cli-${{ matrix.settings.platform }} > sd-cli-${{ matrix.settings.platform }}.sha256
 
       - name: Create archive
         run: |

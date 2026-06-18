@@ -37,7 +37,6 @@ jobs:
             target: aarch64-apple-darwin
     name: "Make Cache"
     runs-on: ${{ matrix.settings.host }}
-    if: github.repository == 'spacedriveapp/spacedrive'
     permissions: {}
     timeout-minutes: 150 # 2.5 hours
     steps:
