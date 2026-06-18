@@ -1048,7 +1048,7 @@ export type DiffEntry = {
 
 export type DiffEntryKind = 'File' | 'Directory' | 'Symlink';
 
-export type DiffStrategy = 'Heuristic' | 'Content' | 'Hybrid';
+export type DiffStrategy = 'Heuristic';
 
 /**
  * Input for directory listing

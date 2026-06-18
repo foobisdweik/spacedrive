@@ -2,9 +2,12 @@ use crate::{
 	domain::addressing::SdPath,
 	infra::db::entities::{directory_paths, entry, sync_conduit, sync_generation},
 	library::Library,
-	ops::indexing::{IndexScope, IndexerJob, IndexerJobConfig},
+	ops::indexing::{
+		database_storage::EntryMetadata, state::EntryKind, IndexScope, IndexerJob, IndexerJobConfig,
+	},
 };
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use sea_orm::{prelude::*, DatabaseConnection, QueryOrder, QuerySelect};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -77,7 +80,42 @@ impl SyncResolver {
 		&self,
 		conduit: &sync_conduit::Model,
 	) -> Result<SyncOperations> {
-		self.ensure_index_coverage(conduit).await?;
+		let source_root_path = self
+			.path_for_directory_entry(conduit.source_entry_id)
+			.await?;
+		let target_root_path = self
+			.path_for_directory_entry(conduit.target_entry_id)
+			.await?;
+
+		let mode = sync_conduit::SyncMode::from_str(&conduit.sync_mode)
+			.ok_or_else(|| anyhow::anyhow!("Invalid sync mode"))?;
+
+		if !conduit.use_index_rules {
+			self.ensure_complete_scan(&source_root_path).await?;
+			self.ensure_complete_scan(&target_root_path).await?;
+
+			let source_map = self.build_ephemeral_path_map(&source_root_path).await?;
+			let target_map = self.build_ephemeral_path_map(&target_root_path).await?;
+
+			return match mode {
+				sync_conduit::SyncMode::Mirror => {
+					Ok(self.resolve_mirror(&source_map, &target_map, target_root_path))
+				}
+				sync_conduit::SyncMode::Bidirectional => {
+					self.resolve_bidirectional(
+						&source_map,
+						&target_map,
+						conduit,
+						source_root_path,
+						target_root_path,
+					)
+					.await
+				}
+				sync_conduit::SyncMode::Selective => {
+					Ok(self.resolve_mirror(&source_map, &target_map, target_root_path))
+				}
+			};
+		}
 
 		// Get source and target root entries
 		let source_root = entry::Entity::find_by_id(conduit.source_entry_id)
@@ -90,13 +128,6 @@ impl SyncResolver {
 			.await?
 			.ok_or_else(|| anyhow::anyhow!("Target entry not found"))?;
 
-		let source_root_path = self
-			.path_for_directory_entry(conduit.source_entry_id)
-			.await?;
-		let target_root_path = self
-			.path_for_directory_entry(conduit.target_entry_id)
-			.await?;
-
 		// Load all entries under each root
 		let source_entries = self
 			.get_entries_recursive(conduit.source_entry_id, &source_root, &source_root_path)
@@ -108,9 +139,6 @@ impl SyncResolver {
 		// Build path maps
 		let source_map = self.build_path_map(&source_entries);
 		let target_map = self.build_path_map(&target_entries);
-
-		let mode = sync_conduit::SyncMode::from_str(&conduit.sync_mode)
-			.ok_or_else(|| anyhow::anyhow!("Invalid sync mode"))?;
 
 		match mode {
 			sync_conduit::SyncMode::Mirror => {
@@ -132,22 +160,20 @@ impl SyncResolver {
 		}
 	}
 
-	async fn ensure_index_coverage(&self, conduit: &sync_conduit::Model) -> Result<()> {
-		if conduit.use_index_rules {
-			return Ok(());
-		}
+	async fn ensure_complete_scan(&self, path: &Path) -> Result<()> {
+		let cache = self.library.core_context().ephemeral_cache();
+		let index = cache.create_for_indexing(path.to_path_buf(), IndexScope::Recursive);
+		cache.clear_for_reindex(path).await;
 
-		for entry_id in [conduit.source_entry_id, conduit.target_entry_id] {
-			let path = self.path_for_directory_entry(entry_id).await?;
-			let config =
-				IndexerJobConfig::complete_scan(SdPath::local(path), IndexScope::Recursive);
-			let handle = self
-				.library
-				.jobs()
-				.dispatch(IndexerJob::new(config))
-				.await?;
-			handle.wait().await?;
-		}
+		let config = IndexerJobConfig::complete_scan(
+			SdPath::local(path.to_path_buf()),
+			IndexScope::Recursive,
+		);
+		let mut job = IndexerJob::new(config);
+		job.set_ephemeral_index(index);
+
+		let handle = self.library.jobs().dispatch(job).await?;
+		handle.wait().await?;
 
 		Ok(())
 	}
@@ -158,7 +184,51 @@ impl SyncResolver {
 			.await?
 			.ok_or_else(|| anyhow::anyhow!("Directory path not found for entry {}", entry_id))?;
 
-		Ok(PathBuf::from(directory_path.path))
+		let path = PathBuf::from(directory_path.path);
+		Ok(tokio::fs::canonicalize(&path).await.unwrap_or(path))
+	}
+
+	async fn build_ephemeral_path_map(
+		&self,
+		root: &Path,
+	) -> Result<HashMap<PathBuf, EntryWithPath>> {
+		let cache = self.library.core_context().ephemeral_cache();
+		let index = cache
+			.get_for_path(root)
+			.ok_or_else(|| anyhow::anyhow!("Path not indexed: {}", root.display()))?;
+		let index = index.read().await;
+		let entries = index.entries();
+		let mut map = HashMap::new();
+
+		for (absolute_path, metadata) in entries {
+			if absolute_path == root {
+				continue;
+			}
+
+			let Ok(relative_path) = absolute_path.strip_prefix(root) else {
+				continue;
+			};
+
+			if relative_path.as_os_str().is_empty() {
+				continue;
+			}
+
+			let relative_path = relative_path.to_path_buf();
+			map.insert(
+				relative_path.clone(),
+				EntryWithPath {
+					entry: entry_model_from_metadata(
+						&absolute_path,
+						&metadata,
+						index.get_entry_uuid(&absolute_path),
+					),
+					relative_path,
+					full_path: absolute_path,
+				},
+			);
+		}
+
+		Ok(map)
 	}
 
 	/// Get all entries under a directory recursively
@@ -393,5 +463,53 @@ impl SyncResolver {
 			.order_by_desc(sync_generation::Column::Generation)
 			.one(&*self.db)
 			.await?)
+	}
+}
+
+fn entry_model_from_metadata(
+	path: &Path,
+	metadata: &EntryMetadata,
+	uuid: Option<uuid::Uuid>,
+) -> entry::Model {
+	let modified_at = metadata
+		.modified
+		.map(DateTime::<Utc>::from)
+		.unwrap_or_else(Utc::now);
+	let created_at = metadata
+		.created
+		.map(DateTime::<Utc>::from)
+		.unwrap_or(modified_at);
+
+	entry::Model {
+		id: 0,
+		uuid,
+		name: path
+			.file_name()
+			.map(|name| name.to_string_lossy().to_string())
+			.unwrap_or_default(),
+		kind: match metadata.kind {
+			EntryKind::File => 0,
+			EntryKind::Directory => 1,
+			EntryKind::Symlink => 2,
+		},
+		extension: path
+			.extension()
+			.map(|extension| extension.to_string_lossy().to_string()),
+		metadata_id: None,
+		content_id: None,
+		size: i64::try_from(metadata.size).unwrap_or(i64::MAX),
+		aggregate_size: 0,
+		child_count: 0,
+		file_count: 0,
+		created_at,
+		modified_at,
+		accessed_at: metadata.accessed.map(DateTime::<Utc>::from),
+		indexed_at: Some(modified_at),
+		permissions: metadata
+			.permissions
+			.map(|permissions| permissions.to_string()),
+		inode: metadata.inode.and_then(|inode| i64::try_from(inode).ok()),
+		parent_id: None,
+		volume_id: None,
 	}
 }

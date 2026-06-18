@@ -2,7 +2,7 @@ use crate::infra::db::entities::{directory_paths, entry, entry_closure};
 use crate::ops::indexing::path_resolver::PathResolver;
 use anyhow::Result;
 use async_trait::async_trait;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, QueryTrait};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -28,18 +28,18 @@ pub async fn extract_persistent_uuids_for_path(
 		return Ok(HashMap::new()); // Path not in persistent index
 	};
 
-	// Get all descendant IDs via closure table
-	let descendant_ids: Vec<i32> = entry_closure::Entity::find()
-		.filter(entry_closure::Column::AncestorId.eq(root_dir.entry_id))
-		.all(db)
-		.await?
-		.into_iter()
-		.map(|c| c.descendant_id)
-		.collect();
-
-	// Get the actual entries
+	// Keep the closure-table lookup inside SQLite to avoid parameter limits on
+	// large directories.
 	let descendants = entry::Entity::find()
-		.filter(entry::Column::Id.is_in(descendant_ids))
+		.filter(
+			entry::Column::Id.in_subquery(
+				entry_closure::Entity::find()
+					.select_only()
+					.column(entry_closure::Column::DescendantId)
+					.filter(entry_closure::Column::AncestorId.eq(root_dir.entry_id))
+					.into_query(),
+			),
+		)
 		.filter(entry::Column::Uuid.is_not_null())
 		.all(db)
 		.await?;

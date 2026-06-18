@@ -202,22 +202,17 @@ impl EphemeralIndexCache {
 		path: PathBuf,
 		scope: IndexScope,
 	) -> Arc<TokioRwLock<EphemeralIndex>> {
-		let in_progress = self.indexing_in_progress.read();
-		let indexed = self.indexed_paths.read();
+		let canonical = path.canonicalize().ok();
+		let mut in_progress = self.indexing_in_progress.write();
+		let mut indexed = self.indexed_paths.write();
 
 		// Check if already covered by a recursive parent (with symlink resolution)
-		let canonical = path.canonicalize().ok();
 		for (existing_path, existing_scope) in indexed.iter() {
 			if *existing_scope != IndexScope::Recursive {
 				continue;
 			}
 
-			let covered = path.starts_with(existing_path)
-				|| canonical
-					.as_ref()
-					.map_or(false, |c| c.starts_with(existing_path));
-
-			if covered {
+			if path_is_under_indexed_root(&path, canonical.as_deref(), existing_path) {
 				tracing::debug!(
 					"Path {} already covered by recursive index at {}, skipping",
 					path.display(),
@@ -226,12 +221,6 @@ impl EphemeralIndexCache {
 				return self.index.clone();
 			}
 		}
-
-		drop(indexed);
-		drop(in_progress);
-
-		let mut in_progress = self.indexing_in_progress.write();
-		let mut indexed = self.indexed_paths.write();
 
 		// If this path was previously indexed, remove it from indexed set
 		// The actual clearing of stale entries happens asynchronously via clear_for_reindex
@@ -280,9 +269,12 @@ impl EphemeralIndexCache {
 
 		in_progress.remove(path);
 
-		// If this is a recursive scan, subsume child paths
+		// If this is a recursive scan, subsume child paths, including entries
+		// reached through symlink-equivalent roots.
 		if scope == IndexScope::Recursive {
-			indexed.retain(|existing, _| !existing.starts_with(path) || existing == path);
+			indexed.retain(|existing, _| {
+				!path_is_under_indexed_root(existing, existing.canonicalize().ok().as_deref(), path)
+			});
 		}
 
 		indexed.insert(path.to_path_buf(), scope);
@@ -477,6 +469,29 @@ impl Default for EphemeralIndexCache {
 	}
 }
 
+fn path_is_under_indexed_root(
+	path: &Path,
+	canonical_path: Option<&Path>,
+	indexed_root: &Path,
+) -> bool {
+	if path.starts_with(indexed_root) {
+		return true;
+	}
+
+	if let Some(canonical_path) = canonical_path {
+		if canonical_path.starts_with(indexed_root) {
+			return true;
+		}
+
+		if let Ok(canonical_root) = indexed_root.canonicalize() {
+			return canonical_path.starts_with(&canonical_root)
+				|| path.starts_with(&canonical_root);
+		}
+	}
+
+	false
+}
+
 /// Statistics about the ephemeral index cache
 #[derive(Debug, Clone)]
 pub struct EphemeralIndexCacheStats {
@@ -667,6 +682,19 @@ mod tests {
 		assert!(cache
 			.get_for_path(&PathBuf::from("/mnt/volume/photos/2024"))
 			.is_some());
+	}
+
+	#[test]
+	fn test_recursive_parent_does_not_cover_component_prefix_sibling() {
+		let cache = EphemeralIndexCache::new().expect("failed to create cache");
+		let root = PathBuf::from("/mnt/volume");
+		let sibling = PathBuf::from("/mnt/volume2");
+
+		let _index = cache.create_for_indexing(root.clone(), IndexScope::Recursive);
+		cache.mark_indexing_complete_with_scope(&root, IndexScope::Recursive);
+
+		assert!(!cache.is_indexed(&sibling));
+		assert!(cache.get_for_path(&sibling).is_none());
 	}
 
 	#[test]

@@ -30,8 +30,6 @@ pub struct PathDiffInput {
 pub enum DiffStrategy {
 	#[default]
 	Heuristic,
-	Content,
-	Hybrid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -126,10 +124,20 @@ async fn resolve_local_path(path: &SdPath, context: &Arc<CoreContext>) -> QueryR
 		.await
 		.map_err(|e| QueryError::Internal(format!("Failed to resolve path: {}", e)))?;
 
-	resolved
+	let local_path = resolved
 		.as_local_path()
 		.map(Path::to_path_buf)
-		.ok_or_else(|| QueryError::Internal("Path diff currently requires local paths".to_string()))
+		.ok_or_else(|| {
+			QueryError::Internal("Path diff currently requires local paths".to_string())
+		})?;
+
+	tokio::fs::canonicalize(&local_path).await.map_err(|e| {
+		QueryError::Internal(format!(
+			"Failed to canonicalize path {}: {}",
+			local_path.display(),
+			e
+		))
+	})
 }
 
 async fn ensure_indexed(
@@ -139,7 +147,7 @@ async fn ensure_indexed(
 ) -> QueryResult<()> {
 	let cache = library.core_context().ephemeral_cache();
 
-	if cache.is_indexed(path) {
+	if use_index_rules && cache.is_indexed(path) {
 		return Ok(());
 	}
 
@@ -153,9 +161,15 @@ async fn ensure_indexed(
 		IndexerJobConfig::complete_scan(SdPath::local(path.to_path_buf()), IndexScope::Recursive)
 	};
 
+	let index = cache.create_for_indexing(path.to_path_buf(), IndexScope::Recursive);
+	cache.clear_for_reindex(path).await;
+
+	let mut job = IndexerJob::new(config);
+	job.set_ephemeral_index(index);
+
 	let handle = library
 		.jobs()
-		.dispatch(IndexerJob::new(config))
+		.dispatch(job)
 		.await
 		.map_err(|e| QueryError::Internal(format!("Failed to dispatch indexer: {}", e)))?;
 
@@ -227,9 +241,7 @@ fn diff_path_maps(
 	strategy: DiffStrategy,
 ) -> PathDiffResult {
 	match strategy {
-		DiffStrategy::Heuristic | DiffStrategy::Hybrid | DiffStrategy::Content => {
-			diff_heuristic(source_map, target_map)
-		}
+		DiffStrategy::Heuristic => diff_heuristic(source_map, target_map),
 	}
 }
 
