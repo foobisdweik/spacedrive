@@ -285,9 +285,22 @@ impl EphemeralIndex {
 		Ok(results)
 	}
 
+	/// Internal: resolve a path to its EntryId, handling symlinks.
+	fn resolve_entry_id(&self, path: &Path) -> Option<EntryId> {
+		// Fast path
+		if let Some(&id) = self.path_index.get(path) {
+			return Some(id);
+		}
+
+		// Canonicalize and retry
+		path.canonicalize()
+			.ok()
+			.and_then(|canonical| self.path_index.get(&canonical).copied())
+	}
+
 	pub fn get_entry(&mut self, path: &PathBuf) -> Option<EntryMetadata> {
-		let id = self.path_index.get(path)?;
-		let node = self.arena.get(*id)?;
+		let id = self.resolve_entry_id(path)?;
+		let node = self.arena.get(id)?;
 
 		self.last_accessed = Instant::now();
 
@@ -306,8 +319,8 @@ impl EphemeralIndex {
 
 	/// Get entry reference for read-only access (doesn't update last_accessed)
 	pub fn get_entry_ref(&self, path: &PathBuf) -> Option<EntryMetadata> {
-		let id = self.path_index.get(path)?;
-		let node = self.arena.get(*id)?;
+		let id = self.resolve_entry_id(path)?;
+		let node = self.arena.get(id)?;
 
 		Some(EntryMetadata {
 			path: path.clone(),
@@ -323,8 +336,8 @@ impl EphemeralIndex {
 	}
 
 	pub fn get_entry_uuid(&self, path: &PathBuf) -> Option<Uuid> {
-		let entry_id = self.path_index.get(path)?;
-		self.entry_uuids.get(entry_id).copied()
+		let entry_id = self.resolve_entry_id(path)?;
+		self.entry_uuids.get(&entry_id).copied()
 	}
 
 	/// Get or assign a UUID for the given path (lazy generation).
@@ -335,8 +348,8 @@ impl EphemeralIndex {
 	/// to persistent indexes.
 	pub fn get_or_assign_uuid(&mut self, path: &PathBuf) -> Uuid {
 		// Look up EntryId for this path
-		let entry_id = match self.path_index.get(path) {
-			Some(&id) => id,
+		let entry_id = match self.resolve_entry_id(path) {
+			Some(id) => id,
 			None => return Uuid::new_v4(), // Path not found, return random UUID
 		};
 
@@ -349,6 +362,50 @@ impl EphemeralIndex {
 		let uuid = Uuid::new_v4();
 		self.entry_uuids.insert(entry_id, uuid);
 		uuid
+	}
+
+	/// Reconcile ephemeral UUIDs with persistent entries.
+	/// For each path in the provided map, if a matching ephemeral entry exists,
+	/// replace its UUID with the persistent one.
+	/// Returns count of UUIDs reconciled.
+	pub fn reconcile_persistent_uuids(
+		&mut self,
+		persistent_uuids: &HashMap<PathBuf, Uuid>,
+	) -> usize {
+		let mut count = 0;
+		for (path, persistent_uuid) in persistent_uuids {
+			if let Some(entry_id) = self.resolve_entry_id(path) {
+				self.entry_uuids.insert(entry_id, *persistent_uuid);
+				count += 1;
+			}
+		}
+		count
+	}
+
+	/// Get UUID for a path, checking persistent index as fallback.
+	/// Used when reconciliation hasn't completed yet.
+	pub async fn get_or_resolve_uuid(
+		&mut self,
+		path: &PathBuf,
+		persistent_lookup: Option<&dyn crate::ops::indexing::reconciliation::PersistentUuidLookup>,
+	) -> Option<Uuid> {
+		// Fast path: already have a UUID (either generated or reconciled)
+		if let Some(uuid) = self.get_entry_uuid(path) {
+			return Some(uuid);
+		}
+
+		// Slow path: check persistent index
+		if let Some(lookup) = persistent_lookup {
+			if let Some(persistent_uuid) = lookup.lookup_uuid(path).await {
+				// Cache for future access
+				if let Some(entry_id) = self.resolve_entry_id(path) {
+					self.entry_uuids.insert(entry_id, persistent_uuid);
+				}
+				return Some(persistent_uuid);
+			}
+		}
+
+		None
 	}
 
 	/// Get the path for an entry by its UUID
@@ -368,8 +425,8 @@ impl EphemeralIndex {
 	}
 
 	pub fn get_content_kind(&self, path: &PathBuf) -> ContentKind {
-		let entry_id = match self.path_index.get(path) {
-			Some(&id) => id,
+		let entry_id = match self.resolve_entry_id(path) {
+			Some(id) => id,
 			None => return ContentKind::Unknown,
 		};
 
@@ -380,8 +437,8 @@ impl EphemeralIndex {
 	}
 
 	pub fn list_directory(&self, path: &Path) -> Option<Vec<PathBuf>> {
-		let id = self.path_index.get(path)?;
-		let node = self.arena.get(*id)?;
+		let id = self.resolve_entry_id(path)?;
+		let node = self.arena.get(id)?;
 
 		Some(
 			node.children

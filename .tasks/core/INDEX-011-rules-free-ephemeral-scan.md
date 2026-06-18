@@ -1,12 +1,12 @@
 ---
 id: INDEX-011
 title: Rules-Free Ephemeral Scan Mode
-status: To Do
+status: In Progress
 assignee: jamiepine
 parent: INDEX-000
 priority: High
 tags: [indexing, ephemeral, rules, file-sync, completeness]
-last_updated: 2026-02-07
+last_updated: 2026-06-18
 related_tasks: [INDEX-005, INDEX-010, FSYNC-003, FILE-006]
 ---
 

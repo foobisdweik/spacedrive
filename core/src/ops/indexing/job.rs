@@ -164,6 +164,17 @@ impl IndexerJobConfig {
 		}
 	}
 
+	/// Ephemeral scan with no filtering rules.
+	/// Returns complete filesystem state for sync and diff operations.
+	pub fn complete_scan(path: SdPath, scope: IndexScope) -> Self {
+		Self {
+			persistence: IndexPersistence::Ephemeral,
+			rule_toggles: super::rules::RuleToggles::complete(),
+			is_volume_indexing: false,
+			..Self::ephemeral_browse(path, scope, false)
+		}
+	}
+
 	/// Check if this is an ephemeral (non-persistent) job
 	pub fn is_ephemeral(&self) -> bool {
 		self.persistence == IndexPersistence::Ephemeral
@@ -417,6 +428,35 @@ impl IndexerJob {
 					} else {
 						ctx.log("Skipping aggregation and content phases for ephemeral job (content kind identified by extension)");
 						state.phase = Phase::Complete;
+
+						// Spawn background UUID reconciliation
+						if let Some(local_path) = self.config.path.as_local_path() {
+							let db = ctx.library_db().clone();
+							let cache = ctx.library().core_context().ephemeral_cache().clone();
+							let root_path = local_path.to_path_buf();
+
+							tokio::spawn(async move {
+								match crate::ops::indexing::reconciliation::extract_persistent_uuids_for_path(&db, &root_path).await {
+									Ok(uuids) if !uuids.is_empty() => {
+										let count = cache.reconcile_persistent_uuids(&uuids).await;
+										tracing::debug!(
+											count,
+											path = %root_path.display(),
+											"reconciled UUIDs for ephemeral path"
+										);
+									}
+									Ok(_) => {}
+									Err(e) => {
+										tracing::warn!(
+											error = %e,
+											path = %root_path.display(),
+											"UUID reconciliation failed"
+										);
+									}
+								}
+							});
+						}
+
 						continue;
 					}
 
@@ -681,7 +721,7 @@ impl JobHandler for IndexerJob {
 				ctx.library()
 					.core_context()
 					.ephemeral_cache()
-					.mark_indexing_complete(local_path);
+					.mark_indexing_complete_with_scope(local_path, self.config.scope);
 				match &result {
 					Ok(_) => {
 						ctx.log(format!(

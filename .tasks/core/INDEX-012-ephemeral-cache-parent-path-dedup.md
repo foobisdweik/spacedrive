@@ -1,12 +1,12 @@
 ---
 id: INDEX-012
 title: Ephemeral Cache Parent Path Deduplication
-status: To Do
+status: In Progress
 assignee: jamiepine
 parent: INDEX-000
 priority: High
 tags: [indexing, ephemeral, cache, deduplication, bug, macos]
-last_updated: 2026-02-07
+last_updated: 2026-06-18
 related_tasks: [INDEX-001, INDEX-010]
 ---
 

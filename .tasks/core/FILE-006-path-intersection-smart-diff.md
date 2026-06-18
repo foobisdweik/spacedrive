@@ -1,12 +1,12 @@
 ---
 id: FILE-006
 title: Path Intersection & Smart Diff
-status: To Do
+status: In Progress
 assignee: jamiepine
 parent: FILE-000
 priority: High
 tags: [files, operations, diff, copy, index, deduplication]
-last_updated: 2026-02-07
+last_updated: 2026-06-18
 related_tasks: [INDEX-010, INDEX-011, FILE-001, FSYNC-003]
 ---
 

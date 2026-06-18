@@ -9,7 +9,7 @@ use crate::{
 		job::types::JobPriority,
 	},
 	library::Library,
-	ops::indexing::job::{IndexerJob, IndexerJobConfig},
+	ops::indexing::job::{IndexScope, IndexerJob, IndexerJobConfig},
 	volume::VolumeFingerprint,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -94,7 +94,8 @@ impl LibraryAction for IndexVolumeAction {
 
 		// 5. Get ephemeral cache and create/reuse index for this volume
 		let ephemeral_cache = context.ephemeral_cache();
-		let index = ephemeral_cache.create_for_indexing(volume.mount_point.clone());
+		let index =
+			ephemeral_cache.create_for_indexing(volume.mount_point.clone(), IndexScope::Recursive);
 		indexer_job.set_ephemeral_index(index.clone());
 
 		// 6. Clear stale entries if this volume was previously indexed
@@ -173,7 +174,10 @@ impl LibraryAction for IndexVolumeAction {
 
 								// Mark as indexed and register for watching
 								let ephemeral_cache = context_clone.ephemeral_cache();
-								ephemeral_cache.mark_indexing_complete(&mount_point_clone);
+								ephemeral_cache.mark_indexing_complete_with_scope(
+									&mount_point_clone,
+									IndexScope::Recursive,
+								);
 								let _ = ephemeral_cache
 									.register_for_watching(mount_point_clone.clone());
 

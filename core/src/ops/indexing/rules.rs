@@ -691,6 +691,20 @@ impl Default for RuleToggles {
 	}
 }
 
+impl RuleToggles {
+	/// Disable all optional filtering rules for complete filesystem coverage.
+	pub fn complete() -> Self {
+		Self {
+			no_system_files: false,
+			no_hidden: false,
+			no_git: false,
+			gitignore: false,
+			only_images: false,
+			no_dev_dirs: false,
+		}
+	}
+}
+
 pub struct GitIgnoreRules {
 	rules: RulePerKind,
 }
@@ -806,4 +820,33 @@ pub async fn build_default_ruler(
 		}
 	}
 	IndexerRuler::new(base)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::RuleToggles;
+
+	#[test]
+	fn complete_disables_all_optional_rules() {
+		let toggles = RuleToggles::complete();
+
+		assert!(!toggles.no_system_files);
+		assert!(!toggles.no_hidden);
+		assert!(!toggles.no_git);
+		assert!(!toggles.gitignore);
+		assert!(!toggles.only_images);
+		assert!(!toggles.no_dev_dirs);
+	}
+
+	#[test]
+	fn default_keeps_browse_filters_enabled() {
+		let toggles = RuleToggles::default();
+
+		assert!(toggles.no_system_files);
+		assert!(!toggles.no_hidden);
+		assert!(toggles.no_git);
+		assert!(toggles.gitignore);
+		assert!(!toggles.only_images);
+		assert!(toggles.no_dev_dirs);
+	}
 }

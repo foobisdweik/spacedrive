@@ -1,12 +1,12 @@
 ---
 id: INDEX-010
 title: Bidirectional UUID Reconciliation (Ephemeral ↔ Persistent)
-status: To Do
+status: In Progress
 assignee: jamiepine
 parent: INDEX-000
 priority: Critical
 tags: [indexing, ephemeral, persistent, uuid, foundation]
-last_updated: 2026-02-07
+last_updated: 2026-06-18
 related_tasks: [INDEX-001, FSYNC-003, FILE-006]
 ---
 
