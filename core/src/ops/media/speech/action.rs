@@ -13,7 +13,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct TranscribeAudioInput {
 	pub entry_uuid: Uuid,
+	#[serde(default)]
 	pub model: Option<String>, // whisper model (tiny, base, small, medium, large)
+	#[serde(default)]
 	pub language: Option<String>, // Language code or None for auto-detect
 }
 

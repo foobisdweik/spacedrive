@@ -250,16 +250,15 @@ fn setup() -> Result<()> {
 
 	config::generate_cargo_config(&project_root, Some(&native_deps_dir), mobile_deps)?;
 
-	// Build release daemon for Tauri bundler validation
-	// The Tauri config references the release daemon in externalBin, so we need to build it
-	// once even for dev mode to satisfy Tauri's path validation
+	// Build a daemon sidecar for Tauri bundler validation.
+	// Local Apple Silicon builds use the dev profile because the macOS 27 beta linker can produce
+	// release proc-macro dylibs that dyld refuses to load.
 	println!();
-	println!("Building release daemon for Tauri (with ffmpeg,heif features)...");
+	println!("Building daemon sidecar for Tauri (with ffmpeg,heif features)...");
 
 	let target_triple = system.target_triple();
 	let args = vec![
 		"build",
-		"--release",
 		"--features",
 		"sd-core/ffmpeg,sd-core/heif",
 		"--bin",
@@ -272,18 +271,18 @@ fn setup() -> Result<()> {
 		.args(&args)
 		.current_dir(&project_root)
 		.status()
-		.context("Failed to build release daemon")?;
+		.context("Failed to build daemon sidecar")?;
 
 	if !status.success() {
-		anyhow::bail!("Failed to build release daemon");
+		anyhow::bail!("Failed to build daemon sidecar");
 	}
-	println!("   ✓ Release daemon built");
+	println!("   ✓ Daemon sidecar built");
 
 	// Create target-suffixed daemon binary for Tauri bundler
 	// Tauri's externalBin appends the target triple to binary names
 	let exe_ext = if cfg!(windows) { ".exe" } else { "" };
 	let daemon_source = project_root.join(format!(
-		"target/{}/release/sd-daemon{}",
+		"target/{}/debug/sd-daemon{}",
 		target_triple, exe_ext
 	));
 	let daemon_target = project_root.join(format!(
@@ -292,6 +291,10 @@ fn setup() -> Result<()> {
 	));
 
 	if daemon_source.exists() {
+		if let Some(parent) = daemon_target.parent() {
+			fs::create_dir_all(parent).context("Failed to create Tauri sidecar directory")?;
+		}
+
 		fs::copy(&daemon_source, &daemon_target)
 			.context("Failed to create target-suffixed daemon binary")?;
 		println!("   ✓ Created sd-daemon-{}{}", target_triple, exe_ext);

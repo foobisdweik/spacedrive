@@ -46,12 +46,12 @@ export function TasksRoute() {
 
 	const updateMutation = useMutation({
 		mutationFn: ({taskNumber, req}: {taskNumber: number; req: UpdateTaskRequest}) =>
-			(apiClient as any).updateTask(taskNumber, req),
+			apiClient.updateTask(taskNumber, req),
 		onSuccess: () => void invalidate(),
 	});
 
 	const deleteMutation = useMutation({
-		mutationFn: (taskNumber: number) => (apiClient as any).deleteTask(taskNumber),
+		mutationFn: (taskNumber: number) => apiClient.deleteTask(taskNumber),
 		onSuccess: () => {
 			setActiveTaskId(null);
 			void invalidate();

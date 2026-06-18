@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "serena": {
+      "command": "/Users/iphoobis/.local/bin/serena",
+      "args": [
+        "start-mcp-server",
+        "--context=ide",
+        "--project=${workspaceFolder}"
+      ]
+    }
+  }
+}

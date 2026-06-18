@@ -2029,6 +2029,9 @@ fn main() {
 							tracing::warn!("Could not get NSWindow handle: {}", e);
 						}
 					}
+
+					window.show().ok();
+					window.set_focus().ok();
 				}
 
 				// Setup drag ended callback

@@ -73,9 +73,9 @@ export function InlineWorkerCard({
 
 	return (
 		<InlineWorkerCardUI
-			title={worker.task}
-			status={worker.status}
-			toolCallCount={worker.tool_calls}
+			title={worker.task ?? worker.name ?? 'Worker'}
+			status={worker.status ?? 'idle'}
+			toolCallCount={worker.tool_calls ?? 0}
 			liveStatus={worker.live_status}
 			transcript={(detailQuery.data?.transcript ?? []) as TranscriptStep[]}
 			isTranscriptLoading={detailQuery.isLoading}

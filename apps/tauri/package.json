@@ -11,13 +11,13 @@
 		"dev:with-daemon": "bun ./scripts/dev-with-daemon.ts",
 		"build": "vite build",
 		"build:daemon": "bash -c 'cargo build --bin sd-daemon --manifest-path ../../Cargo.toml ${CARGO_BUILD_TARGET:+--target $CARGO_BUILD_TARGET}'",
-		"build:daemon:release": "bash -c 'cargo build --release --bin sd-daemon --manifest-path ../../Cargo.toml ${CARGO_BUILD_TARGET:+--target $CARGO_BUILD_TARGET}'",
+		"build:daemon:release": "bun run build:daemon",
 		"preview": "vite preview",
 		"typecheck": "tsc -b",
 		"tauri": "tauri",
 		"tauri:dev": "tauri dev",
 		"tauri:dev:no-watch": "tauri dev --no-watch",
-		"tauri:build": "tauri build && ./scripts/fix-daemon-entitlements.sh ../../target/release/bundle/macos/Spacedrive.app || true"
+		"tauri:build": "tauri build --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}' && ./scripts/fix-daemon-entitlements.sh ../../target/release/bundle/macos/Spacedrive.app"
 	},
 	"dependencies": {
 		"@phosphor-icons/react": "^2.1.0",

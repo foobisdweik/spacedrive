@@ -20,6 +20,7 @@ pub struct GenerateThumbstripInput {
 	/// UUID of the entry to generate thumbstrip for
 	pub entry_uuid: Uuid,
 	/// Optional variant names (defaults to thumbstrip_preview)
+	#[serde(default)]
 	pub variants: Option<Vec<String>>,
 	/// Force regeneration even if thumbstrip exists
 	pub force: bool,

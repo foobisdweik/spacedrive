@@ -74,23 +74,48 @@ fn main() {
 		""
 	};
 
-	for source_profile in [profile.as_str(), "release"] {
-		let daemon_source = format!(
-			"{}/target/{}/sd-daemon{}",
-			workspace_dir, source_profile, exe_ext
-		);
-		let daemon_target = format!(
-			"{}/target/{}/sd-daemon-{}{}",
-			workspace_dir, source_profile, target_triple, exe_ext
-		);
+	let source_candidates = [
+		format!(
+			"{}/target/{}/{}/sd-daemon{}",
+			workspace_dir, target_triple, profile, exe_ext
+		),
+		format!("{}/target/{}/sd-daemon{}", workspace_dir, profile, exe_ext),
+		format!(
+			"{}/target/{}/release/sd-daemon{}",
+			workspace_dir, target_triple, exe_ext
+		),
+		format!("{}/target/release/sd-daemon{}", workspace_dir, exe_ext),
+		format!(
+			"{}/target/{}/debug/sd-daemon{}",
+			workspace_dir, target_triple, exe_ext
+		),
+		format!("{}/target/debug/sd-daemon{}", workspace_dir, exe_ext),
+	];
 
-		if std::path::Path::new(&daemon_source).exists() {
-			let _ = std::fs::remove_file(&daemon_target);
+	if let Some(daemon_source) = source_candidates
+		.iter()
+		.map(std::path::Path::new)
+		.find(|path| path.exists() && path.metadata().map_or(false, |meta| meta.len() > 0))
+	{
+		for target_profile in [profile.as_str(), "release"] {
+			let daemon_target = format!(
+				"{}/target/{}/sd-daemon-{}{}",
+				workspace_dir, target_profile, target_triple, exe_ext
+			);
+			let daemon_target_path = std::path::Path::new(&daemon_target);
 
-			if let Err(e) = std::fs::copy(&daemon_source, &daemon_target) {
-				eprintln!("Warning: Failed to copy daemon: {}", e);
+			if let Some(parent) = daemon_target_path.parent() {
+				std::fs::create_dir_all(parent).expect("Failed to create Tauri sidecar directory");
 			}
+
+			let _ = std::fs::remove_file(daemon_target_path);
+			std::fs::copy(daemon_source, daemon_target_path)
+				.expect("Failed to copy daemon sidecar");
 		}
+	} else {
+		eprintln!(
+			"cargo:warning=sd-daemon sidecar was not found. Run `bun run build:daemon` before bundling."
+		);
 	}
 
 	tauri_build::build()

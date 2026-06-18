@@ -12,9 +12,13 @@
 		"paths": {
 			"~/*": ["./src/*"],
 			"@spacebot/api-client": [
-				"../../../spacebot/packages/api-client/src/index.ts"
+				"../../../spacebot/packages/api-client/src/index.ts",
+				"./src/spacebot.d.ts"
 			],
-			"@spacebot/api-client/*": ["../../../spacebot/packages/api-client/src/*"]
+			"@spacebot/api-client/*": [
+				"../../../spacebot/packages/api-client/src/*",
+				"./src/spacebot.d.ts"
+			]
 		},
 		"types": ["@react-three/fiber"]
 	},

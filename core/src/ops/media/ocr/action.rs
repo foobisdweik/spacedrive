@@ -23,6 +23,7 @@ pub struct ExtractTextInput {
 	/// UUID of the entry to extract text from
 	pub entry_uuid: Uuid,
 	/// Languages to use for OCR (e.g., ["eng", "spa"])
+	#[serde(default)]
 	pub languages: Option<Vec<String>>,
 	/// Force re-extraction even if text exists
 	pub force: bool,

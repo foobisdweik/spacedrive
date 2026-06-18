@@ -15,7 +15,7 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/brendonovich/swift-rs", branch: "specta"),
+        .package(path: "../swift-rs"),
     ],
     targets: [
         .target(

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
 import {
 	Folder,
@@ -379,6 +380,7 @@ function AddStorageDialog(props: {
 }) {
 	const dialog = useDialog(props);
 	const platform = usePlatform();
+	const queryClient = useQueryClient();
 
 	// Derive initial folder name from path
 	const initialFolderName =
@@ -415,6 +417,23 @@ function AddStorageDialog(props: {
 	});
 
 	const volumes = volumesData?.volumes || [];
+
+	const refreshStorageQueries = async () => {
+		await queryClient.invalidateQueries({
+			predicate: (query) => {
+				const key = query.queryKey[0];
+				return (
+					typeof key === "string" &&
+					[
+						"query:locations.list",
+						"query:volumes.list",
+						"query:devices.list",
+						"query:libraries.info",
+					].includes(key)
+				);
+			},
+		});
+	};
 
 	const localForm = useForm<LocalFolderFormData>({
 		defaultValues: {
@@ -549,6 +568,7 @@ function AddStorageDialog(props: {
 			};
 
 			const locationResult = await addLocation.mutateAsync(locationInput);
+			await refreshStorageQueries();
 			dialog.state.open = false;
 
 			if (locationResult?.path && props.onStorageAdded) {
@@ -614,6 +634,7 @@ function AddStorageDialog(props: {
 
 		try {
 			const result = await addLocation.mutateAsync(input);
+			await refreshStorageQueries();
 			dialog.state.open = false;
 
 			if (result?.path && props.onStorageAdded) {
@@ -739,6 +760,7 @@ function AddStorageDialog(props: {
 			};
 
 			const locationResult = await addLocation.mutateAsync(locationInput);
+			await refreshStorageQueries();
 			dialog.state.open = false;
 
 			if (locationResult?.path && props.onStorageAdded) {

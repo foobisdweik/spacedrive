@@ -93,7 +93,15 @@ export default defineConfig(() => ({
 							replacement: `${spacebot}/api-client/src`,
 						},
 					]
-				: []),
+				: [
+						{
+							find: /^@spacebot\/api-client$/,
+							replacement: path.resolve(
+								__dirname,
+								'./src/spacebot-api-client.ts'
+							),
+						},
+					]),
 			{
 				find: '@sd/interface',
 				replacement: path.resolve(
@@ -134,10 +142,6 @@ export default defineConfig(() => ({
 		target: ['es2021', 'chrome100', 'safari13'],
 		minify: !process.env.TAURI_ENV_DEBUG ? ('esbuild' as const) : false,
 		sourcemap: !!process.env.TAURI_ENV_DEBUG,
-		rollupOptions: {
-			external: [
-				...(!hasSpacebot ? ['@spacebot/api-client'] : []),
-			],
-		}
+		rollupOptions: {}
 	}
 }));

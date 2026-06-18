@@ -16,10 +16,12 @@ pub struct GenerateProxyInput {
 	/// UUID of the entry to generate proxy for
 	pub entry_uuid: Uuid,
 	/// Proxy resolution (scrubbing, ultra_low, quick, editing)
+	#[serde(default)]
 	pub resolution: Option<String>,
 	/// Force regeneration even if proxy exists
 	pub force: bool,
 	/// Use hardware acceleration if available
+	#[serde(default)]
 	pub use_hardware_accel: Option<bool>,
 }
 

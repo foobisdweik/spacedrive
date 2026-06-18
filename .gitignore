@@ -136,6 +136,9 @@ web_modules/
 # Optional eslint cache
 .eslintcache
 
+# Serena
+.serena/cache/
+
 # Optional stylelint cache
 .stylelintcache
 
