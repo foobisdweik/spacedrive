@@ -116,7 +116,9 @@ jobs:
 
       - name: Run Clippy
         if: steps.filter.outcome != 'success' || steps.filter.outputs.changes == 'true'
-        run: cargo clippy --workspace --locked -- -D warnings
+        run: |
+          mkdir -p apps/tauri/dist
+          cargo clippy --workspace --locked -- -D warnings
 
       # - name: Run tests
       #   if: steps.filter.outcome != 'success' || steps.filter.outputs.changes == 'true'
