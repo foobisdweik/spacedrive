@@ -56,36 +56,11 @@ impl EphemeralIndexCache {
 	/// Returns Some(index) if this path's contents are available,
 	/// None if the path hasn't been browsed yet.
 	pub fn get_for_path(&self, path: &Path) -> Option<Arc<TokioRwLock<EphemeralIndex>>> {
-		let indexed = self.indexed_paths.read();
-
-		if indexed.contains_key(path) {
-			return Some(self.index.clone());
+		if self.is_indexed(path) {
+			Some(self.index.clone())
+		} else {
+			None
 		}
-
-		let canonical = path.canonicalize().ok();
-		if let Some(ref canon) = canonical {
-			if indexed.contains_key(canon.as_path()) {
-				return Some(self.index.clone());
-			}
-		}
-
-		for (indexed_path, scope) in indexed.iter() {
-			if *scope != IndexScope::Recursive {
-				continue;
-			}
-
-			if path.starts_with(indexed_path) {
-				return Some(self.index.clone());
-			}
-
-			if let Some(ref canon) = canonical {
-				if canon.starts_with(indexed_path) {
-					return Some(self.index.clone());
-				}
-			}
-		}
-
-		None
 	}
 
 	/// Get the global index for searching within a path
@@ -106,37 +81,15 @@ impl EphemeralIndexCache {
 	/// Check if a path has been fully indexed
 	pub fn is_indexed(&self, path: &Path) -> bool {
 		let indexed = self.indexed_paths.read();
+		indexed_scope_for_path(&indexed, path).is_some()
+	}
 
-		if indexed.contains_key(path) {
-			return true;
-		}
-
-		// Check canonical form
-		let canonical = path.canonicalize().ok();
-		if let Some(ref canon) = canonical {
-			if indexed.contains_key(canon.as_path()) {
-				return true;
-			}
-		}
-
-		// Check if any recursively-indexed parent covers this path
-		for (indexed_path, scope) in indexed.iter() {
-			if *scope != IndexScope::Recursive {
-				continue;
-			}
-
-			if path.starts_with(indexed_path) {
-				return true;
-			}
-
-			if let Some(ref canon) = canonical {
-				if canon.starts_with(indexed_path) {
-					return true;
-				}
-			}
-		}
-
-		false
+	/// Check if a path has been indexed with coverage that satisfies the
+	/// requested scope.
+	pub fn is_indexed_with_scope(&self, path: &Path, required_scope: IndexScope) -> bool {
+		let indexed = self.indexed_paths.read();
+		indexed_scope_for_path(&indexed, path)
+			.is_some_and(|indexed_scope| scope_satisfies(required_scope, indexed_scope))
 	}
 
 	/// Check if indexing is in progress for a path
@@ -206,19 +159,21 @@ impl EphemeralIndexCache {
 		let mut in_progress = self.indexing_in_progress.write();
 		let mut indexed = self.indexed_paths.write();
 
-		// Check if already covered by a recursive parent (with symlink resolution)
-		for (existing_path, existing_scope) in indexed.iter() {
-			if *existing_scope != IndexScope::Recursive {
-				continue;
-			}
+		if scope == IndexScope::Current {
+			// Check if already covered by a recursive parent (with symlink resolution)
+			for (existing_path, existing_scope) in indexed.iter() {
+				if *existing_scope != IndexScope::Recursive {
+					continue;
+				}
 
-			if path_is_under_indexed_root(&path, canonical.as_deref(), existing_path) {
-				tracing::debug!(
-					"Path {} already covered by recursive index at {}, skipping",
-					path.display(),
-					existing_path.display()
-				);
-				return self.index.clone();
+				if path_is_under_indexed_root(&path, canonical.as_deref(), existing_path) {
+					tracing::debug!(
+						"Path {} already covered by recursive index at {}, skipping",
+						path.display(),
+						existing_path.display()
+					);
+					return self.index.clone();
+				}
 			}
 		}
 
@@ -236,12 +191,18 @@ impl EphemeralIndexCache {
 	/// that were explicitly navigated to. Verifies preserved directories still
 	/// exist on the filesystem and removes deleted ones from tracking.
 	pub async fn clear_for_reindex(&self, path: &Path) -> usize {
-		let indexed = self
-			.indexed_paths
-			.read()
-			.keys()
-			.cloned()
-			.collect::<HashSet<_>>();
+		let indexed = {
+			let indexed_paths = self.indexed_paths.read();
+			let in_progress = self.indexing_in_progress.read();
+			if !in_progress.contains(path)
+				&& path_is_covered_by_recursive_parent(&indexed_paths, path)
+			{
+				return 0;
+			}
+
+			indexed_paths.keys().cloned().collect::<HashSet<_>>()
+		};
+
 		let mut index = self.index.write().await;
 		let (cleared, deleted_browsed_dirs) = index.clear_directory_children(path, &indexed);
 
@@ -492,6 +453,68 @@ fn path_is_under_indexed_root(
 	false
 }
 
+fn indexed_scope_for_path(
+	indexed: &HashMap<PathBuf, IndexScope>,
+	path: &Path,
+) -> Option<IndexScope> {
+	if let Some(scope) = indexed.get(path) {
+		return Some(*scope);
+	}
+
+	let canonical = path.canonicalize().ok();
+	if let Some(ref canonical_path) = canonical {
+		if let Some(scope) = indexed.get(canonical_path.as_path()) {
+			return Some(*scope);
+		}
+	}
+
+	indexed.iter().find_map(|(indexed_path, scope)| {
+		if *scope == IndexScope::Recursive
+			&& path_is_under_indexed_root(path, canonical.as_deref(), indexed_path)
+		{
+			Some(*scope)
+		} else {
+			None
+		}
+	})
+}
+
+fn scope_satisfies(required_scope: IndexScope, indexed_scope: IndexScope) -> bool {
+	match required_scope {
+		IndexScope::Current => true,
+		IndexScope::Recursive => indexed_scope == IndexScope::Recursive,
+	}
+}
+
+fn path_is_covered_by_recursive_parent(
+	indexed: &HashMap<PathBuf, IndexScope>,
+	path: &Path,
+) -> bool {
+	let canonical = path.canonicalize().ok();
+
+	indexed.iter().any(|(indexed_path, scope)| {
+		*scope == IndexScope::Recursive
+			&& !path_matches_indexed_root(path, canonical.as_deref(), indexed_path)
+			&& path_is_under_indexed_root(path, canonical.as_deref(), indexed_path)
+	})
+}
+
+fn path_matches_indexed_root(
+	path: &Path,
+	canonical_path: Option<&Path>,
+	indexed_root: &Path,
+) -> bool {
+	if path == indexed_root || canonical_path == Some(indexed_root) {
+		return true;
+	}
+
+	if let Ok(canonical_root) = indexed_root.canonicalize() {
+		return path == canonical_root || canonical_path == Some(canonical_root.as_path());
+	}
+
+	false
+}
+
 /// Statistics about the ephemeral index cache
 #[derive(Debug, Clone)]
 pub struct EphemeralIndexCacheStats {
@@ -708,6 +731,48 @@ mod tests {
 
 		// Child path should NOT be covered by a shallow scan
 		assert!(!cache.is_indexed(&PathBuf::from("/mnt/volume/photos/2024")));
+	}
+
+	#[test]
+	fn test_shallow_exact_match_does_not_satisfy_recursive_coverage() {
+		let cache = EphemeralIndexCache::new().expect("failed to create cache");
+		let root = PathBuf::from("/mnt/volume");
+
+		let _index = cache.create_for_indexing(root.clone(), IndexScope::Current);
+		cache.mark_indexing_complete_with_scope(&root, IndexScope::Current);
+
+		assert!(cache.is_indexed(&root));
+		assert!(cache.is_indexed_with_scope(&root, IndexScope::Current));
+		assert!(!cache.is_indexed_with_scope(&root, IndexScope::Recursive));
+	}
+
+	#[test]
+	fn test_recursive_child_scan_is_not_skipped_by_parent_coverage() {
+		let cache = EphemeralIndexCache::new().expect("failed to create cache");
+		let root = PathBuf::from("/mnt/volume");
+		let child = PathBuf::from("/mnt/volume/photos");
+
+		let _index = cache.create_for_indexing(root.clone(), IndexScope::Recursive);
+		cache.mark_indexing_complete_with_scope(&root, IndexScope::Recursive);
+
+		let _index = cache.create_for_indexing(child.clone(), IndexScope::Recursive);
+
+		assert!(cache.is_indexing(&child));
+		assert_eq!(cache.len(), 1);
+	}
+
+	#[tokio::test]
+	async fn test_parent_covered_shallow_child_clear_is_noop() {
+		let cache = EphemeralIndexCache::new().expect("failed to create cache");
+		let root = PathBuf::from("/mnt/volume");
+		let child = PathBuf::from("/mnt/volume/photos");
+
+		let _index = cache.create_for_indexing(root.clone(), IndexScope::Recursive);
+		cache.mark_indexing_complete_with_scope(&root, IndexScope::Recursive);
+		let _index = cache.create_for_indexing(child.clone(), IndexScope::Current);
+
+		assert!(!cache.is_indexing(&child));
+		assert_eq!(cache.clear_for_reindex(&child).await, 0);
 	}
 
 	#[test]

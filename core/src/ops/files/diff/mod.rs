@@ -147,7 +147,7 @@ async fn ensure_indexed(
 ) -> QueryResult<()> {
 	let cache = library.core_context().ephemeral_cache();
 
-	if use_index_rules && cache.is_indexed(path) {
+	if use_index_rules && cache.is_indexed_with_scope(path, IndexScope::Recursive) {
 		return Ok(());
 	}
 
