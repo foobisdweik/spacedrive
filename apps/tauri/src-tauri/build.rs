@@ -95,7 +95,7 @@ fn main() {
 	if let Some(daemon_source) = source_candidates
 		.iter()
 		.map(std::path::Path::new)
-		.find(|path| path.exists() && path.metadata().map_or(false, |meta| meta.len() > 0))
+		.find(|path| path.exists() && path.metadata().is_ok_and(|meta| meta.len() > 0))
 	{
 		for target_profile in [profile.as_str(), "release"] {
 			let daemon_target = format!(
