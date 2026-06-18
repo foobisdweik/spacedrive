@@ -118,6 +118,7 @@ jobs:
         if: steps.filter.outcome != 'success' || steps.filter.outputs.changes == 'true'
         run: |
           mkdir -p apps/tauri/dist
+          mkdir -p apps/web/dist
           cargo clippy --workspace --locked -- -D warnings
 
       # - name: Run tests
