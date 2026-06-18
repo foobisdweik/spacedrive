@@ -61,7 +61,7 @@ impl FileSyncService {
 	pub fn new(library: Arc<Library>) -> Self {
 		let db = Arc::new(library.db().conn().clone());
 		let conduit_manager = Arc::new(ConduitManager::new(db.clone()));
-		let resolver = Arc::new(SyncResolver::new(db.clone()));
+		let resolver = Arc::new(SyncResolver::new(db.clone(), library.clone()));
 
 		Self {
 			library,
@@ -201,13 +201,11 @@ impl FileSyncService {
 				.map(|e| e.to_sdpath(device_slug.clone()))
 				.collect();
 
-			// For MVP, use the first entry's parent as destination
-			// In production, this should use the target entry's path
-			let destination = if let Some(first) = source_paths.first() {
-				first.clone()
-			} else {
-				return Err(anyhow::anyhow!("No paths to copy"));
-			};
+			let destination = operations
+				.destination_root
+				.clone()
+				.map(SdPath::local)
+				.ok_or_else(|| anyhow::anyhow!("Missing sync destination root"))?;
 
 			let mut job = FileCopyJob::new(SdPathBatch::new(source_paths), destination);
 			job = job.with_options(CopyOptions {

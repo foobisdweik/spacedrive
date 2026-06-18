@@ -1,16 +1,19 @@
 use crate::{
 	domain::addressing::SdPath,
-	infra::db::entities::{entry, sync_conduit, sync_generation},
+	infra::db::entities::{directory_paths, entry, sync_conduit, sync_generation},
+	library::Library,
+	ops::indexing::{IndexScope, IndexerJob, IndexerJobConfig},
 };
 use anyhow::Result;
 use sea_orm::{prelude::*, DatabaseConnection, QueryOrder, QuerySelect};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Calculates sync operations from index queries
 pub struct SyncResolver {
 	db: Arc<DatabaseConnection>,
+	library: Arc<Library>,
 }
 
 /// Entry with its materialized path relative to sync root
@@ -31,6 +34,7 @@ impl EntryWithPath {
 /// Operations for a single sync direction
 #[derive(Debug, Default, Clone)]
 pub struct DirectionalOps {
+	pub destination_root: Option<PathBuf>,
 	pub to_copy: Vec<EntryWithPath>,
 	pub to_delete: Vec<EntryWithPath>,
 }
@@ -64,8 +68,8 @@ pub enum ConflictType {
 }
 
 impl SyncResolver {
-	pub fn new(db: Arc<DatabaseConnection>) -> Self {
-		Self { db }
+	pub fn new(db: Arc<DatabaseConnection>, library: Arc<Library>) -> Self {
+		Self { db, library }
 	}
 
 	/// Calculate sync operations for a conduit
@@ -73,6 +77,8 @@ impl SyncResolver {
 		&self,
 		conduit: &sync_conduit::Model,
 	) -> Result<SyncOperations> {
+		self.ensure_index_coverage(conduit).await?;
+
 		// Get source and target root entries
 		let source_root = entry::Entity::find_by_id(conduit.source_entry_id)
 			.one(&*self.db)
@@ -84,12 +90,19 @@ impl SyncResolver {
 			.await?
 			.ok_or_else(|| anyhow::anyhow!("Target entry not found"))?;
 
+		let source_root_path = self
+			.path_for_directory_entry(conduit.source_entry_id)
+			.await?;
+		let target_root_path = self
+			.path_for_directory_entry(conduit.target_entry_id)
+			.await?;
+
 		// Load all entries under each root
 		let source_entries = self
-			.get_entries_recursive(conduit.source_entry_id, &source_root)
+			.get_entries_recursive(conduit.source_entry_id, &source_root, &source_root_path)
 			.await?;
 		let target_entries = self
-			.get_entries_recursive(conduit.target_entry_id, &target_root)
+			.get_entries_recursive(conduit.target_entry_id, &target_root, &target_root_path)
 			.await?;
 
 		// Build path maps
@@ -100,13 +113,52 @@ impl SyncResolver {
 			.ok_or_else(|| anyhow::anyhow!("Invalid sync mode"))?;
 
 		match mode {
-			sync_conduit::SyncMode::Mirror => Ok(self.resolve_mirror(&source_map, &target_map)),
-			sync_conduit::SyncMode::Bidirectional => {
-				self.resolve_bidirectional(&source_map, &target_map, conduit)
-					.await
+			sync_conduit::SyncMode::Mirror => {
+				Ok(self.resolve_mirror(&source_map, &target_map, target_root_path))
 			}
-			sync_conduit::SyncMode::Selective => Ok(self.resolve_mirror(&source_map, &target_map)),
+			sync_conduit::SyncMode::Bidirectional => {
+				self.resolve_bidirectional(
+					&source_map,
+					&target_map,
+					conduit,
+					source_root_path,
+					target_root_path,
+				)
+				.await
+			}
+			sync_conduit::SyncMode::Selective => {
+				Ok(self.resolve_mirror(&source_map, &target_map, target_root_path))
+			}
 		}
+	}
+
+	async fn ensure_index_coverage(&self, conduit: &sync_conduit::Model) -> Result<()> {
+		if conduit.use_index_rules {
+			return Ok(());
+		}
+
+		for entry_id in [conduit.source_entry_id, conduit.target_entry_id] {
+			let path = self.path_for_directory_entry(entry_id).await?;
+			let config =
+				IndexerJobConfig::complete_scan(SdPath::local(path), IndexScope::Recursive);
+			let handle = self
+				.library
+				.jobs()
+				.dispatch(IndexerJob::new(config))
+				.await?;
+			handle.wait().await?;
+		}
+
+		Ok(())
+	}
+
+	async fn path_for_directory_entry(&self, entry_id: i32) -> Result<PathBuf> {
+		let directory_path = directory_paths::Entity::find_by_id(entry_id)
+			.one(&*self.db)
+			.await?
+			.ok_or_else(|| anyhow::anyhow!("Directory path not found for entry {}", entry_id))?;
+
+		Ok(PathBuf::from(directory_path.path))
 	}
 
 	/// Get all entries under a directory recursively
@@ -116,6 +168,7 @@ impl SyncResolver {
 		&self,
 		root_id: i32,
 		root_entry: &entry::Model,
+		root_path: &Path,
 	) -> Result<Vec<EntryWithPath>> {
 		let mut results = Vec::new();
 
@@ -127,7 +180,7 @@ impl SyncResolver {
 		// In production, this should walk parent links to build full paths
 		for entry in entries {
 			let relative_path = PathBuf::from(&entry.name);
-			let full_path = PathBuf::from(&entry.name); // Simplified
+			let full_path = root_path.join(&relative_path);
 
 			results.push(EntryWithPath {
 				entry,
@@ -172,8 +225,10 @@ impl SyncResolver {
 		&self,
 		source_map: &HashMap<PathBuf, EntryWithPath>,
 		target_map: &HashMap<PathBuf, EntryWithPath>,
+		target_root: PathBuf,
 	) -> SyncOperations {
 		let mut operations = SyncOperations::default();
+		operations.source_to_target.destination_root = Some(target_root);
 
 		// Files in source but not target, or files that differ -> copy
 		for (path, source_entry_with_path) in source_map {
@@ -215,9 +270,15 @@ impl SyncResolver {
 		source_map: &HashMap<PathBuf, EntryWithPath>,
 		target_map: &HashMap<PathBuf, EntryWithPath>,
 		conduit: &sync_conduit::Model,
+		source_root: PathBuf,
+		target_root: PathBuf,
 	) -> Result<SyncOperations> {
 		let mut operations = SyncOperations::default();
-		operations.target_to_source = Some(DirectionalOps::default());
+		operations.source_to_target.destination_root = Some(target_root);
+		operations.target_to_source = Some(DirectionalOps {
+			destination_root: Some(source_root),
+			..Default::default()
+		});
 
 		// Get last sync generation for change detection
 		let last_gen = self.get_last_completed_generation(conduit.id).await?;

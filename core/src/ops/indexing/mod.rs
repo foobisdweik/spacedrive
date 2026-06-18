@@ -34,6 +34,7 @@ pub mod persistence;
 pub mod phases;
 pub mod processor;
 pub mod progress;
+pub mod reconciliation;
 pub mod responder;
 pub mod rules;
 pub mod state;
