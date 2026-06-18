@@ -74,11 +74,17 @@ export const ListView = memo(function ListView() {
 	}, []);
 
 	const handleContainerContextMenu = async (e: React.MouseEvent) => {
-		if (e.target === e.currentTarget) {
-			e.preventDefault();
-			e.stopPropagation();
-			await emptySpaceContextMenu.show(e);
+		const target = e.target as HTMLElement;
+		if (
+			target.closest("[data-file-id]") ||
+			target.closest("[data-list-header]")
+		) {
+			return;
 		}
+
+		e.preventDefault();
+		e.stopPropagation();
+		await emptySpaceContextMenu.show(e);
 	};
 
 	// Store values in refs to avoid effect re-runs
@@ -153,6 +159,7 @@ export const ListView = memo(function ListView() {
 			<DragSelect files={files} scrollRef={containerRef}>
 				{/* Sticky Header */}
 			<div
+				data-list-header
 				className="sticky top-0 z-10 border-b border-app-line bg-app/90 backdrop-blur-lg"
 				style={{ height: TABLE_HEADER_HEIGHT }}
 			>

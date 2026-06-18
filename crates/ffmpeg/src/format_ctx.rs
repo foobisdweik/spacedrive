@@ -7,10 +7,10 @@ use crate::{
 };
 
 use ffmpeg_sys_next::{
-	av_cmp_q, av_display_rotation_get, av_read_frame, av_reduce, av_stream_get_side_data,
-	avformat_close_input, avformat_find_stream_info, avformat_open_input, AVChapter, AVCodecID,
-	AVDictionary, AVFormatContext, AVMediaType, AVPacket, AVPacketSideDataType, AVRational,
-	AVStream, AV_DISPOSITION_ATTACHED_PIC, AV_DISPOSITION_CAPTIONS, AV_DISPOSITION_CLEAN_EFFECTS,
+	av_cmp_q, av_display_rotation_get, av_read_frame, av_reduce, avformat_close_input,
+	avformat_find_stream_info, avformat_open_input, AVChapter, AVCodecID, AVDictionary,
+	AVFormatContext, AVMediaType, AVPacket, AVPacketSideDataType, AVRational, AVStream,
+	AV_DISPOSITION_ATTACHED_PIC, AV_DISPOSITION_CAPTIONS, AV_DISPOSITION_CLEAN_EFFECTS,
 	AV_DISPOSITION_COMMENT, AV_DISPOSITION_DEFAULT, AV_DISPOSITION_DEPENDENT,
 	AV_DISPOSITION_DESCRIPTIONS, AV_DISPOSITION_DUB, AV_DISPOSITION_FORCED,
 	AV_DISPOSITION_HEARING_IMPAIRED, AV_DISPOSITION_KARAOKE, AV_DISPOSITION_LYRICS,
@@ -92,17 +92,27 @@ impl FFmpegFormatContext {
 		 * See libavutil/display.h for a detailed description of the data.
 		 * https://github.com/FFmpeg/FFmpeg/blob/n6.1.1/libavutil/display.h#L32-L71
 		 *
-		 * The pointer conversion is due to the fact that av_stream_get_side_data is a generic function that has no prior
-		 * knowledge of the type of the side data it is retrieving.
+		 * FFmpeg 8 stores global stream side data on codec parameters instead of exposing
+		 * av_stream_get_side_data.
 		 */
-		#[allow(clippy::cast_ptr_alignment)]
-		let matrix = (unsafe {
-			av_stream_get_side_data(
-				stream,
-				AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX,
-				ptr::null_mut(),
-			)
-		} as *const i32);
+		let Some(codec_params) = (unsafe { (*stream).codecpar.as_ref() }) else {
+			return 0.0;
+		};
+
+		if codec_params.coded_side_data.is_null() {
+			return 0.0;
+		}
+
+		let mut matrix = ptr::null();
+		for index in 0..codec_params.nb_coded_side_data {
+			let side_data = unsafe { codec_params.coded_side_data.add(index as usize).as_ref() };
+			if let Some(side_data) = side_data {
+				if side_data.type_ == AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX {
+					matrix = side_data.data.cast::<i32>();
+					break;
+				}
+			}
+		}
 
 		if matrix.is_null() {
 			0.0
@@ -142,7 +152,7 @@ impl FFmpegFormatContext {
 				continue;
 			};
 
-			let Some((codec_type, codec_id)) = unsafe { stream.codecpar.as_ref() }
+			let Some((codec_type, codec_id)) = unsafe { (*stream).codecpar.as_ref() }
 				.map(|codec_params| (codec_params.codec_type, codec_params.codec_id))
 			else {
 				continue;

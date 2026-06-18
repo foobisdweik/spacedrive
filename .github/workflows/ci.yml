@@ -24,33 +24,11 @@ concurrency:
 jobs:
   rustfmt:
     name: Rust Formatting
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: macos-14
     timeout-minutes: 10
     permissions:
       contents: read
     steps:
-      - name: Maximize build space
-        if: ${{ runner.os == 'Linux' }}
-        uses: easimon/maximize-build-space@master
-        with:
-          swap-size-mb: 3072
-          root-reserve-mb: 6144
-          remove-dotnet: "true"
-          remove-codeql: "true"
-          remove-haskell: "true"
-          remove-docker-images: "true"
-
-      - name: Symlink target to C:\
-        if: ${{ runner.os == 'Windows' }}
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path C:\spacedrive_target
-      - name: Symlink target to C:\
-        if: ${{ runner.os == 'Windows' }}
-        shell: powershell
-        run: |
-          New-Item -Path target -ItemType Junction -Value C:\spacedrive_target
-
       - name: Checkout repository
         uses: actions/checkout@v4
         # TODO: Re-enable when submodule repos are public
@@ -93,32 +71,14 @@ jobs:
       fail-fast: false # Don't cancel other platforms if one fails
       matrix:
         settings:
-          - host: ubuntu-22.04
-            target: blacksmith-4vcpu-ubuntu-2404
+          - host: macos-14
+            target: aarch64-apple-darwin
     name: Clippy (${{ matrix.settings.host }})
     runs-on: ${{ matrix.settings.host }}
     permissions:
       contents: read
     timeout-minutes: 45
     steps:
-      - name: Maximize build space
-        if: ${{ runner.os == 'Linux' }}
-        uses: easimon/maximize-build-space@master
-        with:
-          swap-size-mb: 3072
-          root-reserve-mb: 6144
-          remove-dotnet: "true"
-          remove-codeql: "true"
-          remove-haskell: "true"
-          remove-docker-images: "true"
-
-      - name: Symlink target to C:\
-        if: ${{ runner.os == 'Windows' }}
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path C:\spacedrive_target
-          New-Item -Path target -ItemType Junction -Value C:\spacedrive_target
-
       - name: Checkout repository
         uses: actions/checkout@v4
         # TODO: Re-enable when submodule repos are public
@@ -132,7 +92,7 @@ jobs:
         with:
           filters: |
             changes:
-              - ${{ runner.os == 'Windows' && 'scripts/setup.ps1' || 'scripts/setup.sh' }}
+              - 'scripts/setup.sh'
               - 'scripts/preprep.mjs'
               - 'apps/cli/**'
               - 'apps/desktop/crates/**'
@@ -156,7 +116,10 @@ jobs:
 
       - name: Run Clippy
         if: steps.filter.outcome != 'success' || steps.filter.outputs.changes == 'true'
-        run: cargo clippy --workspace --locked -- -D warnings
+        run: |
+          mkdir -p apps/tauri/dist
+          mkdir -p apps/web/dist
+          cargo clippy --workspace --locked -- -D warnings
 
       # - name: Run tests
       #   if: steps.filter.outcome != 'success' || steps.filter.outputs.changes == 'true'
@@ -164,7 +127,7 @@ jobs:
 
   typescript:
     name: TypeScript
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: macos-14
     timeout-minutes: 15
     permissions:
       contents: read

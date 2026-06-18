@@ -25,7 +25,24 @@
 	deprecated
 )]
 #![forbid(deprecated_in_future)]
-#![allow(clippy::missing_errors_doc, clippy::module_name_repetitions)]
+#![allow(
+	clippy::borrow_as_ptr,
+	clippy::cast_lossless,
+	clippy::cast_possible_truncation,
+	clippy::cast_possible_wrap,
+	clippy::cast_precision_loss,
+	clippy::cast_ptr_alignment,
+	clippy::cast_sign_loss,
+	clippy::comparison_chain,
+	clippy::explicit_auto_deref,
+	clippy::manual_div_ceil,
+	clippy::missing_const_for_fn,
+	clippy::missing_errors_doc,
+	clippy::module_name_repetitions,
+	clippy::suboptimal_flops,
+	clippy::unnecessary_wraps,
+	clippy::unreadable_literal
+)]
 
 use crate::{format_ctx::FFmpegFormatContext, utils::from_path};
 

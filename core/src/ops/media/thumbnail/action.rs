@@ -70,6 +70,7 @@ pub struct RegenerateThumbnailInput {
 	/// UUID of the entry to regenerate thumbnails for
 	pub entry_uuid: Uuid,
 	/// Optional variant names (defaults to grid@1x, grid@2x, detail@1x)
+	#[serde(default)]
 	pub variants: Option<Vec<String>>,
 	/// Force regeneration even if thumbnails exist
 	pub force: bool,

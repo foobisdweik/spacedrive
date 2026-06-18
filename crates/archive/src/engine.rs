@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::adapter::script::{ConfigField, ScriptAdapter};
-use crate::adapter::{Adapter, AdapterRegistry, AdapterUpdateResult, SyncReport};
+use crate::adapter::script::ScriptAdapter;
+use crate::adapter::{Adapter, AdapterRegistry, SyncReport};
 use crate::embed::EmbeddingModel;
 use crate::error::{Error, Result};
 use crate::registry::{NewSource, Registry, SourceInfo};
@@ -584,13 +584,10 @@ impl Engine {
 			Some(self.config.data_dir.join("bundled_adapters")),
 		];
 
-		for candidate in candidates.into_iter().flatten() {
-			if candidate.is_dir() {
-				return Some(candidate);
-			}
-		}
-
-		None
+		candidates
+			.into_iter()
+			.flatten()
+			.find(|candidate| candidate.is_dir())
 	}
 
 	/// Update an installed adapter from a source directory.

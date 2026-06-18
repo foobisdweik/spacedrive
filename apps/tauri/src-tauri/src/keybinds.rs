@@ -18,6 +18,7 @@ impl KeybindState {
 		}
 	}
 
+	#[allow(dead_code)]
 	pub fn get_accelerator(&self, id: &str) -> Option<String> {
 		self.registered.lock().unwrap().get(id).cloned()
 	}
@@ -35,6 +36,7 @@ impl Default for KeybindState {
 
 /// Event payload when a keybind is triggered
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct KeybindEvent {
 	pub id: String,
 }
@@ -80,6 +82,7 @@ pub async fn get_registered_keybinds(
 
 /// Emit a keybind trigger event to the frontend
 /// This can be called from Rust (e.g., from native menu actions) to trigger keybind handlers
+#[allow(dead_code)]
 pub fn emit_keybind_triggered(app: &AppHandle, id: &str) {
 	if let Err(e) = app.emit("keybind-triggered", KeybindEvent { id: id.to_string() }) {
 		tracing::error!("Failed to emit keybind-triggered event: {}", e);

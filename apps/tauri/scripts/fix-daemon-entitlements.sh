@@ -10,6 +10,7 @@ if [ "$(uname)" != "Darwin" ]; then
     exit 0
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUNDLE_PATH="$1"
 
 if [ -z "$BUNDLE_PATH" ]; then
@@ -17,8 +18,20 @@ if [ -z "$BUNDLE_PATH" ]; then
     exit 1
 fi
 
-DAEMON_PATH="$BUNDLE_PATH/Contents/MacOS/sd-daemon"
-ENTITLEMENTS_PATH="$(dirname "$0")/../src-tauri/DaemonEntitlements.plist"
+MACOS_DIR="$BUNDLE_PATH/Contents/MacOS"
+ENTITLEMENTS_PATH="$SCRIPT_DIR/../src-tauri/DaemonEntitlements.plist"
+
+if [ -f "$MACOS_DIR/sd-daemon" ]; then
+    DAEMON_PATH="$MACOS_DIR/sd-daemon"
+else
+    DAEMON_PATHS=("$MACOS_DIR"/sd-daemon-*)
+    if [ ${#DAEMON_PATHS[@]} -eq 1 ] && [ -f "${DAEMON_PATHS[0]}" ]; then
+        DAEMON_PATH="${DAEMON_PATHS[0]}"
+    else
+        echo "Error: Daemon not found in $MACOS_DIR"
+        exit 1
+    fi
+fi
 
 if [ ! -f "$DAEMON_PATH" ]; then
     echo "Error: Daemon not found at $DAEMON_PATH"
@@ -36,4 +49,10 @@ codesign --force --sign - \
     --options runtime \
     "$DAEMON_PATH"
 
-echo "✓ Daemon re-signed successfully"
+echo "Re-signing app bundle after daemon entitlement fix..."
+codesign --force --sign - \
+    --entitlements "$SCRIPT_DIR/../src-tauri/Entitlements.plist" \
+    --options runtime \
+    "$BUNDLE_PATH"
+
+echo "✓ Daemon and app bundle re-signed successfully"

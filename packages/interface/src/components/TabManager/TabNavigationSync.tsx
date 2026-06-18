@@ -15,6 +15,7 @@ function deriveTitleFromPath(pathname: string, search: string): string | null {
 		"/sources": "Sources",
 		"/sources/adapters": "Adapters",
 		"/search": "Search",
+		"/sync": "Sync Monitor",
 		"/jobs": "Jobs",
 		"/daemon": "Daemon",
 	};

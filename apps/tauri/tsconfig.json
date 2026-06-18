@@ -24,8 +24,14 @@
 		"baseUrl": ".",
 		"paths": {
 			"~/*": ["./src/*"],
-			"@spacebot/api-client": ["../../../spacebot/packages/api-client/src/index.ts"],
-			"@spacebot/api-client/*": ["../../../spacebot/packages/api-client/src/*"]
+			"@spacebot/api-client": [
+				"../../../spacebot/packages/api-client/src/index.ts",
+				"./src/spacebot-api-client.ts"
+			],
+			"@spacebot/api-client/*": [
+				"../../../spacebot/packages/api-client/src/*",
+				"./src/spacebot-api-client.ts"
+			]
 		}
 	},
 	"include": ["src", "vite.config.ts"],

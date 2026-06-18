@@ -13,6 +13,7 @@ import { RecentsView } from "./routes/explorer/views/RecentsView";
 import { SourcesHome } from "./routes/sources";
 import { SourceDetail } from "./routes/sources/SourceDetail";
 import { AdaptersScreen } from "./routes/sources/Adapters";
+import { SyncMonitorRoute } from "./components/SyncMonitor/SyncMonitorRoute";
 import { SpacebotProvider } from "./Spacebot/SpacebotContext";
 import { SpacebotLayout } from "./Spacebot/SpacebotLayout";
 import { ChatRoute } from "./Spacebot/routes/ChatRoute";
@@ -80,6 +81,10 @@ export const explorerRoutes = [
 			{
 				path: "sources/:sourceId",
 				element: <SourceDetail />,
+			},
+			{
+				path: "sync",
+				element: <SyncMonitorRoute />,
 			},
 			{
 				path: "redundancy",

@@ -40,7 +40,7 @@ pub const DEFAULT_QUARANTINE_THRESHOLD: u8 = 70;
 pub const DEFAULT_FLAG_THRESHOLD: u8 = 40;
 
 /// Trust tier for a data source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TrustTier {
 	/// User-created content (Obsidian notes, local files, personal calendar).
@@ -48,6 +48,7 @@ pub enum TrustTier {
 	/// Shared / multi-author spaces (Slack, Discord, GitHub).
 	Collaborative,
 	/// Third-party content (email inbox, RSS, web bookmarks, browser history).
+	#[default]
 	External,
 }
 
@@ -78,12 +79,6 @@ impl TrustTier {
 impl std::fmt::Display for TrustTier {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		f.write_str(self.as_str())
-	}
-}
-
-impl Default for TrustTier {
-	fn default() -> Self {
-		Self::External
 	}
 }
 

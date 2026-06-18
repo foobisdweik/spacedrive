@@ -1,0 +1,21 @@
+# Task Completion
+
+- Before finishing, review `git diff`/`git status --short` and separate your own edits from pre-existing user changes. Do not revert unrelated dirty worktree changes.
+- Run the narrowest formatter, compiler/linter, and test target that covers the change. Expand scope only when the change crosses shared behavior or public interfaces.
+- Rust changes:
+  - `cargo fmt` before completion.
+  - Use focused `cargo test <test_name>`, `cargo test --lib`, package tests, or `cargo build` depending on blast radius.
+  - Use `cargo clippy`/`cargo clippy --workspace` when lint coverage is relevant.
+- Daemon code changes:
+  - Build the affected daemon/core target.
+  - Run `cargo run --bin sd-cli -- restart` after rebuilding when validating a live daemon path.
+- Frontend/Tauri changes:
+  - Use generated `packages/ts-client` types.
+  - Run the app/package typecheck such as `cd apps/tauri && bun run typecheck` for desktop UI changes.
+  - For desktop runtime behavior, validate with `cd apps/tauri && bun run tauri:dev` when feasible.
+- Generated interface changes:
+  - Regenerate TypeScript with `cargo run --bin generate_typescript_types` and Swift with `cargo run --bin generate_swift_types` when exposed Rust types change.
+  - Confirm generated files were regenerated, not hand-edited.
+- Task tracking changes: run `cargo run -p task-validator -- validate` after editing `.tasks/`.
+- Documentation changes generally do not require full code validation; still check formatting/diff and any doc-specific command if the changed docs define one.
+- Report exactly what validation ran successfully and clearly state anything skipped or blocked.

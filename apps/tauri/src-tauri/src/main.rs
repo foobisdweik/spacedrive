@@ -11,7 +11,7 @@ mod windows;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::menu::MenuItem;
 use tauri::Emitter;
@@ -484,7 +484,7 @@ async fn validate_and_reset_library_if_needed(
 	app: AppHandle,
 	current_library_id_arc: &Arc<RwLock<Option<String>>>,
 	daemon_state: &Arc<RwLock<DaemonState>>,
-	data_dir: &PathBuf,
+	data_dir: &Path,
 ) -> Result<(), String> {
 	let current_library_id = {
 		let library_id = current_library_id_arc.read().await;
@@ -828,9 +828,6 @@ async fn subscribe_to_events(
 			);
 		}
 
-		// Explicitly shutdown and drop the stream to close the TCP connection
-		drop(writer);
-		drop(reader);
 		tracing::info!(subscription_id = subscription_id, "TCP connection closed");
 	});
 
@@ -2029,6 +2026,9 @@ fn main() {
 							tracing::warn!("Could not get NSWindow handle: {}", e);
 						}
 					}
+
+					window.show().ok();
+					window.set_focus().ok();
 				}
 
 				// Setup drag ended callback

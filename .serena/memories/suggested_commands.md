@@ -1,0 +1,34 @@
+# Suggested Commands
+
+- Setup:
+  - `just setup` runs `bun install` and `cargo xtask setup`.
+  - `bun install` is the JS dependency install path; root `preinstall` enforces Bun.
+- Core/daemon/CLI:
+  - `cargo build` builds default workspace members.
+  - `cargo test`, `cargo test <test_name>`, or `cargo test --lib` for focused Rust tests.
+  - `cargo clippy` or `cargo clippy --workspace` for linting depending on scope.
+  - `cargo fmt` formats Rust.
+  - `cargo run --bin sd-daemon` runs the local daemon.
+  - `cargo run --bin sd-cli -- <command>` runs the CLI; binary name is `sd-cli`, not `spacedrive`.
+  - `cargo run --bin sd-cli -- restart` restarts daemon after daemon code changes.
+  - `just dev-daemon *ARGS` runs `cargo run --features ffmpeg,heif --bin sd-daemon {{ARGS}}`.
+  - `just cli *ARGS` runs the CLI through `sd-cli`.
+- Desktop/Tauri:
+  - `cd apps/tauri && bun run tauri:dev` runs desktop dev mode and starts the daemon path expected by the app.
+  - `cd apps/tauri && bun run tauri:build` builds the app bundle.
+  - `cd apps/tauri && bun run typecheck` runs app TypeScript build checks.
+- Mobile:
+  - `cd apps/mobile && bun run start` starts Expo.
+  - `cd apps/mobile && bun run ios` or `bun run android` runs platform targets.
+  - `cd apps/mobile && bun run typecheck` checks mobile TypeScript.
+- Server:
+  - `cargo build -p sd-server` builds the headless server.
+  - `cargo run -p sd-server` runs development server mode.
+  - `DATA_DIR=/path/to/data cargo run -p sd-server --release` runs production-style server mode.
+- Generated clients:
+  - `cargo run --bin generate_typescript_types` regenerates `packages/ts-client/src/generated.ts`.
+  - `cargo run --bin generate_swift_types` regenerates Swift client sources.
+- Task tracking:
+  - `cargo run -p task-validator -- validate` validates `.tasks/`.
+  - `cargo run -p task-validator -- list --assignee "name" --status "In Progress"` filters tasks.
+- Repository navigation on Darwin/macOS: prefer `rg` and `rg --files`; avoid broad full-tree reads in this large workspace.

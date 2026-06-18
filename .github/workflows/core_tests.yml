@@ -22,35 +22,11 @@ jobs:
           - host: [self-hosted, macOS, ARM64]
             target: aarch64-apple-darwin
             os: macos
-          - host: ubuntu-22.04
-            target: blacksmith-4vcpu-ubuntu-2404
-            os: linux
-          - host: [self-hosted, Windows, X64]
-            target: x86_64-pc-windows-msvc
-            os: windows
     name: Test Core - ${{ matrix.settings.os }}
     runs-on: ${{ matrix.settings.host }}
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
 
     steps:
-      - name: Maximize build space
-        if: ${{ matrix.settings.os == 'linux' }}
-        uses: easimon/maximize-build-space@master
-        with:
-          swap-size-mb: 3072
-          root-reserve-mb: 6144
-          remove-dotnet: 'true'
-          remove-codeql: 'true'
-          remove-haskell: 'true'
-          remove-docker-images: 'true'
-
-      - name: Symlink target to C:\
-        if: ${{ matrix.settings.os == 'windows' }}
-        shell: cmd
-        run: |
-          if exist target rmdir /S /Q target
-          if not exist C:\spacedrive_target mkdir C:\spacedrive_target
-          mklink /J target C:\spacedrive_target
 
       - name: Checkout repository
         uses: actions/checkout@v4

@@ -40,6 +40,11 @@ export interface UseSearchFilesOptions {
 		content_types?: ContentKind[] | null;
 		include_hidden?: boolean | null;
 		include_archived?: boolean | null;
+		at_risk?: boolean | null;
+		on_volumes?: string[] | null;
+		not_on_volumes?: string[] | null;
+		min_volume_count?: number | null;
+		max_volume_count?: number | null;
 	};
 	/** Pagination limit */
 	limit?: number;
@@ -122,6 +127,11 @@ export function useSearchFiles(
 				content_types: filters?.content_types ?? null,
 				include_hidden: filters?.include_hidden ?? null,
 				include_archived: filters?.include_archived ?? null,
+				at_risk: filters?.at_risk ?? null,
+				on_volumes: filters?.on_volumes ?? null,
+				not_on_volumes: filters?.not_on_volumes ?? null,
+				min_volume_count: filters?.min_volume_count ?? null,
+				max_volume_count: filters?.max_volume_count ?? null,
 			},
 			sort: {
 				field: sortBy,

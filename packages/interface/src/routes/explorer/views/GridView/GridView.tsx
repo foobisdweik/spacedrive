@@ -45,11 +45,12 @@ export function GridView() {
 	};
 
 	const handleContainerContextMenu = async (e: React.MouseEvent) => {
-		if (e.target === e.currentTarget) {
-			e.preventDefault();
-			e.stopPropagation();
-			await emptySpaceContextMenu.show(e);
-		}
+		const target = e.target as HTMLElement;
+		if (target.closest("[data-file-id]")) return;
+
+		e.preventDefault();
+		e.stopPropagation();
+		await emptySpaceContextMenu.show(e);
 	};
 
 	// Conditional virtualization - use simple grid for small directories

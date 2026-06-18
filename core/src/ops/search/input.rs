@@ -54,26 +54,39 @@ pub enum SearchMode {
 /// Container for all structured filters
 #[derive(Debug, Clone, Serialize, Deserialize, Default, Type)]
 pub struct SearchFilters {
+	#[serde(default)]
 	pub file_types: Option<Vec<String>>,
+	#[serde(default)]
 	pub tags: Option<TagFilter>,
+	#[serde(default)]
 	pub date_range: Option<DateRangeFilter>,
+	#[serde(default)]
 	pub size_range: Option<SizeRangeFilter>,
+	#[serde(default)]
 	pub locations: Option<Vec<Uuid>>,
+	#[serde(default)]
 	pub content_types: Option<Vec<ContentKind>>,
+	#[serde(default)]
 	pub include_hidden: Option<bool>,
+	#[serde(default)]
 	pub include_archived: Option<bool>,
 
 	// Redundancy filters
 	/// Only return files that are at risk (true) or redundant (false).
 	/// At risk = content exists on exactly one volume.
+	#[serde(default)]
 	pub at_risk: Option<bool>,
 	/// Only return files whose content is present on these volumes
+	#[serde(default)]
 	pub on_volumes: Option<Vec<Uuid>>,
 	/// Only return files whose content is NOT present on these volumes
+	#[serde(default)]
 	pub not_on_volumes: Option<Vec<Uuid>>,
 	/// Minimum number of distinct volumes the content must exist on
+	#[serde(default)]
 	pub min_volume_count: Option<u32>,
 	/// Maximum number of distinct volumes the content can exist on
+	#[serde(default)]
 	pub max_volume_count: Option<u32>,
 }
 

@@ -1,0 +1,22 @@
+# Project Core
+
+- Spacedrive is a local-first daemon/client system around a Rust VDFS core. The daemon owns state, jobs, indexing, sync, and RPC; clients should stay thin.
+- Main source map:
+  - `core/`: Rust engine, daemon, CQRS operations, jobs, type generation.
+  - `apps/cli/`: `sd-cli` client binary. Prefer this over any `spacedrive` binary name.
+  - `apps/tauri/`: primary desktop app; Tauri 2 shell plus shared React UI.
+  - `apps/server/`: headless HTTP/RPC server with embedded daemon for NAS/server deployments.
+  - `apps/mobile/`: Expo/React Native app embedding `sd-mobile-core`.
+  - `packages/interface/`: shared React UI used by app surfaces.
+  - `packages/ts-client/`: generated TypeScript client; never hand-edit generated output.
+  - `packages/swift-client/`: generated Swift client; never hand-edit generated output.
+  - `crates/sdk/`, `crates/sdk-macros/`, `extensions/`: WASM extension SDK and examples.
+  - `.tasks/`: version-controlled task tracking files validated by `task-validator`.
+- Read focused docs before unfamiliar subsystem edits, especially under `docs/core/` and `docs/extensions/`.
+- Read `mem:core/core` for daemon/core operations, jobs, generated clients, and registry boundaries.
+- Read `mem:apps/core` for desktop/mobile/server/CLI entrypoints and app-specific command flow.
+- Read `mem:extensions/core` for extension SDK/WASM constraints.
+- Read `mem:tech_stack` for language/runtime/tool version pins.
+- Read `mem:conventions` for code style and architecture rules.
+- Read `mem:suggested_commands` for repo commands.
+- Read `mem:task_completion` before closing coding work.
