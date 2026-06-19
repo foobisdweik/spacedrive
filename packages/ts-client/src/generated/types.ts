@@ -1376,6 +1376,60 @@ permanent: boolean;
 recursive: boolean };
 
 /**
+ * Input for duplicating files or directories beside their originals.
+ */
+export type FileDuplicateInput = {
+/**
+ * Files or directories to duplicate.
+ */
+sources: SdPathBatch;
+/**
+ * Whether to verify checksums during duplicate copies.
+ */
+verify_checksum: boolean;
+/**
+ * Whether to preserve file timestamps.
+ */
+preserve_timestamps: boolean;
+/**
+ * Preferred copy method.
+ */
+copy_method: CopyMethod };
+
+/**
+ * Input for moving files or directories to a destination.
+ */
+export type FileMoveInput = {
+/**
+ * Source files or directories to move.
+ */
+sources: SdPathBatch;
+/**
+ * Destination path.
+ */
+destination: SdPath;
+/**
+ * Whether to overwrite existing destination files.
+ */
+overwrite: boolean;
+/**
+ * Whether to verify checksums during cross-device moves.
+ */
+verify_checksum: boolean;
+/**
+ * Whether to preserve file timestamps.
+ */
+preserve_timestamps: boolean;
+/**
+ * Preferred copy/move method.
+ */
+copy_method: CopyMethod;
+/**
+ * How to handle file conflicts.
+ */
+on_conflict: FileConflictResolution | null };
+
+/**
  * Types of file operations
  */
 export type FileOperation = "Copy" | "Move" | "Delete" | "Rename";
@@ -5164,6 +5218,8 @@ export type LibraryAction =
   |  { type: 'files.createFile'; input: CreateFileInput; output: CreateFileOutput }
   |  { type: 'files.createFolder'; input: CreateFolderInput; output: CreateFolderOutput }
   |  { type: 'files.delete'; input: FileDeleteInput; output: JobReceipt }
+  |  { type: 'files.duplicate'; input: FileDuplicateInput; output: JobReceipt }
+  |  { type: 'files.move'; input: FileMoveInput; output: JobReceipt }
   |  { type: 'files.rename'; input: FileRenameInput; output: JobReceipt }
   |  { type: 'files.validation'; input: FileValidationInput; output: FileValidationActionOutput }
   |  { type: 'indexing.start'; input: IndexInput; output: JobReceipt }
@@ -5305,6 +5361,8 @@ export const WIRE_METHODS = {
     'files.createFile': 'action:files.createFile.input',
     'files.createFolder': 'action:files.createFolder.input',
     'files.delete': 'action:files.delete.input',
+    'files.duplicate': 'action:files.duplicate.input',
+    'files.move': 'action:files.move.input',
     'files.rename': 'action:files.rename.input',
     'files.validation': 'action:files.validation.input',
     'indexing.start': 'action:indexing.start.input',
