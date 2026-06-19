@@ -1,4 +1,4 @@
-import { FolderPlus, Copy } from "@phosphor-icons/react";
+import { FolderPlus, Copy, FilePlus } from "@phosphor-icons/react";
 import { useContextMenu } from "../../../hooks/useContextMenu";
 import { useLibraryMutation } from "../../../contexts/SpacedriveContext";
 import { useExplorer } from "../context";
@@ -8,8 +8,52 @@ import { useFileOperationDialog } from "../../../components/modals/FileOperation
 export function useEmptySpaceContextMenu() {
 	const { currentPath } = useExplorer();
 	const createFolder = useLibraryMutation("files.createFolder");
+	const createFile = useLibraryMutation("files.createFile");
 	const clipboard = useClipboard();
 	const openFileOperation = useFileOperationDialog();
+
+	const createFolderWithUniqueName = async () => {
+		if (!currentPath) return;
+
+		for (let index = 0; index < 100; index++) {
+			const name = uniqueName("Untitled Folder", index);
+			try {
+				const result = await createFolder.mutateAsync({
+					parent: currentPath,
+					name,
+					items: [],
+				});
+				console.log("Created folder:", result);
+				return;
+			} catch (err) {
+				if (isExistingNameError(err)) continue;
+				throw err;
+			}
+		}
+
+		throw new Error("Could not find an available folder name");
+	};
+
+	const createFileWithUniqueName = async () => {
+		if (!currentPath) return;
+
+		for (let index = 0; index < 100; index++) {
+			const name = uniqueName("Untitled", index);
+			try {
+				const result = await createFile.mutateAsync({
+					parent: currentPath,
+					name,
+				});
+				console.log("Created file:", result);
+				return;
+			} catch (err) {
+				if (isExistingNameError(err)) continue;
+				throw err;
+			}
+		}
+
+		throw new Error("Could not find an available file name");
+	};
 
 	return useContextMenu({
 		items: [
@@ -19,15 +63,24 @@ export function useEmptySpaceContextMenu() {
 				onClick: async () => {
 					if (!currentPath) return;
 					try {
-						const result = await createFolder.mutateAsync({
-							parent: currentPath,
-							name: "Untitled Folder",
-							items: [],
-						});
-						console.log("Created folder:", result);
+						await createFolderWithUniqueName();
 					} catch (err) {
 						console.error("Failed to create folder:", err);
 						alert(`Failed to create folder: ${err}`);
+					}
+				},
+				condition: () => !!currentPath,
+			},
+			{
+				icon: FilePlus,
+				label: "New File",
+				onClick: async () => {
+					if (!currentPath) return;
+					try {
+						await createFileWithUniqueName();
+					} catch (err) {
+						console.error("Failed to create file:", err);
+						alert(`Failed to create file: ${err}`);
 					}
 				},
 				condition: () => !!currentPath,
@@ -76,4 +129,13 @@ export function useEmptySpaceContextMenu() {
 			},
 		],
 	});
+}
+
+function uniqueName(baseName: string, index: number) {
+	return index === 0 ? baseName : `${baseName} ${index + 1}`;
+}
+
+function isExistingNameError(error: unknown) {
+	const message = error instanceof Error ? error.message : String(error);
+	return message.toLowerCase().includes("already exists");
 }

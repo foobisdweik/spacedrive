@@ -1,12 +1,14 @@
 import { useRef, memo, useCallback } from "react";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import clsx from "clsx";
-import type { File, SdPath } from "@sd/ts-client";
+import type { DirectoryListingOutput, DirectorySortBy, File, SdPath } from "@sd/ts-client";
+import { isVirtualFile } from "@sd/ts-client";
 import { useNormalizedQuery } from "../../../../contexts/SpacedriveContext";
 import { ColumnItem } from "./ColumnItem";
 import { useExplorer } from "../../context";
 import { useFileContextMenu } from "../../hooks/useFileContextMenu";
 import { useSelection } from "../../SelectionContext";
+import { useOpenWith } from "../../../../hooks/useOpenWith";
 
 /**
  * Memoized wrapper for ColumnItem to prevent re-renders when selection changes elsewhere.
@@ -41,6 +43,12 @@ const ColumnItemWrapper = memo(
 			selected,
 		});
 
+		const physicalPath =
+			file.kind === "File" && "Physical" in file.sd_path
+				? [file.sd_path.Physical.path]
+				: [];
+		const { openWithDefault } = useOpenWith(physicalPath);
+
 		const handleClick = useCallback(
 			(multi: boolean, range: boolean) => {
 				onSelectFile(file, files, multi, range);
@@ -48,11 +56,21 @@ const ColumnItemWrapper = memo(
 			[file, files, onSelectFile],
 		);
 
-		const handleDoubleClick = useCallback(() => {
+		const handleDoubleClick = useCallback(async () => {
+			if (isVirtualFile(file) && file.sd_path) {
+				onNavigate(file.sd_path);
+				return;
+			}
+
 			if (file.kind === "Directory" && file.sd_path) {
 				onNavigate(file.sd_path);
+				return;
 			}
-		}, [file, onNavigate]);
+
+			if (file.kind === "File" && "Physical" in file.sd_path) {
+				await openWithDefault(file.sd_path.Physical.path);
+			}
+		}, [file, onNavigate, openWithDefault]);
 
 		const handleContextMenu = useCallback(
 			async (e: React.MouseEvent) => {
@@ -92,9 +110,9 @@ const ColumnItemWrapper = memo(
 		// Only re-render if selection state or file changed
 		if (prev.selected !== next.selected) return false;
 		if (prev.file !== next.file) return false;
+		if (prev.files !== next.files) return false;
 		if (prev.virtualRow.start !== next.virtualRow.start) return false;
 		if (prev.virtualRow.size !== next.virtualRow.size) return false;
-		// Ignore: files array, onSelectFile, contextMenu (passed through to handlers)
 		return true;
 	},
 );
@@ -135,7 +153,7 @@ export const Column = memo(function Column({
 			path: path!,
 			limit: null,
 			include_hidden: false,
-			sort_by: sortBy as any,
+			sort_by: sortBy as DirectorySortBy,
 			folders_first: viewSettings.foldersFirst,
 		},
 		resourceType: "file",
@@ -144,7 +162,10 @@ export const Column = memo(function Column({
 		// includeDescendants defaults to false for exact directory matching
 	});
 
-	const files = virtualFiles || (directoryQuery.data as any)?.files || [];
+	const files =
+		virtualFiles ??
+		(directoryQuery.data as DirectoryListingOutput | undefined)?.files ??
+		[];
 
 	const rowVirtualizer = useVirtualizer({
 		count: files.length,

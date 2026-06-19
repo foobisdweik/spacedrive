@@ -86,10 +86,14 @@ impl JobHandler for DeleteJob {
 		));
 
 		// Phase: Preparing
-		ctx.progress(Progress::Indeterminate(format!(
-			"Validating {} targets",
-			total_files
-		)));
+		ctx.progress(Progress::generic(
+			GenericProgress::new(
+				0.0,
+				"Preparing",
+				format!("Validating {} targets", total_files),
+			)
+			.with_completion(0, total_files as u64),
+		));
 
 		// Safety check for permanent deletion
 		if matches!(self.mode, DeleteMode::Permanent | DeleteMode::Secure)
@@ -104,7 +108,10 @@ impl JobHandler for DeleteJob {
 		self.validate_targets(&ctx).await?;
 
 		// Phase: Resolving paths
-		ctx.progress(Progress::Indeterminate("Resolving paths".to_string()));
+		ctx.progress(Progress::generic(
+			GenericProgress::new(0.05, "Resolving", "Resolving paths")
+				.with_completion(0, total_files as u64),
+		));
 
 		// Resolve Content paths to Physical paths before strategy selection
 		let mut resolved = Vec::with_capacity(self.targets.paths.len());
@@ -128,10 +135,14 @@ impl JobHandler for DeleteJob {
 		ctx.log(format!("Using strategy: {}", strategy_description));
 
 		// Phase: Deleting
-		ctx.progress(Progress::Indeterminate(format!(
-			"Deleting {} files ({})",
-			total_files, mode_str
-		)));
+		ctx.progress(Progress::generic(
+			GenericProgress::new(
+				0.1,
+				"Deleting",
+				format!("Deleting {} files ({})", total_files, mode_str),
+			)
+			.with_completion(0, total_files as u64),
+		));
 
 		// Execute deletion using selected strategy
 		let results = strategy
