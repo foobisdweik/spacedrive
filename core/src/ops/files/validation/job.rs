@@ -386,6 +386,14 @@ impl ValidationJob {
 	) -> JobResult<Vec<ValidationIssue>> {
 		let mut issues = Vec::new();
 
+		if file_info.size == 0 {
+			ctx.log(format!(
+				"Skipping content hash for empty file: {}",
+				file_info.path.display()
+			));
+			return Ok(issues);
+		}
+
 		// For integrity validation, we would need to compare against stored CAS ID
 		// This is a placeholder implementation
 		match ContentHashGenerator::generate_content_hash(local_path).await {

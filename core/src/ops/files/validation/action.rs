@@ -157,7 +157,7 @@ async fn build_preflight_output(
 			continue;
 		};
 
-		let source_metadata = match tokio::fs::metadata(source_path).await {
+		let source_metadata = match tokio::fs::symlink_metadata(source_path).await {
 			Ok(metadata) => metadata,
 			Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
 				issues.push(FileOperationPreflightIssue {
@@ -177,8 +177,9 @@ async fn build_preflight_output(
 			}
 		};
 
-		let (source_file_count, source_total_bytes) =
+		let (source_file_count, source_total_bytes, mut source_issues) =
 			summarize_path(source_path, &source_metadata).await?;
+		issues.append(&mut source_issues);
 		file_count += source_file_count;
 		total_bytes += source_total_bytes;
 
@@ -205,13 +206,39 @@ async fn build_preflight_output(
 		};
 
 		if let Some(parent) = actual_destination.parent() {
-			if !tokio::fs::try_exists(parent).await.unwrap_or(false) {
-				issues.push(FileOperationPreflightIssue {
-					kind: FileOperationPreflightIssueKind::MissingDestinationParent,
-					path: Some(SdPath::local(parent.to_path_buf())),
-					message: format!("Destination parent does not exist: {}", parent.display()),
-				});
-				continue;
+			match tokio::fs::metadata(parent).await {
+				Ok(metadata) if metadata.is_dir() => {}
+				Ok(_) => {
+					issues.push(FileOperationPreflightIssue {
+						kind: FileOperationPreflightIssueKind::DestinationNotDirectory,
+						path: Some(SdPath::local(parent.to_path_buf())),
+						message: format!(
+							"Destination parent is not a directory: {}",
+							parent.display()
+						),
+					});
+					continue;
+				}
+				Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+					issues.push(FileOperationPreflightIssue {
+						kind: FileOperationPreflightIssueKind::MissingDestinationParent,
+						path: Some(SdPath::local(parent.to_path_buf())),
+						message: format!("Destination parent does not exist: {}", parent.display()),
+					});
+					continue;
+				}
+				Err(e) => {
+					issues.push(FileOperationPreflightIssue {
+						kind: FileOperationPreflightIssueKind::IoError,
+						path: Some(SdPath::local(parent.to_path_buf())),
+						message: format!(
+							"Could not inspect destination parent {}: {}",
+							parent.display(),
+							e
+						),
+					});
+					continue;
+				}
 			}
 		}
 
@@ -253,11 +280,14 @@ async fn resolve_operation_destination(
 		Ok(metadata) if metadata.is_dir() => Ok(source_path
 			.file_name()
 			.map(|name| destination_path.join(name))),
+		Ok(_) if source_count == 1 => Ok(Some(destination_path.to_path_buf())),
 		Ok(_) => Ok(None),
 		Err(e) if e.kind() == std::io::ErrorKind::NotFound && source_count == 1 => {
 			Ok(Some(destination_path.to_path_buf()))
 		}
-		Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(source_path
+			.file_name()
+			.map(|name| destination_path.join(name))),
 		Err(e) => Err(ActionError::Internal(format!(
 			"Failed to inspect destination {}: {}",
 			destination_path.display(),
@@ -269,41 +299,71 @@ async fn resolve_operation_destination(
 async fn summarize_path(
 	path: &Path,
 	metadata: &std::fs::Metadata,
-) -> Result<(usize, u64), ActionError> {
-	if metadata.is_file() {
-		return Ok((1, metadata.len()));
+) -> Result<(usize, u64, Vec<FileOperationPreflightIssue>), ActionError> {
+	if metadata.is_file() || metadata.file_type().is_symlink() {
+		return Ok((1, metadata.len(), Vec::new()));
 	}
 
 	if !metadata.is_dir() {
-		return Ok((1, 0));
+		return Ok((1, 0, Vec::new()));
 	}
 
 	let mut count = 0usize;
 	let mut size = 0u64;
+	let mut issues = Vec::new();
 	let mut stack = vec![path.to_path_buf()];
 
 	while let Some(current) = stack.pop() {
-		let metadata = tokio::fs::metadata(&current)
-			.await
-			.map_err(|e| ActionError::Internal(format!("Failed to read metadata: {}", e)))?;
+		let metadata = match tokio::fs::symlink_metadata(&current).await {
+			Ok(metadata) => metadata,
+			Err(e) => {
+				issues.push(FileOperationPreflightIssue {
+					kind: FileOperationPreflightIssueKind::IoError,
+					path: Some(SdPath::local(current.clone())),
+					message: format!("Could not inspect {}: {}", current.display(), e),
+				});
+				continue;
+			}
+		};
 
-		if metadata.is_file() {
+		if metadata.is_file() || metadata.file_type().is_symlink() {
 			count += 1;
 			size += metadata.len();
 		} else if metadata.is_dir() {
-			let mut dir = tokio::fs::read_dir(&current)
-				.await
-				.map_err(|e| ActionError::Internal(format!("Failed to read directory: {}", e)))?;
+			let mut dir = match tokio::fs::read_dir(&current).await {
+				Ok(dir) => dir,
+				Err(e) => {
+					issues.push(FileOperationPreflightIssue {
+						kind: FileOperationPreflightIssueKind::IoError,
+						path: Some(SdPath::local(current.clone())),
+						message: format!("Could not read directory {}: {}", current.display(), e),
+					});
+					continue;
+				}
+			};
 
-			while let Some(entry) = dir.next_entry().await.map_err(|e| {
-				ActionError::Internal(format!("Failed to read directory entry: {}", e))
-			})? {
-				stack.push(entry.path());
+			loop {
+				match dir.next_entry().await {
+					Ok(Some(entry)) => stack.push(entry.path()),
+					Ok(None) => break,
+					Err(e) => {
+						issues.push(FileOperationPreflightIssue {
+							kind: FileOperationPreflightIssueKind::IoError,
+							path: Some(SdPath::local(current.clone())),
+							message: format!(
+								"Could not read directory entry in {}: {}",
+								current.display(),
+								e
+							),
+						});
+						break;
+					}
+				}
 			}
 		}
 	}
 
-	Ok((count, size))
+	Ok((count, size, issues))
 }
 
 fn entry_kind(metadata: &std::fs::Metadata) -> FileSystemEntryKind {
@@ -395,7 +455,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_resolve_rejects_file_destination() {
+	async fn test_resolve_accepts_single_source_existing_file_destination() {
 		let temp_dir = tempfile::tempdir().expect("temp dir");
 		let source = temp_dir.path().join("source.txt");
 		let destination = temp_dir.path().join("destination.txt");
@@ -407,7 +467,45 @@ mod tests {
 			resolve_operation_destination(&source, &destination, 1)
 				.await
 				.expect("resolve destination"),
-			None
+			Some(destination)
+		);
+	}
+
+	#[tokio::test]
+	async fn test_preflight_reports_existing_file_destination_conflict() {
+		let temp_dir = tempfile::tempdir().expect("temp dir");
+		let source = temp_dir.path().join("source.txt");
+		let destination = temp_dir.path().join("destination.txt");
+		tokio::fs::write(&source, b"source").await.expect("source");
+		tokio::fs::write(&destination, b"existing")
+			.await
+			.expect("destination");
+
+		let output = build_preflight_output(FileOperationPreflightInput {
+			sources: SdPathBatch::new(vec![SdPath::local(source)]),
+			destination: SdPath::local(destination),
+			operation: FileOperationKind::Copy,
+		})
+		.await
+		.expect("preflight");
+
+		assert!(output.can_execute);
+		assert!(output.requires_confirmation);
+		assert_eq!(output.conflicts.len(), 1);
+		assert_eq!(output.conflicts[0].existing_kind, FileSystemEntryKind::File);
+	}
+
+	#[tokio::test]
+	async fn test_resolve_missing_multi_source_destination_joins_source_name() {
+		let temp_dir = tempfile::tempdir().expect("temp dir");
+		let source = temp_dir.path().join("source.txt");
+		let destination = temp_dir.path().join("missing-destination");
+
+		assert_eq!(
+			resolve_operation_destination(&source, &destination, 2)
+				.await
+				.expect("resolve destination"),
+			Some(destination.join("source.txt"))
 		);
 	}
 }

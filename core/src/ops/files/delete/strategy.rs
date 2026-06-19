@@ -117,7 +117,6 @@ impl DeleteStrategy for LocalDeleteStrategy {
 				)
 				.with_current_path(result.path.clone())
 				.with_completion(completed, total_paths)
-				.with_bytes(result.bytes_freed, result.bytes_freed)
 				.with_errors(u64::from(!result.success), 0),
 			));
 
@@ -308,8 +307,10 @@ impl LocalDeleteStrategy {
 	pub async fn permanent_delete(&self, path: &Path) -> Result<(), std::io::Error> {
 		let metadata = fs::symlink_metadata(path).await?;
 
-		if metadata.is_file() || metadata.file_type().is_symlink() {
+		if metadata.is_file() {
 			fs::remove_file(path).await?;
+		} else if metadata.file_type().is_symlink() {
+			remove_link(path).await?;
 		} else if metadata.is_dir() {
 			fs::remove_dir_all(path).await?;
 		}
@@ -325,7 +326,7 @@ impl LocalDeleteStrategy {
 			self.secure_overwrite_file(path, metadata.len()).await?;
 			fs::remove_file(path).await?;
 		} else if metadata.file_type().is_symlink() {
-			fs::remove_file(path).await?;
+			remove_link(path).await?;
 		} else if metadata.is_dir() {
 			self.secure_delete_directory(path).await?;
 			fs::remove_dir_all(path).await?;
@@ -389,7 +390,7 @@ impl LocalDeleteStrategy {
 						.await?;
 					fs::remove_file(&entry_path).await?;
 				} else if file_type.is_symlink() {
-					fs::remove_file(&entry_path).await?;
+					remove_link(&entry_path).await?;
 				} else if file_type.is_dir() {
 					stack.push(entry_path);
 				}
@@ -397,6 +398,14 @@ impl LocalDeleteStrategy {
 		}
 
 		Ok(())
+	}
+}
+
+async fn remove_link(path: &Path) -> Result<(), std::io::Error> {
+	match fs::remove_file(path).await {
+		Ok(()) => Ok(()),
+		Err(e) if cfg!(target_os = "windows") => fs::remove_dir(path).await.or(Err(e)),
+		Err(e) => Err(e),
 	}
 }
 

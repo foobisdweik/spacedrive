@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import {
 	Files,
@@ -54,7 +54,8 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 	const [phase, setPhase] = useState<DialogPhase>({ type: "validating" });
 	const [preflight, setPreflight] = useState<FileOperationPreflightOutput | null>(null);
 	const [operation, setOperation] = useState<"copy" | "move">(props.operation);
-	const [conflictResolution, setConflictResolution] = useState<ConflictResolution>("Skip");
+	const [conflictResolution, setConflictResolution] = useState<ConflictResolution>("AutoModifyName");
+	const hasSelectedConflictResolution = useRef(false);
 
 	const validateFiles = useLibraryMutation("files.validation");
 	const copyFiles = useLibraryMutation("files.copy");
@@ -148,10 +149,10 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 
 				if (res.Preflight.issues.length > 0) {
 					setPhase({ type: "error", message: res.Preflight.issues[0].message });
-				} else if (!res.Preflight.requires_confirmation) {
-					void executeOperation("Skip");
 				} else {
-					setConflictResolution("AutoModifyName");
+					if (res.Preflight.requires_confirmation && !hasSelectedConflictResolution.current) {
+						setConflictResolution("AutoModifyName");
+					}
 					setPhase({ type: "form" });
 				}
 			} else {
@@ -205,16 +206,19 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 			// S - Skip
 			if (e.key === "s" && !e.metaKey && !e.ctrlKey) {
 				e.preventDefault();
+				hasSelectedConflictResolution.current = true;
 				setConflictResolution("Skip");
 			}
 			// K - Keep both
 			if (e.key === "k" && !e.metaKey && !e.ctrlKey) {
 				e.preventDefault();
+				hasSelectedConflictResolution.current = true;
 				setConflictResolution("AutoModifyName");
 			}
 			// O - Overwrite
 			if (e.key === "o" && !e.metaKey && !e.ctrlKey) {
 				e.preventDefault();
+				hasSelectedConflictResolution.current = true;
 				setConflictResolution("Overwrite");
 			}
 		};
@@ -293,6 +297,7 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 
 	const sourceCount = props.sources.length;
 	const pluralItems = sourceCount === 1 ? "item" : "items";
+	const conflictOptions = preflight?.requires_confirmation ?? true;
 
 	// Form state - let user choose operation and conflict resolution
 	return (
@@ -411,7 +416,7 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 				</div>
 
 				{/* Conflict resolution options */}
-				<div className="space-y-2">
+				{conflictOptions && <div className="space-y-2">
 					<div className="text-xs font-medium text-ink-dull mb-2">
 						If files already exist:
 					</div>
@@ -431,7 +436,10 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 										name="conflict-resolution"
 										value={option.value}
 										checked={conflictResolution === option.value}
-										onChange={() => setConflictResolution(option.value as ConflictResolution)}
+										onChange={() => {
+											hasSelectedConflictResolution.current = true;
+											setConflictResolution(option.value as ConflictResolution);
+										}}
 										className="size-4 accent-accent cursor-pointer"
 									/>
 									<span className="text-sm text-ink">{option.label}</span>
@@ -440,7 +448,7 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 							</label>
 						))}
 					</div>
-				</div>
+				</div>}
 			</div>
 		</Dialog>
 	);

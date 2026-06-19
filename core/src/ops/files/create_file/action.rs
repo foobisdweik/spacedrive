@@ -111,11 +111,27 @@ impl LibraryAction for CreateFileAction {
 
 async fn create_new_empty_file(path: &std::path::Path) -> Result<(), ActionError> {
 	if let Some(parent) = path.parent() {
-		if !tokio::fs::try_exists(parent).await.unwrap_or(false) {
-			return Err(ActionError::Validation {
-				field: "parent".to_string(),
-				message: format!("Parent directory does not exist: {}", parent.display()),
-			});
+		match tokio::fs::metadata(parent).await {
+			Ok(metadata) if metadata.is_dir() => {}
+			Ok(_) => {
+				return Err(ActionError::Validation {
+					field: "parent".to_string(),
+					message: format!("Parent path is not a directory: {}", parent.display()),
+				});
+			}
+			Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+				return Err(ActionError::Validation {
+					field: "parent".to_string(),
+					message: format!("Parent directory does not exist: {}", parent.display()),
+				});
+			}
+			Err(e) => {
+				return Err(ActionError::Internal(format!(
+					"Failed to inspect parent directory {}: {}",
+					parent.display(),
+					e
+				)));
+			}
 		}
 	}
 
@@ -124,7 +140,16 @@ async fn create_new_empty_file(path: &std::path::Path) -> Result<(), ActionError
 		.create_new(true)
 		.open(path)
 		.await
-		.map_err(|e| ActionError::Internal(format!("Failed to create file: {}", e)))?;
+		.map_err(|e| {
+			if e.kind() == std::io::ErrorKind::AlreadyExists {
+				ActionError::Validation {
+					field: "name".to_string(),
+					message: format!("A file already exists at {}", path.display()),
+				}
+			} else {
+				ActionError::Internal(format!("Failed to create file: {}", e))
+			}
+		})?;
 
 	Ok(())
 }
@@ -169,6 +194,22 @@ mod tests {
 			.await
 			.expect_err("existing file should fail");
 
-		assert!(matches!(err, ActionError::Internal(_)));
+		assert!(matches!(err, ActionError::Validation { .. }));
+	}
+
+	#[tokio::test]
+	async fn test_create_new_empty_file_rejects_parent_file() {
+		let temp_dir = tempfile::tempdir().expect("temp dir");
+		let parent_file = temp_dir.path().join("parent.txt");
+		let file_path = parent_file.join("new_file.txt");
+		tokio::fs::write(&parent_file, b"parent")
+			.await
+			.expect("seed parent file");
+
+		let err = create_new_empty_file(&file_path)
+			.await
+			.expect_err("parent file should fail");
+
+		assert!(matches!(err, ActionError::Validation { .. }));
 	}
 }
