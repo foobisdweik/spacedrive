@@ -133,6 +133,7 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 					overwrite: resolution === 'Overwrite',
 					verify_checksum: false,
 					preserve_timestamps: true,
+					move_files: false,
 					copy_method: 'Auto',
 					on_conflict: resolution
 				});
@@ -161,9 +162,7 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 		}
 
 		let isActive = true;
-		setPhase((current) =>
-			current.type === 'form' ? current : {type: 'validating'}
-		);
+		setPhase({type: 'validating'});
 
 		validateFiles
 			.mutateAsync({
@@ -615,10 +614,7 @@ function isSameOrNestedPhysicalDestination(
 }
 
 function normalizePathForComparison(path: string): string {
-	const normalized = path
-		.replace(/\\/g, '/')
-		.replace(/\/+$/, '')
-		.toLowerCase();
+	const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
 	return normalized || '/';
 }
 

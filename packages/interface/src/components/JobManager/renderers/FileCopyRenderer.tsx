@@ -51,18 +51,19 @@ function extractFirstFileName(job: JobRendererProps['job']): string {
 			sources.paths.length > 0
 		) {
 			const firstPath = sources.paths[0];
-			if (
-				typeof firstPath === 'object' &&
-				firstPath !== null &&
-				'Physical' in firstPath
-			) {
-				const physical = firstPath.Physical;
+			if (typeof firstPath === 'object' && firstPath !== null) {
+				const pathObj =
+					'Physical' in firstPath
+						? firstPath.Physical
+						: 'Cloud' in firstPath
+							? firstPath.Cloud
+							: null;
 				if (
-					typeof physical === 'object' &&
-					physical !== null &&
-					'path' in physical
+					typeof pathObj === 'object' &&
+					pathObj !== null &&
+					'path' in pathObj
 				) {
-					const path = String(physical.path);
+					const path = String(pathObj.path);
 					return path.split(/[\\/]/).pop() || path;
 				}
 			}

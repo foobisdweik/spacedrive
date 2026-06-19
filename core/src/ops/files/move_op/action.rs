@@ -65,9 +65,15 @@ impl LibraryAction for FileMoveAction {
 	async fn execute(
 		self,
 		library: Arc<Library>,
-		context: Arc<CoreContext>,
+		_context: Arc<CoreContext>,
 	) -> Result<Self::Output, ActionError> {
-		self.inner.execute(library, context).await
+		let action_kind = self.action_kind();
+		let job_handle = self
+			.inner
+			.execute_with_action_kind(library, action_kind)
+			.await?;
+
+		Ok(job_handle.into())
 	}
 
 	fn action_kind(&self) -> &'static str {

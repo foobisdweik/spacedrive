@@ -307,9 +307,19 @@ function canDuplicatePaths(paths: SdPath[]) {
 function duplicateParentKey(path: SdPath | undefined) {
 	if (!path || !('Physical' in path)) return null;
 
-	const normalizedPath = path.Physical.path.replace(/\\/g, '/');
+	const normalizedPath = path.Physical.path
+		.replace(/\\/g, '/')
+		.replace(/\/+$/, '');
+	if (
+		normalizedPath === '' ||
+		normalizedPath === '/' ||
+		normalizedPath.endsWith(':')
+	) {
+		return null;
+	}
+
 	const separatorIndex = normalizedPath.lastIndexOf('/');
 	if (separatorIndex < 0) return null;
 
-	return `${path.Physical.device_slug}:${normalizedPath.slice(0, separatorIndex)}`;
+	return `${path.Physical.device_slug}:${normalizedPath.slice(0, separatorIndex) || '/'}`;
 }
