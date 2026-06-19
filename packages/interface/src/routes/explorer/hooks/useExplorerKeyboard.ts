@@ -1,15 +1,22 @@
-import { useEffect } from "react";
-import { useExplorer } from "../context";
-import { useSelection } from "../SelectionContext";
-import { useNormalizedQuery } from "../../../contexts/SpacedriveContext";
-import type { DirectoryListingOutput, DirectorySortBy } from "@sd/ts-client";
-import { useTypeaheadSearch } from "./useTypeaheadSearch";
-import { useKeybind } from "../../../hooks/useKeybind";
-import { useKeybindScope } from "../../../hooks/useKeybindScope";
-import { useClipboard } from "../../../hooks/useClipboard";
-import { useFileOperationDialog } from "../../../components/modals/FileOperationModal";
-import { useDeleteFiles } from "./useDeleteFiles";
-import { isInputFocused } from "../../../util/keybinds/platform";
+import type {
+	DirectoryListingOutput,
+	DirectorySortBy,
+	SdPath
+} from '@sd/ts-client';
+import {useEffect} from 'react';
+import {useFileOperationDialog} from '../../../components/modals/FileOperationModal';
+import {
+	useLibraryMutation,
+	useNormalizedQuery
+} from '../../../contexts/SpacedriveContext';
+import {useClipboard} from '../../../hooks/useClipboard';
+import {useKeybind} from '../../../hooks/useKeybind';
+import {useKeybindScope} from '../../../hooks/useKeybindScope';
+import {isInputFocused} from '../../../util/keybinds/platform';
+import {useExplorer} from '../context';
+import {useSelection} from '../SelectionContext';
+import {useDeleteFiles} from './useDeleteFiles';
+import {useTypeaheadSearch} from './useTypeaheadSearch';
 
 export function useExplorerKeyboard() {
 	const {
@@ -22,7 +29,7 @@ export function useExplorerKeyboard() {
 		inspectorVisible,
 		openQuickPreview,
 		tagModeActive,
-		setTagModeActive,
+		setTagModeActive
 	} = useExplorer();
 	const {
 		selectedFiles,
@@ -32,32 +39,37 @@ export function useExplorerKeyboard() {
 		setFocusedIndex,
 		setSelectedFiles,
 		startRename,
-		isRenaming,
+		isRenaming
 	} = useSelection();
 	const clipboard = useClipboard();
 	const openFileOperation = useFileOperationDialog();
-	const { deleteFiles, isPending: isDeleting } = useDeleteFiles();
+	const {deleteFiles, isPending: isDeleting} = useDeleteFiles();
+	const duplicateFiles = useLibraryMutation('files.duplicate');
 
 	// Activate explorer keybind scope when this hook is active
-	useKeybindScope("explorer");
+	useKeybindScope('explorer');
 
 	// Query files for keyboard operations
 	const directoryQuery = useNormalizedQuery({
-		query: "files.directory_listing",
+		query: 'files.directory_listing',
 		input: currentPath
 			? {
 					path: currentPath,
 					limit: null,
 					include_hidden: false,
-					sort_by: sortBy as DirectorySortBy,
+					sort_by: sortBy as DirectorySortBy
 				}
 			: null!,
-		resourceType: "file",
+		resourceType: 'file',
 		enabled: !!currentPath,
-		pathScope: currentPath ?? undefined,
+		pathScope: currentPath ?? undefined
 	});
 
-	const files = (directoryQuery.data as DirectoryListingOutput | undefined)?.files || [];
+	const files =
+		(directoryQuery.data as DirectoryListingOutput | undefined)?.files ||
+		[];
+	const selectedFilePaths = selectedFiles.map((f) => f.sd_path);
+	const canDuplicateSelection = canDuplicatePaths(selectedFilePaths);
 
 	// Typeahead search (disabled for column view - it handles its own)
 	const typeahead = useTypeaheadSearch({
@@ -66,48 +78,66 @@ export function useExplorerKeyboard() {
 			setFocusedIndex(index);
 			setSelectedFiles([file]);
 		},
-		enabled: viewMode !== "column",
+		enabled: viewMode !== 'column'
 	});
 
 	// Copy: Store selected files in clipboard
 	useKeybind(
-		"explorer.copy",
+		'explorer.copy',
 		() => {
 			if (isRenaming) return;
 			if (selectedFiles.length === 0) return;
 			const sdPaths = selectedFiles.map((f) => f.sd_path);
 			clipboard.copyFiles(sdPaths, currentPath);
 		},
-		{ enabled: selectedFiles.length > 0 && !isRenaming },
+		{enabled: selectedFiles.length > 0 && !isRenaming}
 	);
 
 	// Cut: Store selected files in clipboard with cut operation
 	useKeybind(
-		"explorer.cut",
+		'explorer.cut',
 		() => {
 			if (isRenaming) return;
 			if (selectedFiles.length === 0) return;
 			const sdPaths = selectedFiles.map((f) => f.sd_path);
 			clipboard.cutFiles(sdPaths, currentPath);
 		},
-		{ enabled: selectedFiles.length > 0 && !isRenaming },
+		{enabled: selectedFiles.length > 0 && !isRenaming}
+	);
+
+	useKeybind(
+		'explorer.duplicate',
+		() => {
+			if (isRenaming) return;
+			if (selectedFiles.length === 0) return;
+			duplicateFiles.mutate({
+				sources: {paths: selectedFilePaths},
+				verify_checksum: false,
+				preserve_timestamps: true,
+				copy_method: 'Auto'
+			});
+		},
+		{
+			enabled:
+				selectedFiles.length > 0 && !isRenaming && canDuplicateSelection
+		}
 	);
 
 	// Paste: Open file operation modal with clipboard contents
 	useKeybind(
-		"explorer.paste",
+		'explorer.paste',
 		() => {
 			if (isRenaming) return;
 			if (!clipboard.hasClipboard() || !currentPath) return;
 
-			const operation = clipboard.operation === "cut" ? "move" : "copy";
+			const operation = clipboard.operation === 'cut' ? 'move' : 'copy';
 
 			console.groupCollapsed(
-				`[Clipboard] Pasting ${clipboard.files.length} file${clipboard.files.length === 1 ? "" : "s"} (${operation})`,
+				`[Clipboard] Pasting ${clipboard.files.length} file${clipboard.files.length === 1 ? '' : 's'} (${operation})`
 			);
-			console.log("Operation:", operation);
-			console.log("Destination:", currentPath);
-			console.log("Source files (SdPath objects):");
+			console.log('Operation:', operation);
+			console.log('Destination:', currentPath);
+			console.log('Source files (SdPath objects):');
 			clipboard.files.forEach((file, index) => {
 				console.log(`  [${index}]:`, JSON.stringify(file, null, 2));
 			});
@@ -117,73 +147,72 @@ export function useExplorerKeyboard() {
 				operation,
 				sources: clipboard.files,
 				destination: currentPath,
-				onComplete: () => {
-					// Clear clipboard after cut operation completes
-					if (clipboard.operation === "cut") {
+				onComplete: (completedOperation) => {
+					if (completedOperation === 'move') {
 						console.log(
-							"[Clipboard] Operation completed, clearing clipboard",
+							'[Clipboard] Operation completed, clearing clipboard'
 						);
 						clipboard.clearClipboard();
 					} else {
-						console.log("[Clipboard] Copy operation completed");
+						console.log('[Clipboard] Copy operation completed');
 					}
-				},
+				}
 			});
 		},
-		{ enabled: clipboard.hasClipboard() && !!currentPath && !isRenaming },
+		{enabled: clipboard.hasClipboard() && !!currentPath && !isRenaming}
 	);
 
 	// Rename: Enter key triggers rename mode for any selected file or directory
 	useKeybind(
-		"explorer.renameFile",
+		'explorer.renameFile',
 		() => {
 			if (selectedFiles.length === 1 && !isRenaming) {
 				startRename(selectedFiles[0].id);
 			}
 		},
-		{ enabled: selectedFiles.length === 1 && !isRenaming },
+		{enabled: selectedFiles.length === 1 && !isRenaming}
 	);
 
 	// Tag mode: T key enters tag assignment mode
 	useKeybind(
-		"explorer.enterTagMode",
+		'explorer.enterTagMode',
 		() => {
 			setTagModeActive(true);
 		},
-		{ enabled: !tagModeActive },
+		{enabled: !tagModeActive}
 	);
 
 	// Quick Preview: Spacebar opens quick preview
 	useKeybind(
-		"explorer.toggleQuickPreview",
+		'explorer.toggleQuickPreview',
 		() => {
 			if (selectedFiles.length === 1) {
 				openQuickPreview(selectedFiles[0].id);
 			}
 		},
-		{ enabled: selectedFiles.length === 1 },
+		{enabled: selectedFiles.length === 1}
 	);
 
 	// Delete: Move to trash
 	useKeybind(
-		"explorer.delete",
+		'explorer.delete',
 		async () => {
 			if (isRenaming) return;
 			const ok = await deleteFiles(selectedFiles, false);
 			if (ok) clearSelection();
 		},
-		{ enabled: selectedFiles.length > 0 && !isDeleting && !isRenaming },
+		{enabled: selectedFiles.length > 0 && !isDeleting && !isRenaming}
 	);
 
 	// Permanent Delete: Shift+Delete / Cmd+Alt+Backspace
 	useKeybind(
-		"explorer.permanentDelete",
+		'explorer.permanentDelete',
 		async () => {
 			if (isRenaming) return;
 			const ok = await deleteFiles(selectedFiles, true);
 			if (ok) clearSelection();
 		},
-		{ enabled: selectedFiles.length > 0 && !isDeleting && !isRenaming },
+		{enabled: selectedFiles.length > 0 && !isDeleting && !isRenaming}
 	);
 
 	useEffect(() => {
@@ -193,15 +222,15 @@ export function useExplorerKeyboard() {
 
 			// Arrow keys: Navigation
 			if (
-				["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(
-					e.key,
+				['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(
+					e.key
 				)
 			) {
 				// Skip views that handle their own keyboard navigation
 				if (
-					viewMode === "column" ||
-					viewMode === "media" ||
-					viewMode === "grid"
+					viewMode === 'column' ||
+					viewMode === 'media' ||
+					viewMode === 'grid'
 				) {
 					return;
 				}
@@ -212,11 +241,11 @@ export function useExplorerKeyboard() {
 
 				let newIndex = focusedIndex;
 
-				if (viewMode === "list") {
+				if (viewMode === 'list') {
 					// List view: only up/down
-					if (e.key === "ArrowUp")
+					if (e.key === 'ArrowUp')
 						newIndex = Math.max(0, focusedIndex - 1);
-					if (e.key === "ArrowDown")
+					if (e.key === 'ArrowDown')
 						newIndex = Math.min(files.length - 1, focusedIndex + 1);
 				}
 
@@ -228,14 +257,14 @@ export function useExplorerKeyboard() {
 			}
 
 			// Cmd/Ctrl+A: Select all
-			if ((e.metaKey || e.ctrlKey) && e.key === "a") {
+			if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
 				e.preventDefault();
 				selectAll(files);
 				return;
 			}
 
 			// Escape: Clear selection
-			if (e.code === "Escape" && selectedFiles.length > 0) {
+			if (e.code === 'Escape' && selectedFiles.length > 0) {
 				clearSelection();
 			}
 
@@ -243,9 +272,9 @@ export function useExplorerKeyboard() {
 			typeahead.handleKey(e);
 		};
 
-		window.addEventListener("keydown", handleKeyDown);
+		window.addEventListener('keydown', handleKeyDown);
 		return () => {
-			window.removeEventListener("keydown", handleKeyDown);
+			window.removeEventListener('keydown', handleKeyDown);
 			typeahead.cleanup();
 		};
 	}, [
@@ -263,6 +292,34 @@ export function useExplorerKeyboard() {
 		setSelectedFiles,
 		openQuickPreview,
 		isRenaming,
-		typeahead,
+		typeahead
 	]);
+}
+
+function canDuplicatePaths(paths: SdPath[]) {
+	const firstParent = duplicateParentKey(paths[0]);
+	return (
+		!!firstParent &&
+		paths.every((path) => duplicateParentKey(path) === firstParent)
+	);
+}
+
+function duplicateParentKey(path: SdPath | undefined) {
+	if (!path || !('Physical' in path)) return null;
+
+	const normalizedPath = path.Physical.path
+		.replace(/\\/g, '/')
+		.replace(/\/+$/, '');
+	if (
+		normalizedPath === '' ||
+		normalizedPath === '/' ||
+		normalizedPath.endsWith(':')
+	) {
+		return null;
+	}
+
+	const separatorIndex = normalizedPath.lastIndexOf('/');
+	if (separatorIndex < 0) return null;
+
+	return `${path.Physical.device_slug}:${normalizedPath.slice(0, separatorIndex) || '/'}`;
 }

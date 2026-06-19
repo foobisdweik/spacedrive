@@ -22,9 +22,9 @@ import {
 	Video,
 	Waveform
 } from '@phosphor-icons/react';
-import type {File} from '@sd/ts-client';
+import type {File, SdPath} from '@sd/ts-client';
 import {getContentKind, isVirtualFile} from '@sd/ts-client';
-import { toast } from '@spacedrive/primitives';
+import {toast} from '@spacedrive/primitives';
 import {useFileOperationDialog} from '../../../components/modals/FileOperationModal';
 import {usePlatform} from '../../../contexts/PlatformContext';
 import {useLibraryMutation} from '../../../contexts/SpacedriveContext';
@@ -63,6 +63,7 @@ export function useFileContextMenu({
 	const transcribeAudio = useLibraryMutation('media.speech.transcribe');
 	const generateThumbstrip = useLibraryMutation('media.thumbstrip.generate');
 	const generateProxy = useLibraryMutation('media.proxy.generate');
+	const duplicateFiles = useLibraryMutation('files.duplicate');
 
 	// Helper to run a mutation on each target file
 	const forEachTarget = async (
@@ -86,7 +87,10 @@ export function useFileContextMenu({
 		const targets =
 			selected && selectedFiles.length > 0 ? selectedFiles : [file];
 		return targets
-			.filter((f): f is File => f != null && f.sd_path != null && 'Physical' in f.sd_path)
+			.filter(
+				(f): f is File =>
+					f != null && f.sd_path != null && 'Physical' in f.sd_path
+			)
 			.map((f) => (f.sd_path as any).Physical.path);
 	};
 
@@ -300,6 +304,33 @@ export function useFileContextMenu({
 				condition: () => !hasVirtualFiles
 			},
 			{
+				icon: Copy,
+				label:
+					selected && selectedFiles.length > 1
+						? `Duplicate ${selectedFiles.length} items`
+						: 'Duplicate',
+				onClick: () => {
+					const targets = getTargetFiles();
+					const sdPaths = targets.map((f) => f.sd_path);
+					if (!canDuplicatePaths(sdPaths)) {
+						toast.error(
+							'Duplicate is only available for physical files in the same folder.'
+						);
+						return;
+					}
+					duplicateFiles.mutate({
+						sources: {paths: sdPaths},
+						verify_checksum: false,
+						preserve_timestamps: true,
+						copy_method: 'Auto'
+					});
+				},
+				keybindId: 'explorer.duplicate',
+				condition: () =>
+					!hasVirtualFiles &&
+					canDuplicatePaths(getTargetFiles().map((f) => f.sd_path))
+			},
+			{
 				icon: Scissors,
 				label:
 					selected && selectedFiles.length > 1
@@ -330,12 +361,21 @@ export function useFileContextMenu({
 
 					const operation =
 						clipboard.operation === 'cut' ? 'move' : 'copy';
+					const destination =
+						file?.kind === 'Directory' ? file.sd_path : currentPath;
+
+					if (!destination) {
+						console.log(
+							'[Clipboard] Nothing to paste or no destination'
+						);
+						return;
+					}
 
 					console.groupCollapsed(
 						`[Clipboard] Pasting ${clipboard.files.length} file${clipboard.files.length === 1 ? '' : 's'} (${operation})`
 					);
 					console.log('Operation:', operation);
-					console.log('Destination:', currentPath);
+					console.log('Destination:', destination);
 					console.log('Source files (SdPath objects):');
 					clipboard.files.forEach((file, index) => {
 						console.log(
@@ -348,10 +388,9 @@ export function useFileContextMenu({
 					openFileOperation({
 						operation,
 						sources: clipboard.files,
-						destination: currentPath,
-						onComplete: () => {
-							// Clear clipboard after cut operation completes
-							if (clipboard.operation === 'cut') {
+						destination,
+						onComplete: (completedOperation) => {
+							if (completedOperation === 'move') {
 								console.log(
 									'[Clipboard] Operation completed, clearing clipboard'
 								);
@@ -657,4 +696,32 @@ export function useFileContextMenu({
 			}
 		]
 	});
+}
+
+function canDuplicatePaths(paths: SdPath[]) {
+	const firstParent = duplicateParentKey(paths[0]);
+	return (
+		!!firstParent &&
+		paths.every((path) => duplicateParentKey(path) === firstParent)
+	);
+}
+
+function duplicateParentKey(path: SdPath | undefined) {
+	if (!path || !('Physical' in path)) return null;
+
+	const normalizedPath = path.Physical.path
+		.replace(/\\/g, '/')
+		.replace(/\/+$/, '');
+	if (
+		normalizedPath === '' ||
+		normalizedPath === '/' ||
+		normalizedPath.endsWith(':')
+	) {
+		return null;
+	}
+
+	const separatorIndex = normalizedPath.lastIndexOf('/');
+	if (separatorIndex < 0) return null;
+
+	return `${path.Physical.device_slug}:${normalizedPath.slice(0, separatorIndex) || '/'}`;
 }

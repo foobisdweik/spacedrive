@@ -10,10 +10,11 @@ use crate::{
 	infra::{
 		action::{
 			builder::{ActionBuildError, ActionBuilder},
+			context::{sanitize_action_input, ActionContext},
 			error::ActionError,
 			ConfirmationRequest, LibraryAction, ValidationResult,
 		},
-		job::handle::JobHandle,
+		job::{handle::JobHandle, types::JobPriority},
 	},
 };
 use serde::{Deserialize, Serialize};
@@ -247,6 +248,54 @@ impl FileCopyAction {
 		FileCopyActionBuilder::new()
 	}
 
+	pub async fn execute_with_action_kind(
+		self,
+		library: std::sync::Arc<crate::library::Library>,
+		action_kind: &'static str,
+	) -> Result<JobHandle, ActionError> {
+		// Apply conflict resolution to options
+		let mut options = self.options.clone();
+
+		// Pass the conflict resolution to the job
+		options.conflict_resolution = self.on_conflict;
+
+		// Set overwrite flag based on resolution
+		if let Some(resolution) = self.on_conflict {
+			match resolution {
+				FileConflictResolution::Overwrite => {
+					options.overwrite = true;
+				}
+				FileConflictResolution::AutoModifyName | FileConflictResolution::Skip => {
+					// These are handled per-file in the job
+					options.overwrite = false;
+				}
+				FileConflictResolution::Abort => {
+					// This should have been handled in resolve_confirmation
+					return Err(ActionError::Cancelled);
+				}
+			}
+		}
+
+		let action_context = ActionContext::new(
+			action_kind,
+			sanitize_action_input(&self),
+			serde_json::json!({
+				"operation": action_kind,
+				"trigger": "user_action",
+			}),
+		);
+
+		let job = FileCopyJob::new(self.sources, self.destination).with_options(options);
+
+		let job_handle = library
+			.jobs()
+			.dispatch_with_priority(job, JobPriority::NORMAL, Some(action_context))
+			.await
+			.map_err(ActionError::Job)?;
+
+		Ok(job_handle)
+	}
+
 	/// Quick builder for copying a single file
 	pub fn copy_file<S: Into<PathBuf>, D: Into<PathBuf>>(
 		source: S,
@@ -378,40 +427,12 @@ impl LibraryAction for FileCopyAction {
 	}
 
 	async fn execute(
-		mut self,
+		self,
 		library: std::sync::Arc<crate::library::Library>,
 		_context: Arc<CoreContext>,
 	) -> Result<Self::Output, ActionError> {
-		// Apply conflict resolution to options
-		let mut options = self.options.clone();
-
-		// Pass the conflict resolution to the job
-		options.conflict_resolution = self.on_conflict;
-
-		// Set overwrite flag based on resolution
-		if let Some(resolution) = self.on_conflict {
-			match resolution {
-				FileConflictResolution::Overwrite => {
-					options.overwrite = true;
-				}
-				FileConflictResolution::AutoModifyName | FileConflictResolution::Skip => {
-					// These are handled per-file in the job
-					options.overwrite = false;
-				}
-				FileConflictResolution::Abort => {
-					// This should have been handled in resolve_confirmation
-					return Err(ActionError::Cancelled);
-				}
-			}
-		}
-
-		let job = FileCopyJob::new(self.sources, self.destination).with_options(options);
-
-		let job_handle = library
-			.jobs()
-			.dispatch(job)
-			.await
-			.map_err(ActionError::Job)?;
+		let action_kind = self.action_kind();
+		let job_handle = self.execute_with_action_kind(library, action_kind).await?;
 
 		Ok(job_handle.into())
 	}
