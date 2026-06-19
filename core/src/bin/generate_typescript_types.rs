@@ -120,6 +120,16 @@ fn generate_wire_methods<T: WireMethodMember + Clone>(
 	code.push_str("  },\n\n");
 }
 
+fn strip_trailing_whitespace(input: &str) -> String {
+	let mut output = input
+		.lines()
+		.map(str::trim_end)
+		.collect::<Vec<_>>()
+		.join("\n");
+	output.push('\n');
+	output
+}
+
 /// Print summary statistics for API structure
 fn print_summary(api_structure: &SpacedriveApiStructure) {
 	println!("\nSummary:");
@@ -279,6 +289,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	// Always write the file, even if type generation had issues
 	// The wire method mappings and type unions are still valuable!
+	let typescript_code = strip_trailing_whitespace(&typescript_code);
 	std::fs::write(&output_path, &typescript_code)?;
 
 	println!("\nGenerated TypeScript types to: {}", output_path.display());

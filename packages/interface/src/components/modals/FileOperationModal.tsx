@@ -15,7 +15,12 @@ import {
 	useDialog,
 	type UseDialogProps,
 } from "@spacedrive/primitives";
-import type { SdPath, File as FileType } from "@sd/ts-client";
+import type {
+	FileOperationPreflightOutput,
+	FileValidationActionOutput,
+	SdPath,
+	File as FileType,
+} from "@sd/ts-client";
 import { useLibraryMutation, useLibraryQuery } from "../../contexts/SpacedriveContext";
 import { File, FileStack } from "../../routes/explorer/File";
 
@@ -30,6 +35,7 @@ interface FileOperationDialogProps {
 type ConflictResolution = "Overwrite" | "AutoModifyName" | "Skip" | "Abort";
 
 type DialogPhase =
+	| { type: "validating" }
 	| { type: "form" }
 	| { type: "executing" }
 	| { type: "error"; message: string };
@@ -45,10 +51,12 @@ export function useFileOperationDialog() {
 function FileOperationDialog(props: FileOperationDialogProps) {
 	const dialog = useDialog(props);
 	const form = useForm();
-	const [phase, setPhase] = useState<DialogPhase>({ type: "form" });
+	const [phase, setPhase] = useState<DialogPhase>({ type: "validating" });
+	const [preflight, setPreflight] = useState<FileOperationPreflightOutput | null>(null);
 	const [operation, setOperation] = useState<"copy" | "move">(props.operation);
 	const [conflictResolution, setConflictResolution] = useState<ConflictResolution>("Skip");
 
+	const validateFiles = useLibraryMutation("files.validation");
 	const copyFiles = useLibraryMutation("files.copy");
 
 	// Fetch file info for sources (up to 3 for FileStack)
@@ -85,34 +93,21 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 		return false;
 	});
 
-	// Auto-close if invalid operation (must be in useEffect to avoid render loop)
-	useEffect(() => {
-		if (hasSameSourceDest) {
-			dialogManager.setState(props.id, { open: false });
-		}
-	}, [hasSameSourceDest, props.id]);
-
-	if (hasSameSourceDest) {
-		return null;
-	}
-
-	const handleSubmit = async () => {
+	const executeOperation = async (resolution: ConflictResolution = conflictResolution) => {
 		try {
 			setPhase({ type: "executing" });
 
-			// Execute with the user's chosen operation and conflict resolution
 			await copyFiles.mutateAsync({
 				sources: { paths: props.sources },
 				destination: props.destination,
-				overwrite: conflictResolution === "Overwrite",
+				overwrite: resolution === "Overwrite",
 				verify_checksum: false,
 				preserve_timestamps: true,
 				move_files: operation === "move",
 				copy_method: "Auto",
-				on_conflict: conflictResolution,
+				on_conflict: resolution,
 			});
 
-			// Close immediately on success
 			dialogManager.setState(props.id, { open: false });
 			props.onComplete?.();
 		} catch (error) {
@@ -121,6 +116,59 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 				message: error instanceof Error ? error.message : "Operation failed",
 			});
 		}
+	};
+
+	// Preflight validation
+	useEffect(() => {
+		if (hasSameSourceDest) {
+			setPhase({
+				type: "error",
+				message: "The selected item cannot be copied or moved into itself.",
+			});
+			return;
+		}
+
+		let isActive = true;
+		setPhase({ type: "validating" });
+
+		validateFiles.mutateAsync({
+			preflight: {
+				sources: { paths: props.sources },
+				destination: props.destination,
+				operation: operation === "copy" ? "Copy" : "Move",
+			},
+			paths: [],
+			verify_checksums: false,
+			deep_scan: false,
+		})
+		.then((res: FileValidationActionOutput) => {
+			if (!isActive) return;
+			if (isPreflightResult(res)) {
+				setPreflight(res.Preflight);
+
+				if (res.Preflight.issues.length > 0) {
+					setPhase({ type: "error", message: res.Preflight.issues[0].message });
+				} else if (!res.Preflight.requires_confirmation) {
+					void executeOperation("Skip");
+				} else {
+					setConflictResolution("AutoModifyName");
+					setPhase({ type: "form" });
+				}
+			} else {
+				setPhase({ type: "error", message: "Unexpected validation output" });
+			}
+		})
+		.catch(err => {
+			if (isActive) {
+				setPhase({ type: "error", message: err instanceof Error ? err.message : String(err) });
+			}
+		});
+
+		return () => { isActive = false; };
+	}, [operation, props.sources, props.destination, hasSameSourceDest]);
+
+	const handleSubmit = async () => {
+		await executeOperation();
 	};
 
 	const handleCancel = () => {
@@ -174,6 +222,28 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [phase.type, operation, conflictResolution]);
+
+	// Validating state
+	if (phase.type === "validating") {
+		return (
+			<Dialog
+				dialog={dialog}
+				form={form}
+				title={operation === "copy" ? "Validating Copy" : "Validating Move"}
+				icon={<Files size={20} weight="bold" />}
+				hideButtons
+			>
+				<div className="space-y-3 py-6">
+					<div className="flex items-center justify-center gap-3">
+						<CircleNotch className="size-6 text-accent animate-spin" weight="bold" />
+						<span className="text-sm text-ink">
+							Checking files...
+						</span>
+					</div>
+				</div>
+			</Dialog>
+		);
+	}
 
 	// Executing state
 	if (phase.type === "executing") {
@@ -256,7 +326,7 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 										</div>
 									) : (
 										<div className="text-sm font-medium text-ink">
-											{sourceCount} {pluralItems}
+											{preflight ? preflight.file_count : sourceCount} {pluralItems}
 										</div>
 									)}
 								</div>
@@ -267,7 +337,7 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 								<div className="text-center">
 									<div className="text-xs text-ink-dull mb-0.5">Source</div>
 									<div className="text-sm font-medium text-ink">
-										{sourceCount} {pluralItems}
+										{preflight ? preflight.file_count : sourceCount} {pluralItems}
 									</div>
 								</div>
 							</>
@@ -397,3 +467,8 @@ function getFileName(path: SdPath): string {
 	return "Unknown";
 }
 
+function isPreflightResult(
+	result: FileValidationActionOutput,
+): result is { Preflight: FileOperationPreflightOutput } {
+	return "Preflight" in result;
+}

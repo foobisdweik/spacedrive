@@ -4,7 +4,10 @@
 //! 1. **LocalDeleteStrategy** - Local file deletion (trash, permanent, secure)
 //! 2. **RemoteDeleteStrategy** - Cross-device deletion via network
 
-use crate::{domain::addressing::SdPath, infra::job::prelude::*};
+use crate::{
+	domain::addressing::SdPath,
+	infra::job::{generic_progress::GenericProgress, prelude::*},
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -49,7 +52,19 @@ impl DeleteStrategy for LocalDeleteStrategy {
 	) -> Result<Vec<DeleteResult>> {
 		let mut results = Vec::new();
 
-		for path in paths {
+		let total_paths = paths.len() as u64;
+
+		for (index, path) in paths.iter().enumerate() {
+			ctx.progress(Progress::generic(
+				GenericProgress::new(
+					progress_percentage(index as u64, total_paths),
+					delete_phase(&mode),
+					format!("{} {}", delete_message_prefix(&mode), path.display()),
+				)
+				.with_current_path(path.clone())
+				.with_completion(index as u64, total_paths),
+			));
+
 			let result = match path {
 				// Local physical path - use direct filesystem (fast path)
 				_ if path.is_local() => {
@@ -85,10 +100,55 @@ impl DeleteStrategy for LocalDeleteStrategy {
 				},
 			};
 
+			let completed = index as u64 + 1;
+			ctx.progress(Progress::generic(
+				GenericProgress::new(
+					progress_percentage(completed, total_paths),
+					delete_phase(&mode),
+					format!(
+						"{} {}",
+						if result.success {
+							"Processed"
+						} else {
+							"Failed"
+						},
+						result.path.display()
+					),
+				)
+				.with_current_path(result.path.clone())
+				.with_completion(completed, total_paths)
+				.with_bytes(result.bytes_freed, result.bytes_freed)
+				.with_errors(u64::from(!result.success), 0),
+			));
+
 			results.push(result);
 		}
 
 		Ok(results)
+	}
+}
+
+fn delete_phase(mode: &DeleteMode) -> &'static str {
+	match mode {
+		DeleteMode::Trash => "Moving to Trash",
+		DeleteMode::Permanent => "Deleting",
+		DeleteMode::Secure => "Secure Deleting",
+	}
+}
+
+fn delete_message_prefix(mode: &DeleteMode) -> &'static str {
+	match mode {
+		DeleteMode::Trash => "Moving to trash",
+		DeleteMode::Permanent => "Deleting",
+		DeleteMode::Secure => "Secure deleting",
+	}
+}
+
+fn progress_percentage(completed: u64, total: u64) -> f32 {
+	if total == 0 {
+		1.0
+	} else {
+		(completed as f32 / total as f32).clamp(0.0, 1.0)
 	}
 }
 
@@ -246,9 +306,9 @@ impl LocalDeleteStrategy {
 
 	/// Permanently delete file or directory
 	pub async fn permanent_delete(&self, path: &Path) -> Result<(), std::io::Error> {
-		let metadata = fs::metadata(path).await?;
+		let metadata = fs::symlink_metadata(path).await?;
 
-		if metadata.is_file() {
+		if metadata.is_file() || metadata.file_type().is_symlink() {
 			fs::remove_file(path).await?;
 		} else if metadata.is_dir() {
 			fs::remove_dir_all(path).await?;
@@ -259,10 +319,12 @@ impl LocalDeleteStrategy {
 
 	/// Securely delete file by overwriting with random data
 	pub async fn secure_delete(&self, path: &Path) -> Result<(), std::io::Error> {
-		let metadata = fs::metadata(path).await?;
+		let metadata = fs::symlink_metadata(path).await?;
 
 		if metadata.is_file() {
 			self.secure_overwrite_file(path, metadata.len()).await?;
+			fs::remove_file(path).await?;
+		} else if metadata.file_type().is_symlink() {
 			fs::remove_file(path).await?;
 		} else if metadata.is_dir() {
 			self.secure_delete_directory(path).await?;
@@ -319,13 +381,16 @@ impl LocalDeleteStrategy {
 
 			while let Some(entry) = dir.next_entry().await? {
 				let entry_path = entry.path();
+				let file_type = entry.file_type().await?;
 
-				if entry_path.is_file() {
+				if file_type.is_file() {
 					let metadata = fs::metadata(&entry_path).await?;
 					self.secure_overwrite_file(&entry_path, metadata.len())
 						.await?;
 					fs::remove_file(&entry_path).await?;
-				} else if entry_path.is_dir() {
+				} else if file_type.is_symlink() {
+					fs::remove_file(&entry_path).await?;
+				} else if file_type.is_dir() {
 					stack.push(entry_path);
 				}
 			}

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useExplorer } from "../context";
 import { useSelection } from "../SelectionContext";
 import { useNormalizedQuery } from "../../../contexts/SpacedriveContext";
-import type { DirectorySortBy } from "@sd/ts-client";
+import type { DirectoryListingOutput, DirectorySortBy } from "@sd/ts-client";
 import { useTypeaheadSearch } from "./useTypeaheadSearch";
 import { useKeybind } from "../../../hooks/useKeybind";
 import { useKeybindScope } from "../../../hooks/useKeybindScope";
@@ -57,7 +57,7 @@ export function useExplorerKeyboard() {
 		pathScope: currentPath ?? undefined,
 	});
 
-	const files = (directoryQuery.data as any)?.files || [];
+	const files = (directoryQuery.data as DirectoryListingOutput | undefined)?.files || [];
 
 	// Typeahead search (disabled for column view - it handles its own)
 	const typeahead = useTypeaheadSearch({
@@ -73,28 +73,31 @@ export function useExplorerKeyboard() {
 	useKeybind(
 		"explorer.copy",
 		() => {
+			if (isRenaming) return;
 			if (selectedFiles.length === 0) return;
 			const sdPaths = selectedFiles.map((f) => f.sd_path);
 			clipboard.copyFiles(sdPaths, currentPath);
 		},
-		{ enabled: selectedFiles.length > 0 },
+		{ enabled: selectedFiles.length > 0 && !isRenaming },
 	);
 
 	// Cut: Store selected files in clipboard with cut operation
 	useKeybind(
 		"explorer.cut",
 		() => {
+			if (isRenaming) return;
 			if (selectedFiles.length === 0) return;
 			const sdPaths = selectedFiles.map((f) => f.sd_path);
 			clipboard.cutFiles(sdPaths, currentPath);
 		},
-		{ enabled: selectedFiles.length > 0 },
+		{ enabled: selectedFiles.length > 0 && !isRenaming },
 	);
 
 	// Paste: Open file operation modal with clipboard contents
 	useKeybind(
 		"explorer.paste",
 		() => {
+			if (isRenaming) return;
 			if (!clipboard.hasClipboard() || !currentPath) return;
 
 			const operation = clipboard.operation === "cut" ? "move" : "copy";
@@ -127,7 +130,7 @@ export function useExplorerKeyboard() {
 				},
 			});
 		},
-		{ enabled: clipboard.hasClipboard() && !!currentPath },
+		{ enabled: clipboard.hasClipboard() && !!currentPath && !isRenaming },
 	);
 
 	// Rename: Enter key triggers rename mode for any selected file or directory
@@ -165,20 +168,22 @@ export function useExplorerKeyboard() {
 	useKeybind(
 		"explorer.delete",
 		async () => {
+			if (isRenaming) return;
 			const ok = await deleteFiles(selectedFiles, false);
 			if (ok) clearSelection();
 		},
-		{ enabled: selectedFiles.length > 0 && !isDeleting },
+		{ enabled: selectedFiles.length > 0 && !isDeleting && !isRenaming },
 	);
 
 	// Permanent Delete: Shift+Delete / Cmd+Alt+Backspace
 	useKeybind(
 		"explorer.permanentDelete",
 		async () => {
+			if (isRenaming) return;
 			const ok = await deleteFiles(selectedFiles, true);
 			if (ok) clearSelection();
 		},
-		{ enabled: selectedFiles.length > 0 && !isDeleting },
+		{ enabled: selectedFiles.length > 0 && !isDeleting && !isRenaming },
 	);
 
 	useEffect(() => {

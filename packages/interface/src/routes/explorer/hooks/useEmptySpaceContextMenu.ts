@@ -1,4 +1,4 @@
-import { FolderPlus, Copy } from "@phosphor-icons/react";
+import { FolderPlus, Copy, FilePlus } from "@phosphor-icons/react";
 import { useContextMenu } from "../../../hooks/useContextMenu";
 import { useLibraryMutation } from "../../../contexts/SpacedriveContext";
 import { useExplorer } from "../context";
@@ -8,6 +8,7 @@ import { useFileOperationDialog } from "../../../components/modals/FileOperation
 export function useEmptySpaceContextMenu() {
 	const { currentPath } = useExplorer();
 	const createFolder = useLibraryMutation("files.createFolder");
+	const createFile = useLibraryMutation("files.createFile");
 	const clipboard = useClipboard();
 	const openFileOperation = useFileOperationDialog();
 
@@ -28,6 +29,24 @@ export function useEmptySpaceContextMenu() {
 					} catch (err) {
 						console.error("Failed to create folder:", err);
 						alert(`Failed to create folder: ${err}`);
+					}
+				},
+				condition: () => !!currentPath,
+			},
+			{
+				icon: FilePlus,
+				label: "New File",
+				onClick: async () => {
+					if (!currentPath) return;
+					try {
+						const result = await createFile.mutateAsync({
+							parent: currentPath,
+							name: "Untitled",
+						});
+						console.log("Created file:", result);
+					} catch (err) {
+						console.error("Failed to create file:", err);
+						alert(`Failed to create file: ${err}`);
 					}
 				},
 				condition: () => !!currentPath,
