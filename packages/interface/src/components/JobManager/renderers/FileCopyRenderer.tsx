@@ -1,25 +1,32 @@
-import { Pause, Play, X, CaretDown } from "@phosphor-icons/react";
-import { motion } from "framer-motion";
-import type { JobRenderer, JobRendererProps, JobDetailsRendererProps } from "./index";
-import { CopyJobDetails } from "../components/CopyJobDetails";
-import { useNormalizedQuery } from "../../../contexts/SpacedriveContext";
-import type { Device } from "@sd/ts-client";
+import {CaretDown, Pause, Play, X} from '@phosphor-icons/react';
+import type {Device} from '@sd/ts-client';
+import {motion} from 'framer-motion';
+import {useNormalizedQuery} from '../../../contexts/SpacedriveContext';
+import {CopyJobDetails} from '../components/CopyJobDetails';
+import type {
+	JobDetailsRendererProps,
+	JobRenderer,
+	JobRendererProps
+} from './index';
 
 /**
  * Map strategy name to display label (enables i18n in future)
  */
-function getStrategyLabel(strategyName: string | undefined, _isMove: boolean): string | null {
+function getStrategyLabel(
+	strategyName: string | undefined,
+	_isMove: boolean
+): string | null {
 	if (!strategyName) return null;
 
 	switch (strategyName) {
-		case "RemoteTransfer":
-			return "Network";
-		case "LocalMove":
-			return "Atomic";
-		case "FastCopy":
-			return "Fast";
-		case "LocalStream":
-			return "Streaming";
+		case 'RemoteTransfer':
+			return 'Network';
+		case 'LocalMove':
+			return 'Atomic';
+		case 'FastCopy':
+			return 'Fast';
+		case 'LocalStream':
+			return 'Streaming';
 		default:
 			return strategyName;
 	}
@@ -28,43 +35,47 @@ function getStrategyLabel(strategyName: string | undefined, _isMove: boolean): s
 /**
  * Extract first filename from copy job for display
  */
-function extractFirstFileName(job: JobRendererProps["job"]): string {
+function extractFirstFileName(job: JobRendererProps['job']): string {
 	const actionInput = job.action_context?.action_input;
 	if (
-		typeof actionInput === "object" &&
+		typeof actionInput === 'object' &&
 		actionInput !== null &&
-		"sources" in actionInput
+		'sources' in actionInput
 	) {
 		const sources = actionInput.sources;
 		if (
-			typeof sources === "object" &&
+			typeof sources === 'object' &&
 			sources !== null &&
-			"paths" in sources &&
+			'paths' in sources &&
 			Array.isArray(sources.paths) &&
 			sources.paths.length > 0
 		) {
 			const firstPath = sources.paths[0];
 			if (
-				typeof firstPath === "object" &&
+				typeof firstPath === 'object' &&
 				firstPath !== null &&
-				"Physical" in firstPath
+				'Physical' in firstPath
 			) {
 				const physical = firstPath.Physical;
-				if (typeof physical === "object" && physical !== null && "path" in physical) {
+				if (
+					typeof physical === 'object' &&
+					physical !== null &&
+					'path' in physical
+				) {
 					const path = String(physical.path);
-					return path.split("/").pop() || path;
+					return path.split(/[\\/]/).pop() || path;
 				}
 			}
 		}
 	}
-	return "items";
+	return 'items';
 }
 
 /**
  * Format bytes to human readable
  */
 function formatBytes(bytes: number): string {
-	const units = ["B", "KB", "MB", "GB", "TB"];
+	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
 	let size = bytes;
 	let unitIndex = 0;
 
@@ -114,44 +125,55 @@ function FileCopyCardContent({
 	canResume,
 	canCancel,
 	onAction,
-	onCancel,
+	onCancel
 }: JobRendererProps) {
 	const generic = job.generic_progress;
 	const metadata = (generic as any)?.metadata as any;
 	const strategyName = metadata?.strategy?.strategy_name;
-	const strategyLabel = getStrategyLabel(strategyName, job.action_context?.action_type === "files.move");
+	const strategyLabel = getStrategyLabel(
+		strategyName,
+		job.action_context?.action_type === 'files.move'
+	);
 
 	// Fetch devices to determine if destination is remote
-	const { data: devices } = useNormalizedQuery<any, Device[]>({
-		query: "devices.list",
-		input: { include_offline: true, include_details: false },
-		resourceType: "device",
+	const {data: devices} = useNormalizedQuery<any, Device[]>({
+		query: 'devices.list',
+		input: {include_offline: true, include_details: false},
+		resourceType: 'device'
 	});
 
-	// Determine if this is a move operation
-	const isMove = job.action_context?.action_type === "files.move";
+	// Determine if this is a move or duplicate operation
+	const isMove = job.action_context?.action_type === 'files.move';
+	const isDuplicate = job.action_context?.action_type === 'files.duplicate';
 
 	// Check if this is a cross-device transfer from metadata
 	const isCrossDevice = metadata?.strategy?.is_cross_device === true;
 
 	// Find current device and infer destination device
-	const currentDevice = devices?.find(d => d.is_current);
+	const currentDevice = devices?.find((d) => d.is_current);
 
 	// For cross-device transfers, infer the destination device
 	// LIMITATION: This assumes only 2 devices in the transfer scenario.
 	// TODO: Add destination_device_id to CopyStrategyMetadata in Rust
 	// (core/src/ops/files/copy/routing.rs) to properly identify the destination
 	// device in multi-device environments instead of inferring it.
-	const destinationDevice = isCrossDevice && currentDevice
-		? devices?.find(d => !d.is_current)
-		: null;
+	const destinationDevice =
+		isCrossDevice && currentDevice
+			? devices?.find((d) => !d.is_current)
+			: null;
 
 	// Calculate title
 	const fileCount = generic?.completion?.total || 0;
 	const fileName = extractFirstFileName(job);
-	const baseTitle = fileCount > 1
-		? `${isMove ? "Moving" : "Copying"} ${fileCount} items`
-		: `${isMove ? "Moving" : "Copying"} '${fileName}'`;
+	const operationWord = isMove
+		? 'Moving'
+		: isDuplicate
+			? 'Duplicating'
+			: 'Copying';
+	const baseTitle =
+		fileCount > 1
+			? `${operationWord} ${fileCount} items`
+			: `${operationWord} '${fileName}'`;
 
 	const title = destinationDevice
 		? `${baseTitle} to ${destinationDevice.name}`
@@ -159,52 +181,58 @@ function FileCopyCardContent({
 
 	// Calculate rich subtext with progress, speed, and ETA
 	const completed = generic?.completion?.completed || 0;
-	const speed = generic?.performance?.rate ? formatSpeed(generic.performance.rate) : null;
+	const speed = generic?.performance?.rate
+		? formatSpeed(generic.performance.rate)
+		: null;
 	const eta = generic?.performance?.estimated_remaining
 		? formatDurationSeconds(generic.performance.estimated_remaining.secs)
 		: null;
 
 	const subtext =
-		job.status === "running" && speed && eta
+		job.status === 'running' && speed && eta
 			? `${completed}/${fileCount} files • ${speed} • ${eta} remaining`
-			: job.status === "running"
-			? `${completed}/${fileCount} files`
-			: job.status === "completed"
-			? "Completed"
-			: job.status === "failed"
-			? "Failed"
-			: job.status === "paused"
-			? "Paused"
-			: "Preparing...";
+			: job.status === 'running'
+				? `${completed}/${fileCount} files`
+				: job.status === 'completed'
+					? 'Completed'
+					: job.status === 'failed'
+						? 'Failed'
+						: job.status === 'paused'
+							? 'Paused'
+							: 'Preparing...';
 
 	return (
 		<>
 			{/* Row 1: Title, badges, status badge, and controls */}
-			<div className="flex items-center gap-3 min-h-0">
-				<span className="flex-1 truncate text-[13px] font-medium text-ink">
+			<div className="flex min-h-0 items-center gap-3">
+				<span className="text-ink flex-1 truncate text-[13px] font-medium">
 					{title}
 				</span>
 
 				{/* Transfer method badge */}
 				{strategyLabel && (
-					<span className="px-1.5 py-0.5 text-[9px] font-medium text-ink-faint bg-app-darkBox rounded-md whitespace-nowrap">
+					<span className="text-ink-faint bg-app-darkBox whitespace-nowrap rounded-md px-1.5 py-0.5 text-[9px] font-medium">
 						{strategyLabel}
 					</span>
 				)}
 
 				{/* Status badge */}
-				<span className="flex-shrink-0 text-[11px] font-medium text-ink-dull max-w-[80px] truncate">
+				<span className="text-ink-dull max-w-[80px] flex-shrink-0 truncate text-[11px] font-medium">
 					{statusBadge}
 				</span>
 
 				{/* Expansion caret */}
 				{canExpand && (
 					<motion.div
-						animate={{ rotate: isExpanded ? 180 : 0 }}
-						transition={{ duration: 0.15, ease: [0.25, 1, 0.5, 1] }}
+						animate={{rotate: isExpanded ? 180 : 0}}
+						transition={{duration: 0.15, ease: [0.25, 1, 0.5, 1]}}
 						className="flex-shrink-0"
 					>
-						<CaretDown size={12} weight="bold" className="text-ink-dull" />
+						<CaretDown
+							size={12}
+							weight="bold"
+							className="text-ink-dull"
+						/>
 					</motion.div>
 				)}
 
@@ -214,23 +242,35 @@ function FileCopyCardContent({
 						{showActionButton && (canPause || canResume) && (
 							<button
 								onClick={onAction}
-								className="flex-shrink-0 flex items-center justify-center w-4 h-4 rounded-full bg-app-hover hover:bg-app-selected transition-colors"
-								title={canPause ? "Pause job" : "Resume job"}
+								className="bg-app-hover hover:bg-app-selected flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full transition-colors"
+								title={canPause ? 'Pause job' : 'Resume job'}
 							>
 								{canPause ? (
-									<Pause size={10} weight="fill" className="text-ink" />
+									<Pause
+										size={10}
+										weight="fill"
+										className="text-ink"
+									/>
 								) : (
-									<Play size={10} weight="fill" className="text-ink" />
+									<Play
+										size={10}
+										weight="fill"
+										className="text-ink"
+									/>
 								)}
 							</button>
 						)}
 						{canCancel && (
 							<button
 								onClick={onCancel}
-								className="flex-shrink-0 flex items-center justify-center w-4 h-4 rounded-full bg-app-hover hover:bg-red-500 transition-colors"
+								className="bg-app-hover flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full transition-colors hover:bg-red-500"
 								title="Cancel job"
 							>
-								<X size={10} weight="bold" className="text-ink hover:text-white" />
+								<X
+									size={10}
+									weight="bold"
+									className="text-ink hover:text-white"
+								/>
 							</button>
 						)}
 					</div>
@@ -240,8 +280,8 @@ function FileCopyCardContent({
 			{/* Row 2: Rich subtext */}
 			<div className="min-h-0">
 				<span
-					className="text-[10px] text-ink-dull max-w-[200px] truncate block"
-					style={{ opacity: 0.7 }}
+					className="text-ink-dull block max-w-[200px] truncate text-[10px]"
+					style={{opacity: 0.7}}
 				>
 					{subtext}
 				</span>
@@ -253,7 +293,7 @@ function FileCopyCardContent({
 /**
  * Details panel for expanded file copy jobs
  */
-function FileCopyDetailsPanel({ job, speedHistory }: JobDetailsRendererProps) {
+function FileCopyDetailsPanel({job, speedHistory}: JobDetailsRendererProps) {
 	return <CopyJobDetails job={job} speedHistory={speedHistory} />;
 }
 
@@ -262,5 +302,5 @@ function FileCopyDetailsPanel({ job, speedHistory }: JobDetailsRendererProps) {
  */
 export const FileCopyRenderer: JobRenderer = {
 	CardContent: FileCopyCardContent,
-	DetailsPanel: FileCopyDetailsPanel,
+	DetailsPanel: FileCopyDetailsPanel
 };
