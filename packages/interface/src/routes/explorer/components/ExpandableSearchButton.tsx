@@ -1,7 +1,17 @@
-import { useState, useRef, useEffect } from "react";
+import {
+	forwardRef,
+	useEffect,
+	useImperativeHandle,
+	useRef,
+	useState,
+} from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 import { CircleButton, SearchBar } from "@spacedrive/primitives";
+
+export interface ExpandableSearchButtonHandle {
+	focus: () => void;
+}
 
 interface ExpandableSearchButtonProps {
 	value: string;
@@ -10,15 +20,26 @@ interface ExpandableSearchButtonProps {
 	placeholder?: string;
 }
 
-export function ExpandableSearchButton({
-	value,
-	onChange,
-	onClear,
-	placeholder = "Search...",
-}: ExpandableSearchButtonProps) {
+export const ExpandableSearchButton = forwardRef<
+	ExpandableSearchButtonHandle,
+	ExpandableSearchButtonProps
+>(function ExpandableSearchButton(
+	{ value, onChange, onClear, placeholder = "Search..." },
+	ref,
+) {
 	const [isExpanded, setIsExpanded] = useState(false);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
+
+	useImperativeHandle(ref, () => ({
+		focus: () => {
+			setIsExpanded(true);
+			requestAnimationFrame(() => {
+				inputRef.current?.focus();
+				inputRef.current?.select();
+			});
+		},
+	}));
 
 	// Expand if there's a value
 	useEffect(() => {
@@ -86,7 +107,10 @@ export function ExpandableSearchButton({
 							exit={{ opacity: 0 }}
 							transition={{ duration: 0.15 }}
 						>
-							<CircleButton icon={MagnifyingGlass} onClick={handleButtonClick} />
+							<CircleButton
+								icon={MagnifyingGlass}
+								onClick={handleButtonClick}
+							/>
 						</motion.div>
 					) : (
 						<motion.div
@@ -112,4 +136,4 @@ export function ExpandableSearchButton({
 			</motion.div>
 		</div>
 	);
-}
+});

@@ -80,7 +80,7 @@ export function useFileContextMenu({
 	};
 	const clipboard = useClipboard();
 	const openFileOperation = useFileOperationDialog();
-	const {startRename} = useSelection();
+	const {startRename, setSelectedFiles} = useSelection();
 
 	// Get physical paths for file opening
 	const getPhysicalPaths = () => {
@@ -228,14 +228,17 @@ export function useFileContextMenu({
 				label: 'Rename',
 				onClick: () => {
 					if (!file) return;
+					if (
+						!selected ||
+						selectedFiles.length !== 1 ||
+						selectedFiles[0]?.id !== file.id
+					) {
+						setSelectedFiles([file]);
+					}
 					startRename(file.id);
 				},
 				keybindId: 'explorer.renameFile',
-				condition: () =>
-					!!file &&
-					selected &&
-					selectedFiles.length === 1 &&
-					!hasVirtualFiles
+				condition: () => !!file && !hasVirtualFiles
 			},
 			{
 				icon: FolderPlus,

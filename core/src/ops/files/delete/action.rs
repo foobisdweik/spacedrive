@@ -41,6 +41,7 @@ impl LibraryAction for FileDeleteAction {
 			targets: input.targets,
 			options: DeleteOptions {
 				permanent: input.permanent,
+				confirm_permanent: input.confirm_permanent,
 				recursive: input.recursive,
 			},
 		})
@@ -57,7 +58,11 @@ impl LibraryAction for FileDeleteAction {
 			DeleteMode::Trash
 		};
 
-		let job = DeleteJob::new(self.targets, mode);
+		let job = if self.options.permanent {
+			DeleteJob::permanent(self.targets, self.options.confirm_permanent)
+		} else {
+			DeleteJob::new(self.targets, mode)
+		};
 
 		let job_handle = library
 			.jobs()
@@ -82,6 +87,13 @@ impl LibraryAction for FileDeleteAction {
 			return Err(ActionError::Validation {
 				field: "targets".to_string(),
 				message: "At least one target file must be specified".to_string(),
+			});
+		}
+
+		if self.options.permanent && !self.options.confirm_permanent {
+			return Err(ActionError::Validation {
+				field: "confirm_permanent".to_string(),
+				message: "Permanent deletion requires explicit confirmation".to_string(),
 			});
 		}
 

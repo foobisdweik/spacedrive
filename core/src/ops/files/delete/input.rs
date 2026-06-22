@@ -14,6 +14,9 @@ pub struct FileDeleteInput {
 	/// Whether to permanently delete (true) or move to trash (false)
 	pub permanent: bool,
 
+	/// Explicit user confirmation for permanent deletion (required when `permanent` is true)
+	pub confirm_permanent: bool,
+
 	/// Whether to delete directories recursively
 	pub recursive: bool,
 }
@@ -24,6 +27,7 @@ impl FileDeleteInput {
 		Self {
 			targets,
 			permanent: false,
+			confirm_permanent: false,
 			recursive: true,
 		}
 	}
@@ -46,6 +50,13 @@ impl FileDeleteInput {
 
 		if self.targets.paths.is_empty() {
 			errors.push("At least one target file must be specified".to_string());
+		}
+
+		if self.permanent && !self.confirm_permanent {
+			errors.push(
+				"Permanent deletion requires explicit confirmation (confirm_permanent: true)"
+					.to_string(),
+			);
 		}
 
 		if errors.is_empty() {

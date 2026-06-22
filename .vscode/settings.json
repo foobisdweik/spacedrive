@@ -12,5 +12,9 @@
 	},
 	"[javascriptreact]": {
 		"editor.defaultFormatter": "esbenp.prettier-vscode"
+	},
+	"dotrush.roslyn.projectOrSolutionFiles": [],
+	"[jsonc]": {
+		"editor.defaultFormatter": "vscode.json-language-features"
 	}
 }

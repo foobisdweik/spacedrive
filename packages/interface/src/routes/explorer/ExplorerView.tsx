@@ -7,9 +7,13 @@ import {
 } from '@phosphor-icons/react';
 import {CircleButton, CircleButtonGroup} from '@spacedrive/primitives';
 import clsx from 'clsx';
-import {useCallback, useEffect, useMemo, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useKeybind} from '../../hooks/useKeybind';
 import {TopBarItem, TopBarPortal} from '../../TopBar';
-import {ExpandableSearchButton} from './components/ExpandableSearchButton';
+import {
+	ExpandableSearchButton,
+	type ExpandableSearchButtonHandle
+} from './components/ExpandableSearchButton';
 import {PathBar} from './components/PathBar';
 import {VirtualPathBar} from './components/VirtualPathBar';
 import {useExplorer, type ViewMode} from './context';
@@ -54,6 +58,7 @@ export function ExplorerView() {
 		mode,
 		enterSearchMode,
 		exitSearchMode,
+		exitFilteredMode,
 		currentFiles,
 		columnStack
 	} = useExplorer();
@@ -70,6 +75,11 @@ export function ExplorerView() {
 	}, [viewMode, columnStack, currentPath]);
 
 	const [searchValue, setSearchValue] = useState('');
+	const searchRef = useRef<ExpandableSearchButtonHandle>(null);
+
+	useKeybind('global.focusSearchBar', () => {
+		searchRef.current?.focus();
+	});
 
 	const handleSearchChange = useCallback(
 		(value: string) => {
@@ -97,6 +107,10 @@ export function ExplorerView() {
 			setSearchValue('');
 		}
 	}, [mode.type]);
+
+	useEffect(() => {
+		return () => exitFilteredMode();
+	}, [exitFilteredMode]);
 
 	// When leaving column view, navigate to the deepest column so the
 	// new view shows the directory the user was actually looking at.
@@ -229,6 +243,7 @@ export function ExplorerView() {
 								priority="high"
 							>
 								<ExpandableSearchButton
+									ref={searchRef}
 									placeholder={
 										currentPath
 											? 'Search in current folder...'
@@ -313,7 +328,9 @@ export function ExplorerView() {
 					viewMode === 'size' ? 'bg-transparent' : 'bg-app/80'
 				)}
 			>
-				{mode.type === 'search' && <SearchToolbar />}
+				{(mode.type === 'search' || mode.type === 'filtered') && (
+					<SearchToolbar />
+				)}
 				<div
 					className={clsx(
 						'flex-1',

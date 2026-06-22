@@ -1,17 +1,18 @@
+import type {File, SdPath} from '@sd/ts-client';
+import {useQueryClient} from '@tanstack/react-query';
 import {
 	createContext,
-	useContext,
-	useState,
 	useCallback,
-	useMemo,
+	useContext,
 	useEffect,
-	type ReactNode,
-} from "react";
-import { usePlatform } from "../../contexts/PlatformContext";
-import type { File } from "@sd/ts-client";
-import { useClipboard } from "../../hooks/useClipboard";
-import { useLibraryMutation } from "../../contexts/SpacedriveContext";
-import { useTabManager } from "../../components/TabManager";
+	useMemo,
+	useState,
+	type ReactNode
+} from 'react';
+import {useTabManager} from '../../components/TabManager';
+import {usePlatform} from '../../contexts/PlatformContext';
+import {useLibraryMutation} from '../../contexts/SpacedriveContext';
+import {useClipboard} from '../../hooks/useClipboard';
 
 interface SelectionContextValue {
 	selectedFiles: File[];
@@ -22,15 +23,15 @@ interface SelectionContextValue {
 		file: File,
 		files: File[],
 		multi?: boolean,
-		range?: boolean,
+		range?: boolean
 	) => void;
 	clearSelection: () => void;
 	selectAll: (files: File[]) => void;
 	focusedIndex: number;
 	setFocusedIndex: (index: number) => void;
 	moveFocus: (
-		direction: "up" | "down" | "left" | "right",
-		files: File[],
+		direction: 'up' | 'down' | 'left' | 'right',
+		files: File[]
 	) => void;
 	// Rename state
 	renamingFileId: string | null;
@@ -49,15 +50,59 @@ interface SelectionProviderProps {
 	isActiveTab?: boolean;
 }
 
+function sdPathsEqual(
+	left: SdPath | null | undefined,
+	right: SdPath | null | undefined
+): boolean {
+	if (!left || !right) return left === right;
+
+	if ('Physical' in left || 'Physical' in right) {
+		return (
+			'Physical' in left &&
+			'Physical' in right &&
+			left.Physical.device_slug === right.Physical.device_slug &&
+			left.Physical.path === right.Physical.path
+		);
+	}
+
+	if ('Cloud' in left || 'Cloud' in right) {
+		return (
+			'Cloud' in left &&
+			'Cloud' in right &&
+			left.Cloud.service === right.Cloud.service &&
+			left.Cloud.identifier === right.Cloud.identifier &&
+			left.Cloud.path === right.Cloud.path
+		);
+	}
+
+	if ('Content' in left || 'Content' in right) {
+		return (
+			'Content' in left &&
+			'Content' in right &&
+			left.Content.content_id === right.Content.content_id
+		);
+	}
+
+	return (
+		'Sidecar' in left &&
+		'Sidecar' in right &&
+		left.Sidecar.content_id === right.Sidecar.content_id &&
+		left.Sidecar.kind === right.Sidecar.kind &&
+		left.Sidecar.variant === right.Sidecar.variant &&
+		left.Sidecar.format === right.Sidecar.format
+	);
+}
+
 export function SelectionProvider({
 	children,
-	isActiveTab = true,
+	isActiveTab = true
 }: SelectionProviderProps) {
 	const platform = usePlatform();
 	const clipboard = useClipboard();
 	const tabManager = useTabManager();
-	const { activeTabId, getSelectionIds, updateSelectionIds } = tabManager;
-	const renameFile = useLibraryMutation("files.rename");
+	const queryClient = useQueryClient();
+	const {activeTabId, getSelectionIds, updateSelectionIds} = tabManager;
+	const renameFile = useLibraryMutation('files.rename');
 
 	// Local state for File objects (not serializable, can't be stored in TabManager)
 	const [selectedFiles, setSelectedFilesInternal] = useState<File[]>([]);
@@ -81,20 +126,20 @@ export function SelectionProvider({
 		(filesOrUpdater: File[] | ((prev: File[]) => File[])) => {
 			setSelectedFilesInternal((prev) => {
 				const nextFiles =
-					typeof filesOrUpdater === "function"
+					typeof filesOrUpdater === 'function'
 						? filesOrUpdater(prev)
 						: filesOrUpdater;
 
 				// Sync to TabManager
 				updateSelectionIds(
 					activeTabId,
-					nextFiles.map((f) => f.id),
+					nextFiles.map((f) => f.id)
 				);
 
 				return nextFiles;
 			});
 		},
-		[activeTabId, updateSelectionIds],
+		[activeTabId, updateSelectionIds]
 	);
 
 	// Sync selected file IDs to platform (for cross-window state sharing)
@@ -107,8 +152,8 @@ export function SelectionProvider({
 		if (platform.setSelectedFileIds) {
 			platform.setSelectedFileIds(fileIds).catch((err) => {
 				console.error(
-					"Failed to sync selected files to platform:",
-					err,
+					'Failed to sync selected files to platform:',
+					err
 				);
 			});
 		}
@@ -125,9 +170,9 @@ export function SelectionProvider({
 		platform.updateMenuItems?.([
 			// NOTE: copy/cut/paste are always enabled to support text input operations
 			// They intelligently route to file ops or native clipboard based on focus
-			{ id: "duplicate", enabled: hasSelection },
-			{ id: "rename", enabled: isSingleSelection },
-			{ id: "delete", enabled: hasSelection },
+			{id: 'duplicate', enabled: hasSelection},
+			{id: 'rename', enabled: isSingleSelection},
+			{id: 'delete', enabled: hasSelection}
 		]);
 	}, [selectedFiles, clipboard, platform, isActiveTab]);
 
@@ -142,7 +187,7 @@ export function SelectionProvider({
 			setSelectedFiles([...files]);
 			setLastSelectedIndex(files.length - 1);
 		},
-		[setSelectedFiles],
+		[setSelectedFiles]
 	);
 
 	const selectFile = useCallback(
@@ -161,7 +206,7 @@ export function SelectionProvider({
 							if (prev.length > 1) {
 								// Create a map for O(1) lookup
 								const existingIds = new Set(
-									prev.map((f) => f.id),
+									prev.map((f) => f.id)
 								);
 								const combined = [...prev];
 
@@ -199,29 +244,29 @@ export function SelectionProvider({
 				setLastSelectedIndex(fileIndex);
 			}
 		},
-		[setSelectedFiles],
+		[setSelectedFiles]
 	);
 
 	const moveFocus = useCallback(
-		(direction: "up" | "down" | "left" | "right", files: File[]) => {
+		(direction: 'up' | 'down' | 'left' | 'right', files: File[]) => {
 			if (files.length === 0) return;
 
 			setFocusedIndex((currentFocusedIndex) => {
 				let newIndex = currentFocusedIndex;
 
-				if (direction === "up")
+				if (direction === 'up')
 					newIndex = Math.max(0, currentFocusedIndex - 1);
-				if (direction === "down")
+				if (direction === 'down')
 					newIndex = Math.min(
 						files.length - 1,
-						currentFocusedIndex + 1,
+						currentFocusedIndex + 1
 					);
-				if (direction === "left")
+				if (direction === 'left')
 					newIndex = Math.max(0, currentFocusedIndex - 1);
-				if (direction === "right")
+				if (direction === 'right')
 					newIndex = Math.min(
 						files.length - 1,
-						currentFocusedIndex + 1,
+						currentFocusedIndex + 1
 					);
 
 				if (newIndex !== currentFocusedIndex) {
@@ -232,67 +277,77 @@ export function SelectionProvider({
 				return newIndex;
 			});
 		},
-		[setSelectedFiles],
+		[setSelectedFiles]
 	);
 
 	// Rename functions
 	const startRename = useCallback((fileId: string) => {
-		// Only allow rename when a single file is selected
-		if (selectedFiles.length === 1) {
-			setRenamingFileId(fileId);
-		}
-	}, [selectedFiles.length]);
+		setRenamingFileId(fileId);
+	}, []);
 
 	const cancelRename = useCallback(() => {
 		setRenamingFileId(null);
 	}, []);
 
-	const saveRename = useCallback(async (newName: string) => {
-		if (!renamingFileId) return;
+	const saveRename = useCallback(
+		async (newName: string) => {
+			if (!renamingFileId) return;
 
-		const file = selectedFiles.find(f => f.id === renamingFileId);
-		if (!file) {
-			setRenamingFileId(null);
-			return;
-		}
+			const file = selectedFiles.find((f) => f.id === renamingFileId);
+			if (!file) {
+				setRenamingFileId(null);
+				return;
+			}
 
-		// Don't submit if name is empty or unchanged
-		const currentFullName = file.extension ? `${file.name}.${file.extension}` : file.name;
-		if (!newName.trim() || newName === currentFullName) {
-			setRenamingFileId(null);
-			return;
-		}
+			// Don't submit if name is empty or unchanged
+			const currentFullName = file.extension
+				? `${file.name}.${file.extension}`
+				: file.name;
+			if (!newName.trim() || newName === currentFullName) {
+				setRenamingFileId(null);
+				return;
+			}
 
-		try {
-			await renameFile.mutateAsync({
-				target: file.sd_path,
-				new_name: newName,
-			});
-			setRenamingFileId(null);
-		} catch (error) {
-			// Keep in edit mode on error so user can retry
-			console.error('Rename failed:', error);
-			throw error;
-		}
-	}, [renamingFileId, selectedFiles, renameFile]);
+			try {
+				await renameFile.mutateAsync({
+					target: file.sd_path,
+					new_name: newName
+				});
+				setRenamingFileId(null);
+				await queryClient.invalidateQueries({
+					predicate: (query) =>
+						Array.isArray(query.queryKey) &&
+						typeof query.queryKey[0] === 'string' &&
+						(query.queryKey[0] ===
+							'query:files.directory_listing' ||
+							query.queryKey[0] === 'query:search.files')
+				});
+			} catch (error) {
+				// Keep in edit mode on error so user can retry
+				console.error('Rename failed:', error);
+				throw error;
+			}
+		},
+		[renamingFileId, selectedFiles, renameFile, queryClient]
+	);
 
 	// Cancel rename when selection changes
 	useEffect(() => {
-		if (renamingFileId && !selectedFiles.some(f => f.id === renamingFileId)) {
+		if (
+			renamingFileId &&
+			!selectedFiles.some((f) => f.id === renamingFileId)
+		) {
 			setRenamingFileId(null);
 		}
 	}, [selectedFiles, renamingFileId]);
 
 	// Use stored IDs for selection checking (allows highlighting before File objects are restored)
-	const selectedFileIds = useMemo(
-		() => new Set(storedIds),
-		[storedIds],
-	);
+	const selectedFileIds = useMemo(() => new Set(storedIds), [storedIds]);
 
 	// Stable function for checking if a file is selected
 	const isSelected = useCallback(
 		(fileId: string) => selectedFileIds.has(fileId),
-		[selectedFileIds],
+		[selectedFileIds]
 	);
 
 	// Restore File objects for selected IDs when files become available
@@ -316,19 +371,30 @@ export function SelectionProvider({
 					const prevIds = new Set(prev.map((f) => f.id));
 					const newIds = new Set(matchingFiles.map((f) => f.id));
 
-					// Skip update if selection already matches
 					if (
 						prevIds.size === newIds.size &&
 						[...newIds].every((id) => prevIds.has(id))
 					) {
-						return prev;
+						const prevById = new Map(prev.map((f) => [f.id, f]));
+						const hasStaleData = matchingFiles.some((file) => {
+							const previous = prevById.get(file.id);
+							return (
+								!previous ||
+								previous.name !== file.name ||
+								previous.extension !== file.extension ||
+								!sdPathsEqual(previous.sd_path, file.sd_path)
+							);
+						});
+						if (!hasStaleData) {
+							return prev;
+						}
 					}
 
 					return matchingFiles;
 				});
 			}
 		},
-		[storedIds],
+		[storedIds]
 	);
 
 	const isRenaming = renamingFileId !== null;
@@ -352,7 +418,7 @@ export function SelectionProvider({
 			saveRename,
 			isRenaming,
 			// Restore selection
-			restoreSelectionFromFiles,
+			restoreSelectionFromFiles
 		}),
 		[
 			selectedFiles,
@@ -369,8 +435,8 @@ export function SelectionProvider({
 			cancelRename,
 			saveRename,
 			isRenaming,
-			restoreSelectionFromFiles,
-		],
+			restoreSelectionFromFiles
+		]
 	);
 
 	return (
@@ -383,6 +449,6 @@ export function SelectionProvider({
 export function useSelection() {
 	const context = useContext(SelectionContext);
 	if (!context)
-		throw new Error("useSelection must be used within SelectionProvider");
+		throw new Error('useSelection must be used within SelectionProvider');
 	return context;
 }
