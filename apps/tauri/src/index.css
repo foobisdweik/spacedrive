@@ -71,9 +71,31 @@
 
 body {
 	margin: 0;
+	background-color: var(--color-app);
 	font-family:
 		-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu",
 		"Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
+}
+
+body:not(.overlay-window)
+	[role="dialog"][data-state="open"]:has(.sd-dialog-surface) {
+	position: fixed !important;
+	inset: 0 !important;
+	display: grid !important;
+	place-items: center !important;
+	padding: 2rem !important;
+	opacity: 1 !important;
+	z-index: 9999 !important;
+}
+
+body:not(.overlay-window)
+	[role="dialog"][data-state="open"]:has(.sd-dialog-surface)
+	.sd-dialog-surface {
+	position: relative !important;
+	transform: none !important;
+	margin: auto !important;
+	background-color: var(--color-app-box) !important;
+	opacity: 1 !important;
 }
