@@ -7,9 +7,9 @@ import {
 } from '@phosphor-icons/react';
 import {CircleButton, CircleButtonGroup} from '@spacedrive/primitives';
 import clsx from 'clsx';
-import {useCallback, useEffect, useMemo, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {TopBarItem, TopBarPortal} from '../../TopBar';
-import {ExpandableSearchButton} from './components/ExpandableSearchButton';
+import {ExpandableSearchButton, type ExpandableSearchButtonHandle} from './components/ExpandableSearchButton';
 import {PathBar} from './components/PathBar';
 import {VirtualPathBar} from './components/VirtualPathBar';
 import {useExplorer, type ViewMode} from './context';
@@ -27,6 +27,7 @@ import {MediaView} from './views/MediaView';
 import {SearchView} from './views/SearchView';
 import {SizeView} from './views/SizeView';
 import {ViewSettings, ViewSettingsPanel} from './ViewSettings';
+import {useKeybind} from '../../hooks/useKeybind';
 
 export function ExplorerView() {
 	const {
@@ -70,6 +71,11 @@ export function ExplorerView() {
 	}, [viewMode, columnStack, currentPath]);
 
 	const [searchValue, setSearchValue] = useState('');
+	const searchRef = useRef<ExpandableSearchButtonHandle>(null);
+
+	useKeybind('global.focusSearchBar', () => {
+		searchRef.current?.focus();
+	});
 
 	const handleSearchChange = useCallback(
 		(value: string) => {
@@ -229,6 +235,7 @@ export function ExplorerView() {
 								priority="high"
 							>
 								<ExpandableSearchButton
+									ref={searchRef}
 									placeholder={
 										currentPath
 											? 'Search in current folder...'

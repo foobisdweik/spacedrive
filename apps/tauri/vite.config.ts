@@ -8,6 +8,8 @@ const spaceui = path.resolve(__dirname, '../../../spaceui/packages');
 const hasSpaceui = fs.existsSync(spaceui);
 const spacebot = path.resolve(__dirname, '../../../spacebot/packages');
 const hasSpacebot = fs.existsSync(spacebot);
+const bunNodeModule = (pkg: string) =>
+	path.resolve(__dirname, '../../node_modules/.bun/node_modules', pkg);
 
 export default defineConfig(() => ({
 	plugins: [react(), tailwindcss()],
@@ -56,6 +58,42 @@ export default defineConfig(() => ({
 					__dirname,
 					'../../packages/interface/node_modules/openapi-fetch/dist/index.mjs'
 				)
+			},
+			{
+				find: 'style-to-js',
+				replacement: bunNodeModule('style-to-js')
+			},
+			{
+				find: 'debug',
+				replacement: bunNodeModule('debug')
+			},
+			{
+				find: 'extend',
+				replacement: bunNodeModule('extend')
+			},
+			{
+				find: 'hast-util-to-jsx-runtime',
+				replacement: bunNodeModule('hast-util-to-jsx-runtime')
+			},
+			{
+				find: 'micromark',
+				replacement: bunNodeModule('micromark')
+			},
+			{
+				find: 'react-markdown',
+				replacement: bunNodeModule('react-markdown')
+			},
+			{
+				find: 'rehype-raw',
+				replacement: bunNodeModule('rehype-raw')
+			},
+			{
+				find: 'remark-gfm',
+				replacement: bunNodeModule('remark-gfm')
+			},
+			{
+				find: 'unified',
+				replacement: bunNodeModule('unified')
 			},
 			// SpaceUI — resolve to source for HMR when available locally
 			...(hasSpaceui
@@ -120,6 +158,17 @@ export default defineConfig(() => ({
 	},
 
 	optimizeDeps: {
+		include: [
+			'debug',
+			'extend',
+			'hast-util-to-jsx-runtime',
+			'micromark',
+			'react-markdown',
+			'rehype-raw',
+			'remark-gfm',
+			'style-to-js',
+			'unified'
+		],
 		exclude: ['@spacedrive/ai', '@spacedrive/primitives', '@spacedrive/tokens']
 	},
 

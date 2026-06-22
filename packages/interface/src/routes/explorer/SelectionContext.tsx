@@ -7,6 +7,7 @@ import {
 	useEffect,
 	type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { usePlatform } from "../../contexts/PlatformContext";
 import type { File } from "@sd/ts-client";
 import { useClipboard } from "../../hooks/useClipboard";
@@ -56,6 +57,7 @@ export function SelectionProvider({
 	const platform = usePlatform();
 	const clipboard = useClipboard();
 	const tabManager = useTabManager();
+	const queryClient = useQueryClient();
 	const { activeTabId, getSelectionIds, updateSelectionIds } = tabManager;
 	const renameFile = useLibraryMutation("files.rename");
 
@@ -237,11 +239,8 @@ export function SelectionProvider({
 
 	// Rename functions
 	const startRename = useCallback((fileId: string) => {
-		// Only allow rename when a single file is selected
-		if (selectedFiles.length === 1) {
-			setRenamingFileId(fileId);
-		}
-	}, [selectedFiles.length]);
+		setRenamingFileId(fileId);
+	}, []);
 
 	const cancelRename = useCallback(() => {
 		setRenamingFileId(null);
@@ -269,12 +268,19 @@ export function SelectionProvider({
 				new_name: newName,
 			});
 			setRenamingFileId(null);
+			await queryClient.invalidateQueries({
+				predicate: (query) =>
+					Array.isArray(query.queryKey) &&
+					typeof query.queryKey[0] === "string" &&
+					(query.queryKey[0] === "query:files.directory_listing" ||
+						query.queryKey[0] === "query:search.files"),
+			});
 		} catch (error) {
 			// Keep in edit mode on error so user can retry
 			console.error('Rename failed:', error);
 			throw error;
 		}
-	}, [renamingFileId, selectedFiles, renameFile]);
+	}, [renamingFileId, selectedFiles, renameFile, queryClient]);
 
 	// Cancel rename when selection changes
 	useEffect(() => {
@@ -316,12 +322,24 @@ export function SelectionProvider({
 					const prevIds = new Set(prev.map((f) => f.id));
 					const newIds = new Set(matchingFiles.map((f) => f.id));
 
-					// Skip update if selection already matches
 					if (
 						prevIds.size === newIds.size &&
 						[...newIds].every((id) => prevIds.has(id))
 					) {
-						return prev;
+						const prevById = new Map(prev.map((f) => [f.id, f]));
+						const hasStaleData = matchingFiles.some((file) => {
+							const previous = prevById.get(file.id);
+							return (
+								!previous ||
+								previous.name !== file.name ||
+								previous.extension !== file.extension ||
+								JSON.stringify(previous.sd_path) !==
+									JSON.stringify(file.sd_path)
+							);
+						});
+						if (!hasStaleData) {
+							return prev;
+						}
 					}
 
 					return matchingFiles;

@@ -1,12 +1,23 @@
 import { useCallback } from "react";
 import type { File } from "@sd/ts-client";
+import { usePlatform } from "../../../contexts/PlatformContext";
 import { useLibraryMutation } from "../../../contexts/SpacedriveContext";
+
+function platformConfirm(
+	platform: ReturnType<typeof usePlatform>,
+	message: string,
+): Promise<boolean> {
+	return new Promise((resolve) => {
+		platform.confirm(message, resolve);
+	});
+}
 
 /**
  * Shared hook for delete file operations.
  * Used by both useExplorerKeyboard (DEL key) and useFileContextMenu.
  */
 export function useDeleteFiles() {
+	const platform = usePlatform();
 	const mutation = useLibraryMutation("files.delete");
 
 	const deleteFiles = useCallback(
@@ -22,12 +33,14 @@ export function useDeleteFiles() {
 					? `${label} ${files.length} items?${suffix}`
 					: `${label} "${files[0].name}"?${suffix}`;
 
-			if (!confirm(message)) return false;
+			const confirmed = await platformConfirm(platform, message);
+			if (!confirmed) return false;
 
 			try {
 				await mutation.mutateAsync({
 					targets: { paths: files.map((f) => f.sd_path) },
 					permanent,
+					confirm_permanent: permanent && confirmed,
 					recursive: true,
 				});
 				return true;
@@ -37,7 +50,7 @@ export function useDeleteFiles() {
 				return false;
 			}
 		},
-		[mutation],
+		[mutation, platform],
 	);
 
 	return { deleteFiles, isPending: mutation.isPending };

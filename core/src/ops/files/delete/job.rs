@@ -28,6 +28,7 @@ pub enum DeleteMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteOptions {
 	pub permanent: bool,
+	pub confirm_permanent: bool,
 	pub recursive: bool,
 }
 
@@ -35,6 +36,7 @@ impl Default for DeleteOptions {
 	fn default() -> Self {
 		Self {
 			permanent: false,
+			confirm_permanent: false,
 			recursive: false,
 		}
 	}

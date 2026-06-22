@@ -1,6 +1,8 @@
 import { useNormalizedQuery } from "../../contexts/SpacedriveContext";
-import type { ContentKind } from "@sd/ts-client";
+import type { ContentKind, SearchFilters } from "@sd/ts-client";
 import { getIcon } from "@sd/assets/util";
+import { useNavigate } from "react-router-dom";
+import { useExplorer } from "../explorer";
 
 interface ContentKindStat {
 	kind: ContentKind;
@@ -12,6 +14,22 @@ interface ContentKindStatsOutput {
 	stats: ContentKindStat[];
 	total_files: bigint | number;
 }
+
+const EMPTY_FILTERS: SearchFilters = {
+	file_types: null,
+	tags: null,
+	date_range: null,
+	size_range: null,
+	locations: null,
+	content_types: null,
+	include_hidden: null,
+	include_archived: null,
+	at_risk: null,
+	on_volumes: null,
+	not_on_volumes: null,
+	min_volume_count: null,
+	max_volume_count: null,
+};
 
 // Map content kind names to icon names and colors
 // Keys must match backend ContentKind variants (lowercase)
@@ -62,6 +80,9 @@ function formatFileCount(count: number): string {
  * Shows content kinds (images, videos, audio, etc.) with file counts
  */
 export function FileKindsView() {
+	const navigate = useNavigate();
+	const { enterFilteredMode } = useExplorer();
+
 	// Fetch content kind statistics
 	const { data: statsData, isLoading } = useNormalizedQuery<
 		Record<string, never>,
@@ -85,10 +106,13 @@ export function FileKindsView() {
 		);
 	}
 
-	const handleKindClick = (kind: ContentKind) => {
-		// TODO: Navigate to explorer with content kind filter
-		// For now, just log
-		console.log("Content kind clicked:", kind);
+	const handleKindClick = (kind: ContentKind, label: string) => {
+		const filters: SearchFilters = {
+			...EMPTY_FILTERS,
+			content_types: [kind],
+		};
+		enterFilteredMode(filters, label);
+		navigate("/explorer");
 	};
 
 	return (
@@ -137,7 +161,9 @@ export function FileKindsView() {
 						return (
 							<button
 								key={stat.name}
-								onClick={() => handleKindClick(stat.kind)}
+								onClick={() =>
+									handleKindClick(stat.kind, stat.name)
+								}
 								className="flex flex-col items-center justify-center p-4 rounded-lg hover:bg-app-box/50 transition-colors group aspect-square"
 							>
 								<img

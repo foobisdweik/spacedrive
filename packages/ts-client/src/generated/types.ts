@@ -1371,6 +1371,10 @@ targets: SdPathBatch;
  */
 permanent: boolean;
 /**
+ * Explicit user confirmation for permanent deletion (required when `permanent` is true)
+ */
+confirm_permanent: boolean;
+/**
  * Whether to delete directories recursively
  */
 recursive: boolean };

@@ -58,21 +58,14 @@ export const platform: Platform = {
 	},
 
 	confirm(message: string, callback: (result: boolean) => void) {
-		// window.confirm() is broken on WebView2 (Windows): returns true without showing a dialog.
-		// Use Tauri's native dialog plugin on Windows. macOS/Linux webviews handle it fine.
-		// TODO: Consider using ask() on all platforms for consistent native UX.
-		if (navigator.platform.startsWith('Win')) {
-			void ask(message, {title: 'Spacedrive', kind: 'warning'}).then(
-				(result) => {
-					callback(result);
-				},
-				() => {
-					callback(false);
-				}
-			);
-		} else {
-			callback(window.confirm(message));
-		}
+		void ask(message, { title: 'Spacedrive', kind: 'warning' }).then(
+			(result) => {
+				callback(result);
+			},
+			() => {
+				callback(false);
+			}
+		);
 	},
 
 	convertFileSrc(filePath: string) {
