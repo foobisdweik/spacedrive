@@ -1,15 +1,17 @@
-import path from 'path';
 import fs from 'fs';
+import {createRequire} from 'node:module';
+import path from 'path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react-swc';
 import {defineConfig} from 'vite';
 
+const require = createRequire(import.meta.url);
 const spaceui = path.resolve(__dirname, '../../../spaceui/packages');
 const hasSpaceui = fs.existsSync(spaceui);
 const spacebot = path.resolve(__dirname, '../../../spacebot/packages');
 const hasSpacebot = fs.existsSync(spacebot);
 const bunNodeModule = (pkg: string) =>
-	path.resolve(__dirname, '../../node_modules/.bun/node_modules', pkg);
+	path.dirname(require.resolve(`${pkg}/package.json`));
 
 export default defineConfig(() => ({
 	plugins: [react(), tailwindcss()],
@@ -100,36 +102,36 @@ export default defineConfig(() => ({
 				? [
 						{
 							find: /^@spacedrive\/tokens\/css\/themes\/(.+)$/,
-							replacement: `${spaceui}/tokens/src/css/themes/$1.css`,
+							replacement: `${spaceui}/tokens/src/css/themes/$1.css`
 						},
 						{
 							find: /^@spacedrive\/tokens\/theme$/,
-							replacement: `${spaceui}/tokens/src/css/theme.css`,
+							replacement: `${spaceui}/tokens/src/css/theme.css`
 						},
 						{
 							find: /^@spacedrive\/tokens\/css$/,
-							replacement: `${spaceui}/tokens/src/css/base.css`,
+							replacement: `${spaceui}/tokens/src/css/base.css`
 						},
 						{
 							find: /^@spacedrive\/tokens$/,
-							replacement: `${spaceui}/tokens`,
+							replacement: `${spaceui}/tokens`
 						},
 						{
 							find: /^@spacedrive\/ai$/,
-							replacement: `${spaceui}/ai/src/index.ts`,
+							replacement: `${spaceui}/ai/src/index.ts`
 						},
 						{
 							find: /^@spacedrive\/primitives$/,
-							replacement: `${spaceui}/primitives/src/index.ts`,
-						},
+							replacement: `${spaceui}/primitives/src/index.ts`
+						}
 					]
 				: []),
 			...(hasSpacebot
 				? [
 						{
 							find: /^@spacebot\/api-client$/,
-							replacement: `${spacebot}/api-client/src`,
-						},
+							replacement: `${spacebot}/api-client/src`
+						}
 					]
 				: [
 						{
@@ -137,8 +139,8 @@ export default defineConfig(() => ({
 							replacement: path.resolve(
 								__dirname,
 								'./src/spacebot-api-client.ts'
-							),
-						},
+							)
+						}
 					]),
 			{
 				find: '@sd/interface',
@@ -169,7 +171,11 @@ export default defineConfig(() => ({
 			'style-to-js',
 			'unified'
 		],
-		exclude: ['@spacedrive/ai', '@spacedrive/primitives', '@spacedrive/tokens']
+		exclude: [
+			'@spacedrive/ai',
+			'@spacedrive/primitives',
+			'@spacedrive/tokens'
+		]
 	},
 
 	clearScreen: false,
@@ -179,7 +185,7 @@ export default defineConfig(() => ({
 		fs: {
 			allow: [
 				path.resolve(__dirname, '../../..'),
-				...(hasSpaceui ? [spaceui] : []),
+				...(hasSpaceui ? [spaceui] : [])
 			]
 		},
 		watch: {

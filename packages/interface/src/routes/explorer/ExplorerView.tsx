@@ -8,8 +8,12 @@ import {
 import {CircleButton, CircleButtonGroup} from '@spacedrive/primitives';
 import clsx from 'clsx';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useKeybind} from '../../hooks/useKeybind';
 import {TopBarItem, TopBarPortal} from '../../TopBar';
-import {ExpandableSearchButton, type ExpandableSearchButtonHandle} from './components/ExpandableSearchButton';
+import {
+	ExpandableSearchButton,
+	type ExpandableSearchButtonHandle
+} from './components/ExpandableSearchButton';
 import {PathBar} from './components/PathBar';
 import {VirtualPathBar} from './components/VirtualPathBar';
 import {useExplorer, type ViewMode} from './context';
@@ -27,7 +31,6 @@ import {MediaView} from './views/MediaView';
 import {SearchView} from './views/SearchView';
 import {SizeView} from './views/SizeView';
 import {ViewSettings, ViewSettingsPanel} from './ViewSettings';
-import {useKeybind} from '../../hooks/useKeybind';
 
 export function ExplorerView() {
 	const {
@@ -55,6 +58,7 @@ export function ExplorerView() {
 		mode,
 		enterSearchMode,
 		exitSearchMode,
+		exitFilteredMode,
 		currentFiles,
 		columnStack
 	} = useExplorer();
@@ -103,6 +107,10 @@ export function ExplorerView() {
 			setSearchValue('');
 		}
 	}, [mode.type]);
+
+	useEffect(() => {
+		return () => exitFilteredMode();
+	}, [exitFilteredMode]);
 
 	// When leaving column view, navigate to the deepest column so the
 	// new view shows the directory the user was actually looking at.
@@ -320,7 +328,9 @@ export function ExplorerView() {
 					viewMode === 'size' ? 'bg-transparent' : 'bg-app/80'
 				)}
 			>
-				{mode.type === 'search' && <SearchToolbar />}
+				{(mode.type === 'search' || mode.type === 'filtered') && (
+					<SearchToolbar />
+				)}
 				<div
 					className={clsx(
 						'flex-1',
