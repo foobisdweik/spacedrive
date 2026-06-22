@@ -71,6 +71,27 @@ impl FileSyncService {
 		}
 	}
 
+	pub async fn cancel_sync(&self, conduit_id: i32) -> Result<()> {
+		if let Some(sync) = self.active_syncs.write().await.remove(&conduit_id) {
+			info!("Canceling in-flight sync for conduit {}", conduit_id);
+			if let Some(job_id) = sync.source_to_target.copy_job_id {
+				let _ = self.library.jobs().cancel_job(job_id).await;
+			}
+			if let Some(job_id) = sync.source_to_target.delete_job_id {
+				let _ = self.library.jobs().cancel_job(job_id).await;
+			}
+			if let Some(target) = sync.target_to_source {
+				if let Some(job_id) = target.copy_job_id {
+					let _ = self.library.jobs().cancel_job(job_id).await;
+				}
+				if let Some(job_id) = target.delete_job_id {
+					let _ = self.library.jobs().cancel_job(job_id).await;
+				}
+			}
+		}
+		Ok(())
+	}
+
 	/// Trigger sync for a conduit
 	pub async fn sync_now(&self, conduit_id: i32) -> Result<SyncHandle> {
 		// Load conduit
@@ -87,7 +108,41 @@ impl FileSyncService {
 
 		// Calculate sync operations
 		info!("Calculating sync operations for conduit {}", conduit_id);
-		let operations = self.resolver.calculate_operations(&conduit).await?;
+		let mut operations = self.resolver.calculate_operations(&conduit).await?;
+
+		// Wire ConflictResolver
+		let mut conflicts_resolved = 0;
+		if !operations.conflicts.is_empty() {
+			let strategy = conflict::ConflictStrategy::NewestWins; // TODO: make configurable
+			let resolver = conflict::ConflictResolver::new(strategy);
+
+			let mut remaining_conflicts = Vec::new();
+			for conflict in operations.conflicts.drain(..) {
+				match resolver.resolve(&conflict) {
+					conflict::ConflictResolution::UseSource => {
+						operations
+							.source_to_target
+							.to_copy
+							.push(conflict.source_entry);
+						conflicts_resolved += 1;
+					}
+					conflict::ConflictResolution::UseTarget => {
+						if let Some(ref mut t_to_s) = operations.target_to_source {
+							t_to_s.to_copy.push(conflict.target_entry);
+							conflicts_resolved += 1;
+						}
+					}
+					conflict::ConflictResolution::CreateConflictCopy { .. } => {
+						// Blocker: current FileCopyJob cannot rename files during copy, need new Job API features
+						remaining_conflicts.push(conflict);
+					}
+					conflict::ConflictResolution::PromptUser(c) => {
+						remaining_conflicts.push(c);
+					}
+				}
+			}
+			operations.conflicts = remaining_conflicts;
+		}
 
 		let mode = sync_conduit::SyncMode::from_str(&conduit.sync_mode)
 			.ok_or_else(|| anyhow::anyhow!("Invalid sync mode"))?;
@@ -111,7 +166,7 @@ impl FileSyncService {
 		);
 
 		// If there's nothing to sync, mark as complete immediately
-		if copy_count == 0 && delete_count == 0 {
+		if copy_count == 0 && delete_count == 0 && operations.conflicts.is_empty() {
 			info!("No changes to sync for conduit {}", conduit_id);
 			self.conduit_manager.update_after_sync(conduit_id).await?;
 			return Ok(SyncHandle {
@@ -128,7 +183,7 @@ impl FileSyncService {
 		// Create new generation
 		let generation = self
 			.conduit_manager
-			.create_generation(conduit_id, conduit.sync_generation + 1)
+			.create_generation(conduit_id, conduit.sync_generation + 1, conflicts_resolved)
 			.await?;
 
 		// Dispatch source → target jobs
@@ -270,9 +325,27 @@ impl FileSyncService {
 			conduit_id
 		);
 
-		// Note: In a real implementation, we'd use JobManager's wait_for_completion
-		// For now, we'll simulate completion
-		tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+		let mut copy_job_ids = Vec::new();
+		if let Some(id) = source_to_target.copy_job_id {
+			copy_job_ids.push(id);
+		}
+		if let Some(ops) = &target_to_source {
+			if let Some(id) = ops.copy_job_id {
+				copy_job_ids.push(id);
+			}
+		}
+
+		for job_id in copy_job_ids {
+			if let Some(handle) = self.library.jobs().get_job(job_id).await {
+				if let Err(err) = handle.wait().await {
+					error!("Copy job {} failed: {}", job_id, err);
+					self.conduit_manager
+						.record_sync_error(conduit_id, format!("Copy job failed: {}", err))
+						.await?;
+					return Err(anyhow::anyhow!("Copy job failed: {}", err));
+				}
+			}
+		}
 
 		// Phase 2: Wait for all delete jobs to complete (after copies)
 		info!(
@@ -280,7 +353,27 @@ impl FileSyncService {
 			conduit_id
 		);
 
-		tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+		let mut delete_job_ids = Vec::new();
+		if let Some(id) = source_to_target.delete_job_id {
+			delete_job_ids.push(id);
+		}
+		if let Some(ops) = &target_to_source {
+			if let Some(id) = ops.delete_job_id {
+				delete_job_ids.push(id);
+			}
+		}
+
+		for job_id in delete_job_ids {
+			if let Some(handle) = self.library.jobs().get_job(job_id).await {
+				if let Err(err) = handle.wait().await {
+					error!("Delete job {} failed: {}", job_id, err);
+					self.conduit_manager
+						.record_sync_error(conduit_id, format!("Delete job failed: {}", err))
+						.await?;
+					return Err(anyhow::anyhow!("Delete job failed: {}", err));
+				}
+			}
+		}
 
 		// Phase 3: Mark sync as complete
 		self.conduit_manager
