@@ -231,6 +231,8 @@ export type CompositionOperator =
  */
 export type CompositionRule = { operator: CompositionOperator; operands: string[]; result_attribute: string };
 
+export type ConflictListOutput = { conduit_id: number; conflicts: SyncConflictResponse[] };
+
 /**
  * Network connection method for a device
  */
@@ -454,6 +456,8 @@ copy_method: CopyMethod };
 
 export type CoreStatus = { version: string; built_at: string; library_count: number; device_info: DeviceInfo; libraries: LibraryInfo[]; services: ServiceStatus; network: NetworkStatus; system: SystemInfo };
 
+export type CreateConduitInput = { source_entry_id: number; target_entry_id: number; sync_mode: string; schedule: string };
+
 /**
  * Input for creating a new empty file.
  */
@@ -610,6 +614,8 @@ export type DateField = "CreatedAt" | "ModifiedAt" | "AccessedAt" | "IndexedAt";
  * Filter for a time-based field
  */
 export type DateRangeFilter = { field: DateField; start: string | null; end: string | null };
+
+export type DeleteConduitInput = { conduit_id: number };
 
 export type DeleteGroupInput = { group_id: string };
 
@@ -939,6 +945,8 @@ export type DownloadWhisperModelOutput = {
  * Job ID for tracking download progress
  */
 job_id: string };
+
+export type EmptyInput = Record<string, never>;
 
 export type EnableIndexingInput = {
 /**
@@ -1756,6 +1764,8 @@ export type GetAdapterConfigInput = { adapter_id: string };
  */
 export type GetAppConfigQueryInput = null;
 
+export type GetConflictsInput = { conduit_id: number };
+
 export type GetFilesByTagInput = { tag_id: string; include_children: boolean; min_confidence: number };
 
 export type GetFilesByTagOutput = { files: File[] };
@@ -1860,6 +1870,10 @@ metrics: SyncMetricsSnapshot };
 export type GetSyncPartnersInput = Record<string, never>;
 
 export type GetSyncPartnersOutput = { partners: SyncPartnerInfo[]; debug_info: SyncPartnersDebugInfo };
+
+export type GetSyncProgressInput = { conduit_id: number };
+
+export type GetSyncStatusInput = { conduit_id: number };
 
 export type GetTagAncestorsInput = { tag_id: string };
 
@@ -2287,6 +2301,8 @@ export type ItemType =
  * Redundancy awareness dashboard
  */
 "Redundancy";
+
+export type JobBatchResponse = { copy_job_id: JobId | null; delete_job_id: JobId | null };
 
 export type JobCancelInput = { job_id: string };
 
@@ -3438,6 +3454,8 @@ export type PathDiffResult = { only_in_source: DiffEntry[]; only_in_target: Diff
  */
 export type PathMapping = { virtual_path: string; actual_path: string };
 
+export type PauseSyncInput = { conduit_id: number };
+
 /**
  * Per-peer activity information
  */
@@ -3658,6 +3676,8 @@ alternate_ids: string[];
  * Paths affected by this resource event (for path-scoped filtering)
  */
 affected_paths?: SdPath[] };
+
+export type ResumeSyncInput = { conduit_id: number };
 
 /**
  * Risk level for adding a path as a location
@@ -4194,6 +4214,10 @@ export type SuggestedLocationsQueryInput = null;
  */
 export type SyncActivityType = { type: "BroadcastSent"; data: { changes: number } } | { type: "ChangesReceived"; data: { changes: number } } | { type: "ChangesApplied"; data: { changes: number } } | { type: "BackfillStarted" } | { type: "BackfillCompleted"; data: { records: number } } | { type: "CatchUpStarted" } | { type: "CatchUpCompleted" };
 
+export type SyncConduitResponse = { id: number; uuid: string; source_entry_id: number; target_entry_id: number; sync_mode: string; enabled: boolean; schedule: string; use_index_rules: boolean; index_mode_override: string | null; parallel_transfers: number; bandwidth_limit_mbps: number | null; last_sync_completed_at: string | null; sync_generation: number; last_sync_error: string | null; total_syncs: number; files_synced: number; bytes_transferred: number; created_at: string; updated_at: string; is_syncing: boolean };
+
+export type SyncConflictResponse = { relative_path: string; conflict_type: string };
+
 /**
  * A logged sync event
  */
@@ -4256,6 +4280,10 @@ export type SyncEventType =
  */
 "sync_error";
 
+export type SyncGenerationResponse = { id: number; conduit_id: number; generation: number; started_at: string; completed_at: string | null; files_copied: number; files_deleted: number; conflicts_resolved: number; bytes_transferred: number; errors_encountered: number; verified_at: string | null; verification_status: string };
+
+export type SyncHistoryInput = { conduit_id: number; limit: number | null };
+
 /**
  * Point-in-time snapshot of all sync metrics
  */
@@ -4285,9 +4313,15 @@ performance: PerformanceSnapshot;
  */
 errors: ErrorSnapshot };
 
+export type SyncNowInput = { conduit_id: number };
+
+export type SyncNowOutput = { conduit_id: number; generation: number; source_to_target: JobBatchResponse; target_to_source: JobBatchResponse | null };
+
 export type SyncPartnerInfo = { device_uuid: string; device_name: string; is_paired: boolean };
 
 export type SyncPartnersDebugInfo = { total_devices: number; sync_enabled_devices: number; paired_devices: number; final_sync_partners: number; device_details: DeviceDebugInfo[] };
+
+export type SyncProgressResponse = { conduit_id: number; is_syncing: boolean; phase: string };
 
 export type SyncSourceInput = { source_id: string };
 
@@ -4295,6 +4329,8 @@ export type SyncSourceInput = { source_id: string };
  * State metrics snapshot
  */
 export type SyncStateSnapshot = { current_state: DeviceSyncState; state_entered_at: string; uptime_seconds: number; state_history: StateTransition[]; total_time_in_state: ([DeviceSyncState, number])[]; transition_count: ([[DeviceSyncState, DeviceSyncState], number])[] };
+
+export type SyncStatusResponse = { conduit_id: number; is_syncing: boolean; enabled: boolean; sync_generation: number; last_sync_completed_at: string | null; last_sync_error: string | null };
 
 export type SystemInfo = { uptime: number | null; data_directory: string; instance_name: string | null; current_library: string | null };
 
@@ -4677,6 +4713,8 @@ message: string;
  * Whether a restart is recommended for changes to take effect
  */
 requires_restart: boolean };
+
+export type UpdateConduitInput = { conduit_id: number; sync_mode: string | null; enabled: boolean | null; schedule: string | null; use_index_rules: boolean | null; index_mode_override: string | null; parallel_transfers: number | null; bandwidth_limit_mbps: number | null };
 
 /**
  * Input for updating device configuration
@@ -5218,6 +5256,12 @@ export type CoreAction =
 export type LibraryAction =
      { type: 'adapters.update'; input: UpdateAdapterInput; output: UpdateAdapterOutput }
   |  { type: 'config.library.update'; input: UpdateLibraryConfigInput; output: UpdateLibraryConfigOutput }
+  |  { type: 'file_sync.conduit.create'; input: CreateConduitInput; output: SyncConduitResponse }
+  |  { type: 'file_sync.conduit.delete'; input: DeleteConduitInput; output: Empty }
+  |  { type: 'file_sync.conduit.update'; input: UpdateConduitInput; output: SyncConduitResponse }
+  |  { type: 'file_sync.sync.now'; input: SyncNowInput; output: SyncNowOutput }
+  |  { type: 'file_sync.sync.pause'; input: PauseSyncInput; output: SyncStatusResponse }
+  |  { type: 'file_sync.sync.resume'; input: ResumeSyncInput; output: SyncStatusResponse }
   |  { type: 'files.copy'; input: FileCopyInput; output: JobReceipt }
   |  { type: 'files.createFile'; input: CreateFileInput; output: CreateFileOutput }
   |  { type: 'files.createFolder'; input: CreateFolderInput; output: CreateFolderOutput }
@@ -5296,6 +5340,11 @@ export type LibraryQuery =
   |  { type: 'adapters.list'; input: ListAdaptersInput; output: [AdapterInfo] }
   |  { type: 'config.library.get'; input: GetLibraryConfigQueryInput; output: LibrarySettingsOutput }
   |  { type: 'devices.list'; input: ListLibraryDevicesInput; output: [Device] }
+  |  { type: 'file_sync.conduit.list'; input: EmptyInput; output: [SyncConduitResponse] }
+  |  { type: 'file_sync.conflicts.list'; input: GetConflictsInput; output: ConflictListOutput }
+  |  { type: 'file_sync.history.list'; input: SyncHistoryInput; output: [SyncGenerationResponse] }
+  |  { type: 'file_sync.status.get'; input: GetSyncStatusInput; output: SyncStatusResponse }
+  |  { type: 'file_sync.status.progress'; input: GetSyncProgressInput; output: SyncProgressResponse }
   |  { type: 'files.alternate_instances'; input: AlternateInstancesInput; output: AlternateInstancesOutput }
   |  { type: 'files.by_id'; input: FileByIdQuery; output: File }
   |  { type: 'files.by_path'; input: FileByPathQuery; output: File }
@@ -5361,6 +5410,12 @@ export const WIRE_METHODS = {
   libraryActions: {
     'adapters.update': 'action:adapters.update.input',
     'config.library.update': 'action:config.library.update.input',
+    'file_sync.conduit.create': 'action:file_sync.conduit.create.input',
+    'file_sync.conduit.delete': 'action:file_sync.conduit.delete.input',
+    'file_sync.conduit.update': 'action:file_sync.conduit.update.input',
+    'file_sync.sync.now': 'action:file_sync.sync.now.input',
+    'file_sync.sync.pause': 'action:file_sync.sync.pause.input',
+    'file_sync.sync.resume': 'action:file_sync.sync.resume.input',
     'files.copy': 'action:files.copy.input',
     'files.createFile': 'action:files.createFile.input',
     'files.createFolder': 'action:files.createFolder.input',
@@ -5439,6 +5494,11 @@ export const WIRE_METHODS = {
     'adapters.list': 'query:adapters.list',
     'config.library.get': 'query:config.library.get',
     'devices.list': 'query:devices.list',
+    'file_sync.conduit.list': 'query:file_sync.conduit.list',
+    'file_sync.conflicts.list': 'query:file_sync.conflicts.list',
+    'file_sync.history.list': 'query:file_sync.history.list',
+    'file_sync.status.get': 'query:file_sync.status.get',
+    'file_sync.status.progress': 'query:file_sync.status.progress',
     'files.alternate_instances': 'query:files.alternate_instances',
     'files.by_id': 'query:files.by_id',
     'files.by_path': 'query:files.by_path',

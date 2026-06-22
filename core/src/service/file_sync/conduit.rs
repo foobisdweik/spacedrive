@@ -1,7 +1,7 @@
 use crate::infra::db::entities::{entry, sync_conduit, sync_generation};
 use anyhow::Result;
 use chrono::Utc;
-use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, QueryOrder};
+use sea_orm::{prelude::*, ActiveValue::Set, DatabaseConnection, QueryOrder, QuerySelect};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -125,6 +125,48 @@ impl ConduitManager {
 		Ok(())
 	}
 
+	/// Update mutable conduit settings.
+	pub async fn update_conduit(
+		&self,
+		conduit_id: i32,
+		sync_mode: Option<sync_conduit::SyncMode>,
+		enabled: Option<bool>,
+		schedule: Option<String>,
+		use_index_rules: Option<bool>,
+		index_mode_override: Option<Option<String>>,
+		parallel_transfers: Option<i32>,
+		bandwidth_limit_mbps: Option<Option<i32>>,
+	) -> Result<sync_conduit::Model> {
+		let conduit = self.get_conduit(conduit_id).await?;
+		let mut active: sync_conduit::ActiveModel = conduit.into();
+
+		if let Some(sync_mode) = sync_mode {
+			active.sync_mode = Set(sync_mode.as_str().to_string());
+		}
+		if let Some(enabled) = enabled {
+			active.enabled = Set(enabled);
+		}
+		if let Some(schedule) = schedule {
+			active.schedule = Set(schedule);
+		}
+		if let Some(use_index_rules) = use_index_rules {
+			active.use_index_rules = Set(use_index_rules);
+		}
+		if let Some(index_mode_override) = index_mode_override {
+			active.index_mode_override = Set(index_mode_override);
+		}
+		if let Some(parallel_transfers) = parallel_transfers {
+			active.parallel_transfers = Set(parallel_transfers.max(1));
+		}
+		if let Some(bandwidth_limit_mbps) = bandwidth_limit_mbps {
+			active.bandwidth_limit_mbps = Set(bandwidth_limit_mbps);
+		}
+
+		active.updated_at = Set(Utc::now());
+
+		Ok(active.update(&*self.db).await?)
+	}
+
 	/// Update conduit after successful sync
 	pub async fn update_after_sync(&self, conduit_id: i32) -> Result<()> {
 		let conduit = self.get_conduit(conduit_id).await?;
@@ -222,6 +264,20 @@ impl ConduitManager {
 			.filter(sync_generation::Column::CompletedAt.is_not_null())
 			.order_by_desc(sync_generation::Column::Generation)
 			.one(&*self.db)
+			.await?)
+	}
+
+	/// List generations for a conduit, newest first.
+	pub async fn list_generations(
+		&self,
+		conduit_id: i32,
+		limit: u64,
+	) -> Result<Vec<sync_generation::Model>> {
+		Ok(sync_generation::Entity::find()
+			.filter(sync_generation::Column::ConduitId.eq(conduit_id))
+			.order_by_desc(sync_generation::Column::Generation)
+			.limit(limit)
+			.all(&*self.db)
 			.await?)
 	}
 
