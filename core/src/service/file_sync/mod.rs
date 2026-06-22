@@ -71,6 +71,27 @@ impl FileSyncService {
 		}
 	}
 
+	pub async fn cancel_sync(&self, conduit_id: i32) -> Result<()> {
+		if let Some(sync) = self.active_syncs.write().await.remove(&conduit_id) {
+			info!("Canceling in-flight sync for conduit {}", conduit_id);
+			if let Some(job_id) = sync.source_to_target.copy_job_id {
+				let _ = self.library.jobs().cancel_job(job_id).await;
+			}
+			if let Some(job_id) = sync.source_to_target.delete_job_id {
+				let _ = self.library.jobs().cancel_job(job_id).await;
+			}
+			if let Some(target) = sync.target_to_source {
+				if let Some(job_id) = target.copy_job_id {
+					let _ = self.library.jobs().cancel_job(job_id).await;
+				}
+				if let Some(job_id) = target.delete_job_id {
+					let _ = self.library.jobs().cancel_job(job_id).await;
+				}
+			}
+		}
+		Ok(())
+	}
+
 	/// Trigger sync for a conduit
 	pub async fn sync_now(&self, conduit_id: i32) -> Result<SyncHandle> {
 		// Load conduit
@@ -145,7 +166,7 @@ impl FileSyncService {
 		);
 
 		// If there's nothing to sync, mark as complete immediately
-		if copy_count == 0 && delete_count == 0 {
+		if copy_count == 0 && delete_count == 0 && operations.conflicts.is_empty() {
 			info!("No changes to sync for conduit {}", conduit_id);
 			self.conduit_manager.update_after_sync(conduit_id).await?;
 			return Ok(SyncHandle {
@@ -162,7 +183,7 @@ impl FileSyncService {
 		// Create new generation
 		let generation = self
 			.conduit_manager
-			.create_generation(conduit_id, conduit.sync_generation + 1)
+			.create_generation(conduit_id, conduit.sync_generation + 1, conflicts_resolved)
 			.await?;
 
 		// Dispatch source → target jobs
@@ -316,7 +337,13 @@ impl FileSyncService {
 
 		for job_id in copy_job_ids {
 			if let Some(handle) = self.library.jobs().get_job(job_id).await {
-				let _ = handle.wait().await;
+				if let Err(err) = handle.wait().await {
+					error!("Copy job {} failed: {}", job_id, err);
+					self.conduit_manager
+						.record_sync_error(conduit_id, format!("Copy job failed: {}", err))
+						.await?;
+					return Err(anyhow::anyhow!("Copy job failed: {}", err));
+				}
 			}
 		}
 
@@ -338,7 +365,13 @@ impl FileSyncService {
 
 		for job_id in delete_job_ids {
 			if let Some(handle) = self.library.jobs().get_job(job_id).await {
-				let _ = handle.wait().await;
+				if let Err(err) = handle.wait().await {
+					error!("Delete job {} failed: {}", job_id, err);
+					self.conduit_manager
+						.record_sync_error(conduit_id, format!("Delete job failed: {}", err))
+						.await?;
+					return Err(anyhow::anyhow!("Delete job failed: {}", err));
+				}
 			}
 		}
 

@@ -199,17 +199,30 @@ async fn populate_content_ids(
 		return Ok(());
 	}
 
-	for entry in entries.values_mut() {
+	let mut futures = Vec::new();
+	for (key, entry) in entries.iter() {
 		if entry.kind != DiffEntryKind::File || entry.content_id.is_some() {
 			continue;
 		}
 
-		let Some(path) = entry.sd_path.as_local_path() else {
-			continue;
-		};
+		if let Some(path) = entry.sd_path.as_local_path() {
+			let path_buf = path.to_path_buf();
+			let key_clone = key.clone();
+			futures.push(async move {
+				let result = ContentHashGenerator::generate_content_hash(&path_buf).await;
+				(key_clone, path_buf, result)
+			});
+		}
+	}
 
-		match ContentHashGenerator::generate_content_hash(path).await {
-			Ok(content_id) => entry.content_id = Some(content_id),
+	let results = futures::future::join_all(futures).await;
+	for (key, path, result) in results {
+		match result {
+			Ok(content_id) => {
+				if let Some(entry) = entries.get_mut(&key) {
+					entry.content_id = Some(content_id);
+				}
+			}
 			Err(crate::domain::ContentHashError::EmptyFile) => {}
 			Err(error) => {
 				return Err(QueryError::Internal(format!(

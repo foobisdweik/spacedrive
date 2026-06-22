@@ -341,6 +341,10 @@ impl LibraryAction for PauseSyncAction {
 			.set_enabled(self.input.conduit_id, false)
 			.await
 			.map_err(to_action_error)?;
+		service
+			.cancel_sync(self.input.conduit_id)
+			.await
+			.map_err(to_action_error)?;
 		sync_status_for_action(&service, self.input.conduit_id).await
 	}
 

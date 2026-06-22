@@ -201,6 +201,7 @@ impl ConduitManager {
 		&self,
 		conduit_id: i32,
 		generation: i64,
+		conflicts_resolved: i32,
 	) -> Result<sync_generation::Model> {
 		let gen = sync_generation::ActiveModel {
 			conduit_id: Set(conduit_id),
@@ -209,7 +210,7 @@ impl ConduitManager {
 			completed_at: Set(None),
 			files_copied: Set(0),
 			files_deleted: Set(0),
-			conflicts_resolved: Set(0),
+			conflicts_resolved: Set(conflicts_resolved),
 			bytes_transferred: Set(0),
 			errors_encountered: Set(0),
 			verified_at: Set(None),
