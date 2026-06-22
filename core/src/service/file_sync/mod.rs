@@ -87,7 +87,41 @@ impl FileSyncService {
 
 		// Calculate sync operations
 		info!("Calculating sync operations for conduit {}", conduit_id);
-		let operations = self.resolver.calculate_operations(&conduit).await?;
+		let mut operations = self.resolver.calculate_operations(&conduit).await?;
+
+		// Wire ConflictResolver
+		let mut conflicts_resolved = 0;
+		if !operations.conflicts.is_empty() {
+			let strategy = conflict::ConflictStrategy::NewestWins; // TODO: make configurable
+			let resolver = conflict::ConflictResolver::new(strategy);
+
+			let mut remaining_conflicts = Vec::new();
+			for conflict in operations.conflicts.drain(..) {
+				match resolver.resolve(&conflict) {
+					conflict::ConflictResolution::UseSource => {
+						operations
+							.source_to_target
+							.to_copy
+							.push(conflict.source_entry);
+						conflicts_resolved += 1;
+					}
+					conflict::ConflictResolution::UseTarget => {
+						if let Some(ref mut t_to_s) = operations.target_to_source {
+							t_to_s.to_copy.push(conflict.target_entry);
+							conflicts_resolved += 1;
+						}
+					}
+					conflict::ConflictResolution::CreateConflictCopy { .. } => {
+						// Blocker: current FileCopyJob cannot rename files during copy, need new Job API features
+						remaining_conflicts.push(conflict);
+					}
+					conflict::ConflictResolution::PromptUser(c) => {
+						remaining_conflicts.push(c);
+					}
+				}
+			}
+			operations.conflicts = remaining_conflicts;
+		}
 
 		let mode = sync_conduit::SyncMode::from_str(&conduit.sync_mode)
 			.ok_or_else(|| anyhow::anyhow!("Invalid sync mode"))?;
@@ -270,9 +304,21 @@ impl FileSyncService {
 			conduit_id
 		);
 
-		// Note: In a real implementation, we'd use JobManager's wait_for_completion
-		// For now, we'll simulate completion
-		tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+		let mut copy_job_ids = Vec::new();
+		if let Some(id) = source_to_target.copy_job_id {
+			copy_job_ids.push(id);
+		}
+		if let Some(ops) = &target_to_source {
+			if let Some(id) = ops.copy_job_id {
+				copy_job_ids.push(id);
+			}
+		}
+
+		for job_id in copy_job_ids {
+			if let Some(handle) = self.library.jobs().get_job(job_id).await {
+				let _ = handle.wait().await;
+			}
+		}
 
 		// Phase 2: Wait for all delete jobs to complete (after copies)
 		info!(
@@ -280,7 +326,21 @@ impl FileSyncService {
 			conduit_id
 		);
 
-		tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+		let mut delete_job_ids = Vec::new();
+		if let Some(id) = source_to_target.delete_job_id {
+			delete_job_ids.push(id);
+		}
+		if let Some(ops) = &target_to_source {
+			if let Some(id) = ops.delete_job_id {
+				delete_job_ids.push(id);
+			}
+		}
+
+		for job_id in delete_job_ids {
+			if let Some(handle) = self.library.jobs().get_job(job_id).await {
+				let _ = handle.wait().await;
+			}
+		}
 
 		// Phase 3: Mark sync as complete
 		self.conduit_manager

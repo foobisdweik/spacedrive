@@ -55,11 +55,11 @@ pub struct SyncOperations {
 	pub conflicts: Vec<SyncConflict>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SyncConflict {
 	pub relative_path: PathBuf,
-	pub source_entry: entry::Model,
-	pub target_entry: entry::Model,
+	pub source_entry: EntryWithPath,
+	pub target_entry: EntryWithPath,
 	pub conflict_type: ConflictType,
 }
 
@@ -378,8 +378,8 @@ impl SyncResolver {
 						// Conflict: both modified
 						operations.conflicts.push(SyncConflict {
 							relative_path: path.clone(),
-							source_entry: source_entry_with_path.entry.clone(),
-							target_entry: target_entry_with_path.entry.clone(),
+							source_entry: source_entry_with_path.clone(),
+							target_entry: target_entry_with_path.clone(),
 							conflict_type: ConflictType::BothModified,
 						});
 					} else if source_changed {

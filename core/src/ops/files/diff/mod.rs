@@ -1,6 +1,6 @@
 use crate::{
 	context::CoreContext,
-	domain::addressing::SdPath,
+	domain::{addressing::SdPath, content_identity::ContentHashGenerator},
 	infra::query::{LibraryQuery, QueryError, QueryResult},
 	ops::indexing::{
 		database_storage::EntryMetadata, state::EntryKind, IndexScope, IndexerJob, IndexerJobConfig,
@@ -30,6 +30,8 @@ pub struct PathDiffInput {
 pub enum DiffStrategy {
 	#[default]
 	Heuristic,
+	Content,
+	Hybrid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -102,12 +104,20 @@ impl LibraryQuery for PathDiffQuery {
 		})?;
 
 		let source_map = {
-			let index = source_index.read().await;
-			build_path_map(&source, &index.entries(), |path| index.get_entry_uuid(path))
+			let mut map = {
+				let index = source_index.read().await;
+				build_path_map(&source, &index.entries(), |path| index.get_entry_uuid(path))
+			};
+			populate_content_ids(&mut map, self.input.strategy).await?;
+			map
 		};
 		let target_map = {
-			let index = target_index.read().await;
-			build_path_map(&target, &index.entries(), |path| index.get_entry_uuid(path))
+			let mut map = {
+				let index = target_index.read().await;
+				build_path_map(&target, &index.entries(), |path| index.get_entry_uuid(path))
+			};
+			populate_content_ids(&mut map, self.input.strategy).await?;
+			map
 		};
 
 		Ok(diff_path_maps(
@@ -181,6 +191,39 @@ async fn ensure_indexed(
 	Ok(())
 }
 
+async fn populate_content_ids(
+	entries: &mut HashMap<PathBuf, DiffEntry>,
+	strategy: DiffStrategy,
+) -> QueryResult<()> {
+	if !strategy.requires_content_id() {
+		return Ok(());
+	}
+
+	for entry in entries.values_mut() {
+		if entry.kind != DiffEntryKind::File || entry.content_id.is_some() {
+			continue;
+		}
+
+		let Some(path) = entry.sd_path.as_local_path() else {
+			continue;
+		};
+
+		match ContentHashGenerator::generate_content_hash(path).await {
+			Ok(content_id) => entry.content_id = Some(content_id),
+			Err(crate::domain::ContentHashError::EmptyFile) => {}
+			Err(error) => {
+				return Err(QueryError::Internal(format!(
+					"Failed to hash {} for path diff: {}",
+					path.display(),
+					error
+				)));
+			}
+		}
+	}
+
+	Ok(())
+}
+
 fn build_path_map<F>(
 	root: &Path,
 	entries: &HashMap<PathBuf, EntryMetadata>,
@@ -242,6 +285,8 @@ fn diff_path_maps(
 ) -> PathDiffResult {
 	match strategy {
 		DiffStrategy::Heuristic => diff_heuristic(source_map, target_map),
+		DiffStrategy::Content => diff_content(source_map, target_map),
+		DiffStrategy::Hybrid => diff_hybrid(source_map, target_map),
 	}
 }
 
@@ -284,6 +329,130 @@ fn diff_heuristic(
 	result
 }
 
+fn diff_content(
+	source_map: &HashMap<PathBuf, DiffEntry>,
+	target_map: &HashMap<PathBuf, DiffEntry>,
+) -> PathDiffResult {
+	diff_with_content(source_map, target_map, false)
+}
+
+fn diff_hybrid(
+	source_map: &HashMap<PathBuf, DiffEntry>,
+	target_map: &HashMap<PathBuf, DiffEntry>,
+) -> PathDiffResult {
+	diff_with_content(source_map, target_map, true)
+}
+
+fn diff_with_content(
+	source_map: &HashMap<PathBuf, DiffEntry>,
+	target_map: &HashMap<PathBuf, DiffEntry>,
+	heuristic_fast_path: bool,
+) -> PathDiffResult {
+	let mut result = PathDiffResult {
+		total_scanned: source_map.len() + target_map.len(),
+		..Default::default()
+	};
+	let target_by_content = entries_by_content_id(target_map);
+	let mut consumed_targets = std::collections::HashSet::new();
+
+	for (relative_path, source_entry) in source_map {
+		if let Some(target_entry) = target_map.get(relative_path) {
+			consumed_targets.insert(relative_path.clone());
+
+			if entries_match_by_strategy(source_entry, target_entry, heuristic_fast_path) {
+				result.matched_count += 1;
+			} else {
+				result.modified.push(source_entry.clone());
+			}
+			continue;
+		}
+
+		if let Some(target_relative_path) =
+			find_unconsumed_content_match(source_entry, &target_by_content, &consumed_targets)
+		{
+			consumed_targets.insert(target_relative_path.clone());
+			result.matched_count += 1;
+		} else {
+			result.only_in_source.push(source_entry.clone());
+		}
+	}
+
+	for (relative_path, target_entry) in target_map {
+		if !consumed_targets.contains(relative_path) {
+			result.only_in_target.push(target_entry.clone());
+		}
+	}
+
+	sort_entries(&mut result.only_in_source);
+	sort_entries(&mut result.only_in_target);
+	sort_entries(&mut result.modified);
+
+	result.copy_size = result
+		.only_in_source
+		.iter()
+		.chain(result.modified.iter())
+		.map(|entry| entry.size)
+		.sum();
+
+	result
+}
+
+fn entries_by_content_id(entries: &HashMap<PathBuf, DiffEntry>) -> HashMap<String, Vec<PathBuf>> {
+	let mut by_content: HashMap<String, Vec<PathBuf>> = HashMap::new();
+
+	for (relative_path, entry) in entries {
+		if entry.kind != DiffEntryKind::File {
+			continue;
+		}
+
+		if let Some(content_id) = &entry.content_id {
+			by_content
+				.entry(content_id.clone())
+				.or_default()
+				.push(relative_path.clone());
+		}
+	}
+
+	for paths in by_content.values_mut() {
+		paths.sort();
+	}
+
+	by_content
+}
+
+fn find_unconsumed_content_match<'a>(
+	source_entry: &DiffEntry,
+	target_by_content: &'a HashMap<String, Vec<PathBuf>>,
+	consumed_targets: &std::collections::HashSet<PathBuf>,
+) -> Option<&'a PathBuf> {
+	if source_entry.kind != DiffEntryKind::File {
+		return None;
+	}
+
+	let content_id = source_entry.content_id.as_ref()?;
+	target_by_content
+		.get(content_id)?
+		.iter()
+		.find(|relative_path| !consumed_targets.contains(*relative_path))
+}
+
+fn entries_match_by_strategy(
+	source: &DiffEntry,
+	target: &DiffEntry,
+	heuristic_fast_path: bool,
+) -> bool {
+	if heuristic_fast_path && entries_match_heuristically(source, target) {
+		return true;
+	}
+
+	match (&source.content_id, &target.content_id) {
+		(Some(source_content), Some(target_content)) => {
+			source.kind == target.kind && source_content == target_content
+		}
+		_ => entries_match_heuristically(source, target),
+	}
+}
+
 fn entries_match_heuristically(source: &DiffEntry, target: &DiffEntry) -> bool {
 	source.kind == target.kind
 		&& source.size == target.size
@@ -292,6 +461,12 @@ fn entries_match_heuristically(source: &DiffEntry, target: &DiffEntry) -> bool {
 
 fn sort_entries(entries: &mut [DiffEntry]) {
 	entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+}
+
+impl DiffStrategy {
+	fn requires_content_id(self) -> bool {
+		matches!(self, Self::Content | Self::Hybrid)
+	}
 }
 
 impl From<EntryKind> for DiffEntryKind {
@@ -319,6 +494,18 @@ mod tests {
 			modified_at: DateTime::from_timestamp(modified_at, 0),
 			content_id: None,
 			kind: DiffEntryKind::File,
+		}
+	}
+
+	fn entry_with_content(
+		relative_path: &str,
+		size: u64,
+		modified_at: i64,
+		content_id: &str,
+	) -> DiffEntry {
+		DiffEntry {
+			content_id: Some(content_id.to_string()),
+			..entry(relative_path, size, modified_at)
 		}
 	}
 
@@ -372,5 +559,84 @@ mod tests {
 			result.only_in_source[1].relative_path,
 			PathBuf::from("z.txt")
 		);
+	}
+
+	#[test]
+	fn content_diff_matches_renamed_files_by_hash() {
+		let source_map = HashMap::from([(
+			PathBuf::from("photos/original.jpg"),
+			entry_with_content("photos/original.jpg", 10, 1, "same-content"),
+		)]);
+		let target_map = HashMap::from([(
+			PathBuf::from("archive/renamed.jpg"),
+			entry_with_content("archive/renamed.jpg", 10, 2, "same-content"),
+		)]);
+
+		let result = diff_content(&source_map, &target_map);
+
+		assert_eq!(result.matched_count, 1);
+		assert_eq!(result.copy_size, 0);
+		assert!(result.only_in_source.is_empty());
+		assert!(result.only_in_target.is_empty());
+		assert!(result.modified.is_empty());
+	}
+
+	#[test]
+	fn content_diff_marks_same_path_different_hash_as_modified() {
+		let source_map = HashMap::from([(
+			PathBuf::from("report.txt"),
+			entry_with_content("report.txt", 10, 1, "source-content"),
+		)]);
+		let target_map = HashMap::from([(
+			PathBuf::from("report.txt"),
+			entry_with_content("report.txt", 10, 1, "target-content"),
+		)]);
+
+		let result = diff_content(&source_map, &target_map);
+
+		assert_eq!(result.matched_count, 0);
+		assert_eq!(result.copy_size, 10);
+		assert_eq!(
+			result.modified[0].relative_path,
+			PathBuf::from("report.txt")
+		);
+		assert!(result.only_in_source.is_empty());
+		assert!(result.only_in_target.is_empty());
+	}
+
+	#[test]
+	fn hybrid_diff_uses_heuristic_fast_path_for_same_metadata() {
+		let source_map = HashMap::from([(
+			PathBuf::from("same.txt"),
+			entry_with_content("same.txt", 10, 1, "source-content"),
+		)]);
+		let target_map = HashMap::from([(
+			PathBuf::from("same.txt"),
+			entry_with_content("same.txt", 10, 1, "target-content"),
+		)]);
+
+		let result = diff_hybrid(&source_map, &target_map);
+
+		assert_eq!(result.matched_count, 1);
+		assert_eq!(result.copy_size, 0);
+		assert!(result.modified.is_empty());
+	}
+
+	#[test]
+	fn hybrid_diff_falls_back_to_content_for_renames() {
+		let source_map = HashMap::from([(
+			PathBuf::from("draft.txt"),
+			entry_with_content("draft.txt", 10, 1, "same-content"),
+		)]);
+		let target_map = HashMap::from([(
+			PathBuf::from("published.txt"),
+			entry_with_content("published.txt", 10, 9, "same-content"),
+		)]);
+
+		let result = diff_hybrid(&source_map, &target_map);
+
+		assert_eq!(result.matched_count, 1);
+		assert!(result.only_in_source.is_empty());
+		assert!(result.only_in_target.is_empty());
 	}
 }

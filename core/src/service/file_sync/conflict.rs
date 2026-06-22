@@ -35,10 +35,11 @@ impl ConflictResolver {
 		Self { strategy }
 	}
 
-	pub fn resolve(&self, conflict: SyncConflict) -> ConflictResolution {
+	pub fn resolve(&self, conflict: &SyncConflict) -> ConflictResolution {
 		match self.strategy {
 			ConflictStrategy::NewestWins => {
-				if conflict.source_entry.modified_at > conflict.target_entry.modified_at {
+				if conflict.source_entry.entry.modified_at > conflict.target_entry.entry.modified_at
+				{
 					ConflictResolution::UseSource
 				} else {
 					ConflictResolution::UseTarget
@@ -47,10 +48,10 @@ impl ConflictResolver {
 			ConflictStrategy::SourceWins => ConflictResolution::UseSource,
 			ConflictStrategy::TargetWins => ConflictResolution::UseTarget,
 			ConflictStrategy::CreateConflictFile => ConflictResolution::CreateConflictCopy {
-				original: conflict.target_entry,
-				conflicted: conflict.source_entry,
+				original: conflict.target_entry.entry.clone(),
+				conflicted: conflict.source_entry.entry.clone(),
 			},
-			ConflictStrategy::PromptUser => ConflictResolution::PromptUser(conflict),
+			ConflictStrategy::PromptUser => ConflictResolution::PromptUser(conflict.clone()),
 		}
 	}
 }

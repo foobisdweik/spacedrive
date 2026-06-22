@@ -811,7 +811,7 @@ export type DiffEntry = { relative_path: string; sd_path: SdPath; uuid: string |
 
 export type DiffEntryKind = "File" | "Directory" | "Symlink";
 
-export type DiffStrategy = "Heuristic";
+export type DiffStrategy = "Heuristic" | "Content" | "Hybrid";
 
 /**
  * Input for directory listing
