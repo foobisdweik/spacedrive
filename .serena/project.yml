@@ -37,6 +37,8 @@ read_only: false
 # A fixed semantic-navigation tool set avoids duplicating Codex's native file,
 # shell, and editing tools while reducing MCP schema overhead.
 fixed_tools:
+  - initial_instructions
+  - activate_project
   - get_symbols_overview
   - find_symbol
   - find_declaration
@@ -47,6 +49,13 @@ fixed_tools:
   - search_for_pattern
   - list_memories
   - read_memory
+  - list_dir
+  - find_file
+  - read_file
+  - rename_symbol
+  - replace_symbol_body
+  - insert_before_symbol
+  - insert_after_symbol
   - serena_info
   - get_current_config
 
@@ -57,6 +66,7 @@ included_optional_tools: []
 # Onboarding has already been completed; memory tools remain available.
 default_modes:
   - no-onboarding
+  - editing
 
 added_modes: []
 
