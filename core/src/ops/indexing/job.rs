@@ -8,12 +8,16 @@
 use crate::{
 	domain::addressing::SdPath,
 	infra::db::entities,
+	infra::event::Event,
 	infra::job::{prelude::*, traits::DynJob},
 };
 
 // Re-export IndexMode from domain for backwards compatibility
 pub use crate::domain::location::IndexMode;
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Statement};
+use sea_orm::{
+	ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+	Statement,
+};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::{
@@ -235,6 +239,55 @@ impl DynJob for IndexerJob {
 impl JobProgress for IndexerProgress {}
 
 impl IndexerJob {
+	fn should_update_persistent_location_record(&self) -> bool {
+		!self.config.is_ephemeral()
+			&& !self.config.is_current_scope()
+			&& !self.config.run_in_background
+			&& self.config.location_id.is_some()
+	}
+
+	async fn update_persistent_location_indexing_state(
+		&self,
+		ctx: &JobContext<'_>,
+		scan_state: &str,
+		error_message: Option<String>,
+		stats: Option<&IndexerStats>,
+	) -> JobResult {
+		let Some(location_id) = self.config.location_id else {
+			return Ok(());
+		};
+
+		if self.config.is_ephemeral() {
+			return Ok(());
+		}
+
+		let location = entities::location::Entity::find()
+			.filter(entities::location::Column::Uuid.eq(location_id))
+			.one(ctx.library_db())
+			.await
+			.map_err(|e| JobError::Database(e.to_string()))?
+			.ok_or_else(|| JobError::execution(format!("Location not found: {}", location_id)))?;
+
+		let mut active_location: entities::location::ActiveModel = location.into();
+		active_location.scan_state = Set(scan_state.to_string());
+		active_location.error_message = Set(error_message);
+		active_location.updated_at = Set(chrono::Utc::now());
+		if let Some(stats) = stats {
+			active_location.total_file_count = Set(stats.files.min(i64::MAX as u64) as i64);
+			active_location.total_byte_size = Set(stats.bytes.min(i64::MAX as u64) as i64);
+		}
+		if scan_state == "completed" {
+			active_location.last_scan_at = Set(Some(chrono::Utc::now()));
+		}
+
+		active_location
+			.update(ctx.library_db())
+			.await
+			.map_err(|e| JobError::Database(e.to_string()))?;
+
+		Ok(())
+	}
+
 	async fn run_job_phases(&mut self, ctx: &JobContext<'_>) -> JobResult<IndexerOutput> {
 		if self.state.is_none() {
 			ctx.log(format!(
@@ -673,6 +726,19 @@ impl JobHandler for IndexerJob {
 			self.timer = Some(PhaseTimer::new());
 		}
 
+		if self.should_update_persistent_location_record() {
+			if let Err(update_error) = self
+				.update_persistent_location_indexing_state(&ctx, "scanning", None, None)
+				.await
+			{
+				ctx.add_warning(format!(
+					"Failed to mark indexer location scanning: {}",
+					update_error
+				));
+			}
+			ctx.library().event_bus().emit(Event::Refresh);
+		}
+
 		if self.config.is_ephemeral() && self.ephemeral_index.is_none() {
 			// Try to load from snapshot first
 			let cache = ctx.library().core_context().ephemeral_cache();
@@ -773,6 +839,57 @@ impl JobHandler for IndexerJob {
 			}
 		}
 
+		if self.should_update_persistent_location_record() {
+			match &result {
+				Ok(output) => {
+					if let Err(update_error) = self
+						.update_persistent_location_indexing_state(
+							&ctx,
+							"completed",
+							None,
+							Some(&output.stats),
+						)
+						.await
+					{
+						ctx.add_warning(format!(
+							"Failed to mark indexer location completed: {}",
+							update_error
+						));
+					}
+					ctx.library().event_bus().emit(Event::Refresh);
+				}
+				Err(error) if error.is_interrupted() => {
+					if let Err(update_error) = self
+						.update_persistent_location_indexing_state(&ctx, "idle", None, None)
+						.await
+					{
+						ctx.add_warning(format!(
+							"Failed to mark interrupted indexer location idle: {}",
+							update_error
+						));
+					}
+					ctx.library().event_bus().emit(Event::Refresh);
+				}
+				Err(error) => {
+					if let Err(update_error) = self
+						.update_persistent_location_indexing_state(
+							&ctx,
+							"failed",
+							Some(error.to_string()),
+							None,
+						)
+						.await
+					{
+						ctx.add_warning(format!(
+							"Failed to mark indexer location failed: {}",
+							update_error
+						));
+					}
+					ctx.library().event_bus().emit(Event::Refresh);
+				}
+			}
+		}
+
 		result
 	}
 
@@ -793,6 +910,18 @@ impl JobHandler for IndexerJob {
 
 	async fn on_pause(&mut self, ctx: &JobContext<'_>) -> JobResult {
 		ctx.log("Pausing indexer job");
+		if self.should_update_persistent_location_record() {
+			if let Err(update_error) = self
+				.update_persistent_location_indexing_state(ctx, "idle", None, None)
+				.await
+			{
+				ctx.add_warning(format!(
+					"Failed to mark paused indexer location idle: {}",
+					update_error
+				));
+			}
+			ctx.library().event_bus().emit(Event::Refresh);
+		}
 		Ok(())
 	}
 
@@ -803,6 +932,18 @@ impl JobHandler for IndexerJob {
 				"Final stats: {} files, {} dirs indexed before cancellation",
 				state.stats.files, state.stats.dirs
 			));
+		}
+		if self.should_update_persistent_location_record() {
+			if let Err(update_error) = self
+				.update_persistent_location_indexing_state(ctx, "idle", None, None)
+				.await
+			{
+				ctx.add_warning(format!(
+					"Failed to mark cancelled indexer location idle: {}",
+					update_error
+				));
+			}
+			ctx.library().event_bus().emit(Event::Refresh);
 		}
 		Ok(())
 	}
@@ -1122,5 +1263,36 @@ impl From<IndexerOutput> for JobOutput {
 			stats: output.stats,
 			metrics: output.metrics.unwrap_or_default(),
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn test_path() -> SdPath {
+		SdPath::local("/tmp/spacedrive-indexer-test")
+	}
+
+	#[test]
+	fn persistent_location_updates_only_for_foreground_recursive_jobs() {
+		let location_id = Uuid::new_v4();
+
+		let recursive_job = IndexerJob::new(IndexerJobConfig::new(
+			location_id,
+			test_path(),
+			IndexMode::Deep,
+		));
+		assert!(recursive_job.should_update_persistent_location_record());
+
+		let current_scope_job =
+			IndexerJob::new(IndexerJobConfig::ui_navigation(location_id, test_path()));
+		assert!(!current_scope_job.should_update_persistent_location_record());
+
+		let mut background_config =
+			IndexerJobConfig::new(location_id, test_path(), IndexMode::Deep);
+		background_config.run_in_background = true;
+		let background_job = IndexerJob::new(background_config);
+		assert!(!background_job.should_update_persistent_location_record());
 	}
 }
