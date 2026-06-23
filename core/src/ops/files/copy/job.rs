@@ -6,13 +6,14 @@
 use super::{database::CopyDatabaseQuery, input::CopyMethod, routing::CopyStrategyRouter};
 use crate::{
 	domain::addressing::{SdPath, SdPathBatch},
+	infra::event::Event,
 	infra::job::generic_progress::{GenericProgress, ToGenericProgress},
 	infra::job::prelude::*,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::{
-	collections::HashMap,
+	collections::{HashMap, HashSet},
 	path::PathBuf,
 	sync::{Arc, Mutex},
 	time::{Duration, Instant},
@@ -215,480 +216,508 @@ impl JobHandler for FileCopyJob {
 		let mut failed_copies = Vec::new();
 		let is_move = self.options.delete_after_copy;
 		let volume_manager = ctx.volume_manager();
+		let mut affected_directory_paths = HashSet::new();
 
-		// Phase 2: Database Query - Try to get instant estimates
-		let progress = CopyProgress {
-			phase: CopyPhase::DatabaseQuery,
-			current_file: String::new(),
-			current_source_path: None,
-			files_copied: 0,
-			total_files: 0,
-			bytes_copied: 0,
-			total_bytes: 0,
-			current_operation: "Querying database for file information...".to_string(),
-			estimated_remaining: None,
-			preparation_complete: false,
-			error_count: 0,
-			transfer_rate: 0.0,
-			elapsed: None,
-			strategy_metadata: None,
-		};
-		ctx.progress(Progress::generic(progress.to_generic_progress()));
-
-		// Try to get estimates from database
-		let db_estimates = {
-			let db_query = CopyDatabaseQuery::new(ctx.library_db().clone());
-			match db_query.get_estimates_for_paths(&self.sources.paths).await {
-				Ok(estimates) => {
-					ctx.log(format!(
-						"Database estimates: {} files, {} bytes ({:.0}% coverage)",
-						estimates.file_count,
-						estimates.total_size,
-						estimates.confidence() * 100.0
-					));
-					Some(estimates)
-				}
-				Err(e) => {
-					ctx.log(format!(
-						"Database query failed, will calculate from filesystem: {}",
-						e
-					));
-					None
-				}
-			}
-		};
-
-		// Use database estimates if available, otherwise use source path count for initial display
-		let (estimated_files, estimated_bytes) = if let Some(ref estimates) = db_estimates {
-			if estimates.is_complete() {
-				// We have complete information from database
-				(estimates.file_count as usize, estimates.total_size)
-			} else {
-				// Partial information - still useful for initial display
-				(
-					self.sources.paths.len().max(estimates.file_count as usize),
-					estimates.total_size,
-				)
-			}
-		} else {
-			(self.sources.paths.len(), 0)
-		};
-
-		// Phase 3: Preparation - Calculate actual total size
-		let progress = CopyProgress {
-			phase: CopyPhase::Preparation,
-			current_file: String::new(),
-			current_source_path: None,
-			files_copied: 0,
-			total_files: estimated_files,
-			bytes_copied: 0,
-			total_bytes: estimated_bytes,
-			current_operation: if db_estimates.is_some() {
-				"Verifying file sizes...".to_string()
-			} else {
-				"Calculating total size...".to_string()
-			},
-			estimated_remaining: None,
-			preparation_complete: false,
-			error_count: 0,
-			transfer_rate: 0.0,
-			elapsed: None,
-			strategy_metadata: None,
-		};
-		ctx.progress(Progress::generic(progress.to_generic_progress()));
-
-		// Calculate actual file count and total size, and collect file metadata
-		let actual_file_count = self.count_total_files().await?;
-		let estimated_total_bytes = self.calculate_total_size(&ctx).await?;
-
-		// Collect file metadata for queryable list
-		self.collect_file_metadata(&ctx).await?;
-
-		// Persist job metadata to database for querying
-		self.persist_job_state_to_db(&ctx).await?;
-
-		ctx.log(format!(
-			"Preparing to copy {} files ({}) from {} source paths",
-			actual_file_count,
-			format_bytes(estimated_total_bytes),
-			self.sources.paths.len()
-		));
-
-		// Update progress with calculated size and file count
-		let progress = CopyProgress {
-			phase: CopyPhase::Preparation,
-			current_file: String::new(),
-			current_source_path: None,
-			files_copied: 0,
-			total_files: actual_file_count,
-			bytes_copied: 0,
-			total_bytes: estimated_total_bytes,
-			current_operation: "Preparation complete".to_string(),
-			estimated_remaining: None,
-			preparation_complete: true,
-			error_count: 0,
-			transfer_rate: 0.0,
-			elapsed: None,
-			strategy_metadata: None,
-		};
-		ctx.progress(Progress::generic(progress.to_generic_progress()));
-
-		// Create progress aggregator for tracking overall progress
-		let mut progress_aggregator =
-			ProgressAggregator::new(&ctx, actual_file_count, estimated_total_bytes);
-
-		// Resolve destination path first if it's content-based
-		let resolved_destination = self.destination.resolve_in_job(&ctx).await.map_err(|e| {
-			JobError::execution(format!("Failed to resolve destination path: {}", e))
-		})?;
-
-		// Update destination to the resolved physical path
-		self.destination = resolved_destination;
-
-		// Process each source using the appropriate strategy
-		for (index, source) in self.sources.paths.iter().enumerate() {
-			ctx.check_interrupt().await?;
-
-			// Resolve source path if it's content-based
-			let resolved_source = source.resolve_in_job(&ctx).await.map_err(|e| {
-				JobError::execution(format!("Failed to resolve source path: {}", e))
-			})?;
-
-			// Skip files that have already been completed (resume logic)
-			if self.completed_indices.contains(&index) {
-				ctx.log(format!(
-					"Skipping already completed file: {}",
-					resolved_source.display()
-				));
-
-				// Update progress aggregator to account for already completed files
-				let files_in_source = if let Some(local_path) = resolved_source.as_local_path() {
-					let file_size = self.get_path_size(local_path).await.unwrap_or(0);
-					let file_count = self.count_files_in_path(local_path).await.unwrap_or(1);
-					progress_aggregator.skip_completed_file(file_size, file_count);
-					total_bytes += file_size;
-					file_count
-				} else {
-					1
-				};
-
-				copied_count += files_in_source; // Count actual files as copied for progress tracking
-
-				// Mark as completed in metadata (already done during previous run)
-				self.job_metadata
-					.update_status(&resolved_source, super::metadata::CopyFileStatus::Completed);
-				continue;
-			}
-
-			// Determine the final destination path for this source
-			let final_destination = if let Some(dest_path) = self.destination.as_local_path() {
-				// Check if destination exists and is a file (common mistake when dragging onto files)
-				if dest_path.exists() && dest_path.is_file() {
-					// User dropped onto a file - use its parent directory
-					if let Some(parent) = dest_path.parent() {
-						SdPath::local(parent.join(resolved_source.file_name().unwrap_or_default()))
-					} else {
-						// No parent directory (root?), fallback to destination
-						self.destination.clone()
-					}
-				} else if dest_path.is_dir() || self.sources.paths.len() > 1 {
-					// Destination is a directory, OR we have multiple sources
-					// In both cases, join with source filename
-					self.destination
-						.join(resolved_source.file_name().unwrap_or_default())
-				} else {
-					// Single source, destination doesn't exist or is not a file/dir
-					// Use destination as-is (allows renaming: copy file.txt -> newname.txt)
-					self.destination.clone()
-				}
-			} else {
-				// Non-local destination (remote device, Cloud, Content, Sidecar)
-				// For remote destinations, we can't check if path is a directory,
-				// so always join filename to be safe
-				self.destination
-					.join(resolved_source.file_name().unwrap_or_default())
-			};
-
-			ctx.log(format!(
-				"Final destination calculated: {} -> {}",
-				resolved_source.display(),
-				final_destination.display()
-			));
-
-			// Count files in this source path for accurate progress tracking
-			let files_in_source = if let Some(local_path) = resolved_source.as_local_path() {
-				self.count_files_in_path(local_path).await.unwrap_or(1)
-			} else {
-				1
-			};
-
-			// Mark file as currently copying in metadata
-			self.job_metadata
-				.update_status(&resolved_source, super::metadata::CopyFileStatus::Copying);
-
-			// Persist immediately so UI can show "copying" status in real-time
-			self.persist_job_state_to_db(&ctx).await?;
-
-			// Update aggregator with current file info
-			let operation_description = CopyStrategyRouter::describe_strategy(
-				&resolved_source,
-				&final_destination,
-				is_move,
-				&self.options.copy_method,
-				volume_manager.as_deref(),
-			)
-			.await;
-
-			progress_aggregator.start_file(
-				resolved_source.display(),
-				resolved_source.clone(),
-				operation_description,
-			);
-			progress_aggregator.set_error_count(failed_copies.len());
-
-			// Update progress - show files already completed
-			let files_completed_count = *progress_aggregator.files_completed.lock().unwrap();
-			let bytes_completed_snapshot = *progress_aggregator
-				.bytes_completed_before_current
-				.lock()
-				.unwrap();
-			let (current_rate, current_elapsed) = {
-				let tracker = progress_aggregator.speed_tracker.lock().unwrap();
-				(tracker.current_rate(), Some(tracker.elapsed()))
-			}; // MutexGuard dropped here before any await
-			let current_strategy_metadata = progress_aggregator
-				.strategy_metadata
-				.lock()
-				.unwrap()
-				.clone();
+		let result: JobResult<Self::Output> = async {
+			// Phase 2: Database Query - Try to get instant estimates
 			let progress = CopyProgress {
-				phase: CopyPhase::Copying,
-				current_file: resolved_source.display(),
-				current_source_path: Some(resolved_source.clone()),
-				files_copied: files_completed_count,
-				total_files: actual_file_count,
-				bytes_copied: bytes_completed_snapshot,
-				total_bytes: estimated_total_bytes,
-				current_operation: progress_aggregator.current_operation.clone(),
+				phase: CopyPhase::DatabaseQuery,
+				current_file: String::new(),
+				current_source_path: None,
+				files_copied: 0,
+				total_files: 0,
+				bytes_copied: 0,
+				total_bytes: 0,
+				current_operation: "Querying database for file information...".to_string(),
 				estimated_remaining: None,
-				preparation_complete: true,
-				error_count: failed_copies.len(),
-				transfer_rate: current_rate,
-				elapsed: current_elapsed,
-				strategy_metadata: current_strategy_metadata,
+				preparation_complete: false,
+				error_count: 0,
+				transfer_rate: 0.0,
+				elapsed: None,
+				strategy_metadata: None,
 			};
 			ctx.progress(Progress::generic(progress.to_generic_progress()));
 
-			// 1. Select the strategy with metadata
-			let (strategy, strategy_metadata) = CopyStrategyRouter::select_strategy_with_metadata(
-				&resolved_source,
-				&final_destination,
-				is_move,
-				&self.options.copy_method,
-				volume_manager.as_deref(),
-			)
-			.await;
-
-			// Store strategy metadata for progress updates
-			progress_aggregator.set_strategy_metadata(strategy_metadata);
-
-			info!(
-				"[JOB] About to execute strategy for {} -> {}",
-				resolved_source.display(),
-				final_destination.display()
-			);
-
-			// Handle conflict resolution before copying
-			let final_destination = if let Some(resolution) = self.options.conflict_resolution {
-				match resolution {
-					super::action::FileConflictResolution::Skip => {
-						// Check if destination exists
-						if let Some(dest_path) = final_destination.as_local_path() {
-							if dest_path.exists() {
-								ctx.log(format!("Skipping existing file: {}", dest_path.display()));
-
-								// Mark as skipped in metadata
-								self.job_metadata.update_status(
-									&resolved_source,
-									super::metadata::CopyFileStatus::Skipped,
-								);
-
-								// Skip this file
-								progress_aggregator.complete_source();
-								copied_count += files_in_source;
-								self.completed_indices.push(index);
-								continue;
-							}
-						}
-						final_destination
+			// Try to get estimates from database
+			let db_estimates = {
+				let db_query = CopyDatabaseQuery::new(ctx.library_db().clone());
+				match db_query.get_estimates_for_paths(&self.sources.paths).await {
+					Ok(estimates) => {
+						ctx.log(format!(
+							"Database estimates: {} files, {} bytes ({:.0}% coverage)",
+							estimates.file_count,
+							estimates.total_size,
+							estimates.confidence() * 100.0
+						));
+						Some(estimates)
 					}
-					super::action::FileConflictResolution::AutoModifyName => {
-						// Generate unique name if destination exists
-						if let Some(dest_path) = final_destination.as_local_path() {
-							if dest_path.exists() {
-								let unique_dest = self.generate_unique_name(&dest_path).await?;
-								SdPath::Physical {
-									device_slug: final_destination
-										.device_slug()
-										.unwrap_or_default()
-										.to_string(),
-									path: unique_dest,
-								}
-							} else {
-								final_destination
-							}
-						} else {
-							final_destination
-						}
-					}
-					super::action::FileConflictResolution::Overwrite => {
-						// Overwrite is already handled via options.overwrite
-						final_destination
-					}
-					super::action::FileConflictResolution::Abort => {
-						// Should have been caught earlier
-						return Err(JobError::execution("Operation aborted by user"));
+					Err(e) => {
+						ctx.log(format!(
+							"Database query failed, will calculate from filesystem: {}",
+							e
+						));
+						None
 					}
 				}
-			} else {
-				final_destination
 			};
 
-			// 2. Execute the strategy with progress callback
-			match strategy
-				.execute(
-					&ctx,
-					&resolved_source,
-					&final_destination,
-					self.options.verify_checksum,
-					Some(&progress_aggregator.create_callback()),
-				)
-				.await
-			{
-				Ok(bytes) => {
-					// Mark source as complete (bytes/files already updated by callback)
-					progress_aggregator.complete_source();
+			// Use database estimates if available, otherwise use source path count for initial display
+			let (estimated_files, estimated_bytes) = if let Some(ref estimates) = db_estimates {
+				if estimates.is_complete() {
+					// We have complete information from database
+					(estimates.file_count as usize, estimates.total_size)
+				} else {
+					// Partial information - still useful for initial display
+					(
+						self.sources.paths.len().max(estimates.file_count as usize),
+						estimates.total_size,
+					)
+				}
+			} else {
+				(self.sources.paths.len(), 0)
+			};
 
-					// Update totals
-					copied_count += files_in_source;
-					total_bytes += bytes;
+			// Phase 3: Preparation - Calculate actual total size
+			let progress = CopyProgress {
+				phase: CopyPhase::Preparation,
+				current_file: String::new(),
+				current_source_path: None,
+				files_copied: 0,
+				total_files: estimated_files,
+				bytes_copied: 0,
+				total_bytes: estimated_bytes,
+				current_operation: if db_estimates.is_some() {
+					"Verifying file sizes...".to_string()
+				} else {
+					"Calculating total size...".to_string()
+				},
+				estimated_remaining: None,
+				preparation_complete: false,
+				error_count: 0,
+				transfer_rate: 0.0,
+				elapsed: None,
+				strategy_metadata: None,
+			};
+			ctx.progress(Progress::generic(progress.to_generic_progress()));
 
-					// Track successful completion for resume
-					self.completed_indices.push(index);
+			// Calculate actual file count and total size, and collect file metadata
+			let actual_file_count = self.count_total_files().await?;
+			let estimated_total_bytes = self.calculate_total_size(&ctx).await?;
 
-					// Mark as completed in metadata
+			// Collect file metadata for queryable list
+			self.collect_file_metadata(&ctx).await?;
+
+			// Persist job metadata to database for querying
+			self.persist_job_state_to_db(&ctx).await?;
+
+			ctx.log(format!(
+				"Preparing to copy {} files ({}) from {} source paths",
+				actual_file_count,
+				format_bytes(estimated_total_bytes),
+				self.sources.paths.len()
+			));
+
+			// Update progress with calculated size and file count
+			let progress = CopyProgress {
+				phase: CopyPhase::Preparation,
+				current_file: String::new(),
+				current_source_path: None,
+				files_copied: 0,
+				total_files: actual_file_count,
+				bytes_copied: 0,
+				total_bytes: estimated_total_bytes,
+				current_operation: "Preparation complete".to_string(),
+				estimated_remaining: None,
+				preparation_complete: true,
+				error_count: 0,
+				transfer_rate: 0.0,
+				elapsed: None,
+				strategy_metadata: None,
+			};
+			ctx.progress(Progress::generic(progress.to_generic_progress()));
+
+			// Create progress aggregator for tracking overall progress
+			let mut progress_aggregator =
+				ProgressAggregator::new(&ctx, actual_file_count, estimated_total_bytes);
+
+			// Resolve destination path first if it's content-based
+			let resolved_destination =
+				self.destination.resolve_in_job(&ctx).await.map_err(|e| {
+					JobError::execution(format!("Failed to resolve destination path: {}", e))
+				})?;
+
+			// Update destination to the resolved physical path
+			self.destination = resolved_destination;
+
+			// Process each source using the appropriate strategy
+			for (index, source) in self.sources.paths.iter().enumerate() {
+				ctx.check_interrupt().await?;
+
+				// Resolve source path if it's content-based
+				let resolved_source = source.resolve_in_job(&ctx).await.map_err(|e| {
+					JobError::execution(format!("Failed to resolve source path: {}", e))
+				})?;
+
+				// Skip files that have already been completed (resume logic)
+				if self.completed_indices.contains(&index) {
+					ctx.log(format!(
+						"Skipping already completed file: {}",
+						resolved_source.display()
+					));
+
+					// Update progress aggregator to account for already completed files
+					let files_in_source = if let Some(local_path) = resolved_source.as_local_path()
+					{
+						let file_size = self.get_path_size(local_path).await.unwrap_or(0);
+						let file_count = self.count_files_in_path(local_path).await.unwrap_or(1);
+						progress_aggregator.skip_completed_file(file_size, file_count);
+						total_bytes += file_size;
+						file_count
+					} else {
+						1
+					};
+
+					copied_count += files_in_source; // Count actual files as copied for progress tracking
+
+					// Mark as completed in metadata (already done during previous run)
 					self.job_metadata.update_status(
 						&resolved_source,
 						super::metadata::CopyFileStatus::Completed,
 					);
+					continue;
+				}
 
-					// If this is a move operation and the strategy didn't handle deletion,
-					// we need to delete the source after successful copy
-					if is_move && resolved_source.device_slug() == final_destination.device_slug() {
-						// For same-device moves, LocalMoveStrategy handles deletion atomically
-						// For cross-volume moves, LocalStreamCopyStrategy needs manual deletion
-						if let Some(vm) = volume_manager.as_deref() {
-							if let (Some(source_path), Some(dest_path)) = (
-								resolved_source.as_local_path(),
-								final_destination.as_local_path(),
-							) {
-								if !vm.same_volume(source_path, dest_path).await {
-									// Cross-volume move - delete source
-									if let Err(e) = self.delete_source_file(source_path).await {
-										failed_copies.push(CopyError {
-											source: resolved_source
-												.path()
-												.cloned()
-												.unwrap_or_default(),
-											destination: final_destination
-												.path()
-												.cloned()
-												.unwrap_or_default(),
-											error: format!(
+				// Determine the final destination path for this source
+				let final_destination = if let Some(dest_path) = self.destination.as_local_path() {
+					// Check if destination exists and is a file (common mistake when dragging onto files)
+					if dest_path.exists() && dest_path.is_file() {
+						// User dropped onto a file - use its parent directory
+						if let Some(parent) = dest_path.parent() {
+							SdPath::local(
+								parent.join(resolved_source.file_name().unwrap_or_default()),
+							)
+						} else {
+							// No parent directory (root?), fallback to destination
+							self.destination.clone()
+						}
+					} else if dest_path.is_dir() || self.sources.paths.len() > 1 {
+						// Destination is a directory, OR we have multiple sources
+						// In both cases, join with source filename
+						self.destination
+							.join(resolved_source.file_name().unwrap_or_default())
+					} else {
+						// Single source, destination doesn't exist or is not a file/dir
+						// Use destination as-is (allows renaming: copy file.txt -> newname.txt)
+						self.destination.clone()
+					}
+				} else {
+					// Non-local destination (remote device, Cloud, Content, Sidecar)
+					// For remote destinations, we can't check if path is a directory,
+					// so always join filename to be safe
+					self.destination
+						.join(resolved_source.file_name().unwrap_or_default())
+				};
+
+				ctx.log(format!(
+					"Final destination calculated: {} -> {}",
+					resolved_source.display(),
+					final_destination.display()
+				));
+
+				// Count files in this source path for accurate progress tracking
+				let files_in_source = if let Some(local_path) = resolved_source.as_local_path() {
+					self.count_files_in_path(local_path).await.unwrap_or(1)
+				} else {
+					1
+				};
+
+				// Mark file as currently copying in metadata
+				self.job_metadata
+					.update_status(&resolved_source, super::metadata::CopyFileStatus::Copying);
+
+				// Persist immediately so UI can show "copying" status in real-time
+				self.persist_job_state_to_db(&ctx).await?;
+
+				// Update aggregator with current file info
+				let operation_description = CopyStrategyRouter::describe_strategy(
+					&resolved_source,
+					&final_destination,
+					is_move,
+					&self.options.copy_method,
+					volume_manager.as_deref(),
+				)
+				.await;
+
+				progress_aggregator.start_file(
+					resolved_source.display(),
+					resolved_source.clone(),
+					operation_description,
+				);
+				progress_aggregator.set_error_count(failed_copies.len());
+
+				// Update progress - show files already completed
+				let files_completed_count = *progress_aggregator.files_completed.lock().unwrap();
+				let bytes_completed_snapshot = *progress_aggregator
+					.bytes_completed_before_current
+					.lock()
+					.unwrap();
+				let (current_rate, current_elapsed) = {
+					let tracker = progress_aggregator.speed_tracker.lock().unwrap();
+					(tracker.current_rate(), Some(tracker.elapsed()))
+				}; // MutexGuard dropped here before any await
+				let current_strategy_metadata = progress_aggregator
+					.strategy_metadata
+					.lock()
+					.unwrap()
+					.clone();
+				let progress = CopyProgress {
+					phase: CopyPhase::Copying,
+					current_file: resolved_source.display(),
+					current_source_path: Some(resolved_source.clone()),
+					files_copied: files_completed_count,
+					total_files: actual_file_count,
+					bytes_copied: bytes_completed_snapshot,
+					total_bytes: estimated_total_bytes,
+					current_operation: progress_aggregator.current_operation.clone(),
+					estimated_remaining: None,
+					preparation_complete: true,
+					error_count: failed_copies.len(),
+					transfer_rate: current_rate,
+					elapsed: current_elapsed,
+					strategy_metadata: current_strategy_metadata,
+				};
+				ctx.progress(Progress::generic(progress.to_generic_progress()));
+
+				// 1. Select the strategy with metadata
+				let (strategy, strategy_metadata) =
+					CopyStrategyRouter::select_strategy_with_metadata(
+						&resolved_source,
+						&final_destination,
+						is_move,
+						&self.options.copy_method,
+						volume_manager.as_deref(),
+					)
+					.await;
+
+				// Store strategy metadata for progress updates
+				progress_aggregator.set_strategy_metadata(strategy_metadata);
+
+				info!(
+					"[JOB] About to execute strategy for {} -> {}",
+					resolved_source.display(),
+					final_destination.display()
+				);
+
+				// Handle conflict resolution before copying
+				let final_destination = if let Some(resolution) = self.options.conflict_resolution {
+					match resolution {
+						super::action::FileConflictResolution::Skip => {
+							// Check if destination exists
+							if let Some(dest_path) = final_destination.as_local_path() {
+								if dest_path.exists() {
+									ctx.log(format!(
+										"Skipping existing file: {}",
+										dest_path.display()
+									));
+
+									// Mark as skipped in metadata
+									self.job_metadata.update_status(
+										&resolved_source,
+										super::metadata::CopyFileStatus::Skipped,
+									);
+
+									// Skip this file
+									progress_aggregator.complete_source();
+									copied_count += files_in_source;
+									self.completed_indices.push(index);
+									continue;
+								}
+							}
+							final_destination
+						}
+						super::action::FileConflictResolution::AutoModifyName => {
+							// Generate unique name if destination exists
+							if let Some(dest_path) = final_destination.as_local_path() {
+								if dest_path.exists() {
+									let unique_dest = self.generate_unique_name(&dest_path).await?;
+									SdPath::Physical {
+										device_slug: final_destination
+											.device_slug()
+											.unwrap_or_default()
+											.to_string(),
+										path: unique_dest,
+									}
+								} else {
+									final_destination
+								}
+							} else {
+								final_destination
+							}
+						}
+						super::action::FileConflictResolution::Overwrite => {
+							// Overwrite is already handled via options.overwrite
+							final_destination
+						}
+						super::action::FileConflictResolution::Abort => {
+							// Should have been caught earlier
+							Err(JobError::execution("Operation aborted by user"))?
+						}
+					}
+				} else {
+					final_destination
+				};
+
+				// 2. Execute the strategy with progress callback
+				match strategy
+					.execute(
+						&ctx,
+						&resolved_source,
+						&final_destination,
+						self.options.verify_checksum,
+						Some(&progress_aggregator.create_callback()),
+					)
+					.await
+				{
+					Ok(bytes) => {
+						// Mark source as complete (bytes/files already updated by callback)
+						progress_aggregator.complete_source();
+
+						// Update totals
+						copied_count += files_in_source;
+						total_bytes += bytes;
+
+						// Track successful completion for resume
+						self.completed_indices.push(index);
+
+						// Mark as completed in metadata
+						self.job_metadata.update_status(
+							&resolved_source,
+							super::metadata::CopyFileStatus::Completed,
+						);
+
+						Self::record_affected_directory_paths(
+							&mut affected_directory_paths,
+							&resolved_source,
+							&final_destination,
+							is_move,
+						);
+
+						// If this is a move operation and the strategy didn't handle deletion,
+						// we need to delete the source after successful copy
+						if is_move
+							&& resolved_source.device_slug() == final_destination.device_slug()
+						{
+							// For same-device moves, LocalMoveStrategy handles deletion atomically
+							// For cross-volume moves, LocalStreamCopyStrategy needs manual deletion
+							if let Some(vm) = volume_manager.as_deref() {
+								if let (Some(source_path), Some(dest_path)) = (
+									resolved_source.as_local_path(),
+									final_destination.as_local_path(),
+								) {
+									if !vm.same_volume(source_path, dest_path).await {
+										// Cross-volume move - delete source
+										if let Err(e) = self.delete_source_file(source_path).await {
+											failed_copies.push(CopyError {
+												source: resolved_source
+													.path()
+													.cloned()
+													.unwrap_or_default(),
+												destination: final_destination
+													.path()
+													.cloned()
+													.unwrap_or_default(),
+												error: format!(
 												"Copy succeeded but failed to delete source: {}",
 												e
 											),
-										});
-										ctx.add_non_critical_error(format!(
-											"Failed to delete source after move {}: {}",
-											resolved_source.display(),
-											e
-										));
+											});
+											ctx.add_non_critical_error(format!(
+												"Failed to delete source after move {}: {}",
+												resolved_source.display(),
+												e
+											));
+										}
 									}
 								}
 							}
 						}
 					}
-				}
-				Err(e) => {
-					failed_copies.push(CopyError {
-						source: resolved_source.path().cloned().unwrap_or_default(),
-						destination: final_destination.path().cloned().unwrap_or_default(),
-						error: e.to_string(),
-					});
-					ctx.add_non_critical_error(format!(
-						"Failed to {} {}: {}",
-						if is_move { "move" } else { "copy" },
-						resolved_source.display(),
-						e
-					));
+					Err(e) => {
+						failed_copies.push(CopyError {
+							source: resolved_source.path().cloned().unwrap_or_default(),
+							destination: final_destination.path().cloned().unwrap_or_default(),
+							error: e.to_string(),
+						});
+						ctx.add_non_critical_error(format!(
+							"Failed to {} {}: {}",
+							if is_move { "move" } else { "copy" },
+							resolved_source.display(),
+							e
+						));
 
-					// Mark as failed in metadata
-					self.job_metadata.set_error(&resolved_source, e.to_string());
+						// Mark as failed in metadata
+						self.job_metadata.set_error(&resolved_source, e.to_string());
+					}
+				}
+
+				// Persist after every file so UI can show real-time checkbox updates
+				self.persist_job_state_to_db(&ctx).await?;
+
+				// Checkpoint every 20 files to save job state to disk
+				if copied_count % 20 == 0 {
+					ctx.checkpoint().await?;
 				}
 			}
 
-			// Persist after every file so UI can show real-time checkbox updates
+			// Phase 4: Complete
+			let final_elapsed = progress_aggregator.speed_tracker.lock().unwrap().elapsed();
+			let final_strategy_metadata = progress_aggregator
+				.strategy_metadata
+				.lock()
+				.unwrap()
+				.clone();
+			let progress = CopyProgress {
+				phase: CopyPhase::Complete,
+				current_file: String::new(),
+				current_source_path: None,
+				files_copied: copied_count,
+				total_files: actual_file_count,
+				bytes_copied: total_bytes,
+				total_bytes: estimated_total_bytes,
+				current_operation: "Copy operation complete".to_string(),
+				estimated_remaining: Some(Duration::ZERO),
+				preparation_complete: true,
+				error_count: failed_copies.len(),
+				transfer_rate: 0.0,
+				elapsed: Some(final_elapsed),
+				strategy_metadata: final_strategy_metadata,
+			};
+			ctx.progress(Progress::generic(progress.to_generic_progress()));
+
+			// Persist final job state with all file statuses
 			self.persist_job_state_to_db(&ctx).await?;
 
-			// Checkpoint every 20 files to save job state to disk
-			if copied_count % 20 == 0 {
-				ctx.checkpoint().await?;
-			}
+			ctx.log(format!(
+				"Copy operation completed: {} copied, {} failed",
+				copied_count,
+				failed_copies.len()
+			));
+
+			Ok(FileCopyOutput {
+				copied_count,
+				failed_count: failed_copies.len(),
+				total_bytes,
+				duration: self.started_at.elapsed(),
+				failed_copies,
+				is_move_operation: self.options.delete_after_copy,
+			})
 		}
+		.await;
 
-		// Phase 4: Complete
-		let final_elapsed = progress_aggregator.speed_tracker.lock().unwrap().elapsed();
-		let final_strategy_metadata = progress_aggregator
-			.strategy_metadata
-			.lock()
-			.unwrap()
-			.clone();
-		let progress = CopyProgress {
-			phase: CopyPhase::Complete,
-			current_file: String::new(),
-			current_source_path: None,
-			files_copied: copied_count,
-			total_files: actual_file_count,
-			bytes_copied: total_bytes,
-			total_bytes: estimated_total_bytes,
-			current_operation: "Copy operation complete".to_string(),
-			estimated_remaining: Some(Duration::ZERO),
-			preparation_complete: true,
-			error_count: failed_copies.len(),
-			transfer_rate: 0.0,
-			elapsed: Some(final_elapsed),
-			strategy_metadata: final_strategy_metadata,
-		};
-		ctx.progress(Progress::generic(progress.to_generic_progress()));
+		self.refresh_affected_directory_listings(&ctx, &affected_directory_paths)
+			.await;
 
-		// Persist final job state with all file statuses
-		self.persist_job_state_to_db(&ctx).await?;
-
-		ctx.log(format!(
-			"Copy operation completed: {} copied, {} failed",
-			copied_count,
-			failed_copies.len()
-		));
-
-		Ok(FileCopyOutput {
-			copied_count,
-			failed_count: failed_copies.len(),
-			total_bytes,
-			duration: self.started_at.elapsed(),
-			failed_copies,
-			is_move_operation: self.options.delete_after_copy,
-		})
+		result
 	}
 }
 
@@ -1049,6 +1078,48 @@ impl FileCopyJob {
 			destination,
 			MoveMode::Rename,
 		)
+	}
+
+	fn record_affected_directory_paths(
+		affected_paths: &mut HashSet<PathBuf>,
+		source: &SdPath,
+		destination: &SdPath,
+		is_move: bool,
+	) {
+		if is_move {
+			if let Some(source_parent) = source.as_local_path().and_then(|path| path.parent()) {
+				affected_paths.insert(source_parent.to_path_buf());
+			}
+		}
+
+		if let Some(destination_parent) = destination.as_local_path().and_then(|path| path.parent())
+		{
+			affected_paths.insert(destination_parent.to_path_buf());
+		}
+	}
+
+	async fn refresh_affected_directory_listings(
+		&self,
+		ctx: &JobContext<'_>,
+		affected_paths: &HashSet<PathBuf>,
+	) {
+		if affected_paths.is_empty() {
+			return;
+		}
+
+		let ephemeral_cache = ctx.library().core_context().ephemeral_cache();
+
+		for path in affected_paths {
+			ephemeral_cache.invalidate_path(path);
+			let cleared = ephemeral_cache.clear_for_reindex(path).await;
+			ctx.log_debug(format!(
+				"Invalidated directory listing cache for {} ({} stale entries cleared)",
+				path.display(),
+				cleared
+			));
+		}
+
+		ctx.library().event_bus().emit(Event::Refresh);
 	}
 
 	/// Calculate total size for progress reporting
@@ -1545,6 +1616,58 @@ fn format_bytes(bytes: u64) -> String {
 mod tests {
 	use super::*;
 	use std::thread;
+
+	#[test]
+	fn records_destination_parent_for_copy_operations() {
+		let source = SdPath::local("/tmp/source/file.txt");
+		let destination = SdPath::local("/tmp/destination/file.txt");
+		let mut affected_paths = HashSet::new();
+
+		FileCopyJob::record_affected_directory_paths(
+			&mut affected_paths,
+			&source,
+			&destination,
+			false,
+		);
+
+		assert_eq!(affected_paths.len(), 1);
+		assert!(affected_paths.contains(&PathBuf::from("/tmp/destination")));
+	}
+
+	#[test]
+	fn records_source_and_destination_parents_for_move_operations() {
+		let source = SdPath::local("/tmp/source/file.txt");
+		let destination = SdPath::local("/tmp/destination/file.txt");
+		let mut affected_paths = HashSet::new();
+
+		FileCopyJob::record_affected_directory_paths(
+			&mut affected_paths,
+			&source,
+			&destination,
+			true,
+		);
+
+		assert_eq!(affected_paths.len(), 2);
+		assert!(affected_paths.contains(&PathBuf::from("/tmp/source")));
+		assert!(affected_paths.contains(&PathBuf::from("/tmp/destination")));
+	}
+
+	#[test]
+	fn deduplicates_parent_for_rename_operations() {
+		let source = SdPath::local("/tmp/source/file.txt");
+		let destination = SdPath::local("/tmp/source/renamed.txt");
+		let mut affected_paths = HashSet::new();
+
+		FileCopyJob::record_affected_directory_paths(
+			&mut affected_paths,
+			&source,
+			&destination,
+			true,
+		);
+
+		assert_eq!(affected_paths.len(), 1);
+		assert!(affected_paths.contains(&PathBuf::from("/tmp/source")));
+	}
 
 	#[test]
 	fn test_speed_tracker_creation() {

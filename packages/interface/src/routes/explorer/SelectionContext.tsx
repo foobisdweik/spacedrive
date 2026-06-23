@@ -1,4 +1,9 @@
-import type {File, SdPath} from '@sd/ts-client';
+import type {
+	DirectoryListingOutput,
+	File,
+	FileSearchOutput,
+	SdPath
+} from '@sd/ts-client';
 import {useQueryClient} from '@tanstack/react-query';
 import {
 	createContext,
@@ -309,11 +314,110 @@ export function SelectionProvider({
 			}
 
 			try {
+				const splitFileName = (fileName: string) => {
+					const lastDot = fileName.lastIndexOf('.');
+					if (lastDot > 0 && lastDot < fileName.length - 1) {
+						return {
+							name: fileName.slice(0, lastDot),
+							extension: fileName.slice(lastDot + 1)
+						};
+					}
+
+					return {name: fileName, extension: null};
+				};
+
+				const renamePath = (path: string) => {
+					const separatorIndex = path.lastIndexOf('/');
+					if (separatorIndex === -1) return newName;
+
+					return `${path.slice(0, separatorIndex + 1)}${newName}`;
+				};
+
+				const renameSdPath = (sdPath: SdPath): SdPath => {
+					if ('Physical' in sdPath) {
+						return {
+							Physical: {
+								...sdPath.Physical,
+								path: renamePath(sdPath.Physical.path)
+							}
+						};
+					}
+
+					if ('Cloud' in sdPath) {
+						return {
+							Cloud: {
+								...sdPath.Cloud,
+								path: renamePath(sdPath.Cloud.path)
+							}
+						};
+					}
+
+					return sdPath;
+				};
+
+				const updateRenamedFile = (candidate: File): File => {
+					if (candidate.id !== file.id) return candidate;
+
+					if (candidate.kind === 'File') {
+						return {
+							...candidate,
+							sd_path: renameSdPath(candidate.sd_path),
+							...splitFileName(newName)
+						};
+					}
+
+					return {
+						...candidate,
+						sd_path: renameSdPath(candidate.sd_path),
+						name: newName,
+						extension: null
+					};
+				};
+
+				// Optimistically update the visible name while invalidation reloads authoritative metadata.
+				queryClient.setQueriesData<DirectoryListingOutput>(
+					{
+						predicate: (query) =>
+							Array.isArray(query.queryKey) &&
+							typeof query.queryKey[0] === 'string' &&
+							query.queryKey[0] ===
+								'query:files.directory_listing'
+					},
+					(oldData) => {
+						if (!oldData) return oldData;
+						if (!Array.isArray(oldData.files)) return oldData;
+
+						return {
+							...oldData,
+							files: oldData.files.map(updateRenamedFile)
+						};
+					}
+				);
+				queryClient.setQueriesData<FileSearchOutput>(
+					{
+						predicate: (query) =>
+							Array.isArray(query.queryKey) &&
+							typeof query.queryKey[0] === 'string' &&
+							query.queryKey[0] === 'query:search.files'
+					},
+					(oldData) => {
+						if (!oldData) return oldData;
+						if (!Array.isArray(oldData.files)) return oldData;
+
+						return {
+							...oldData,
+							files: oldData.files.map(updateRenamedFile)
+						};
+					}
+				);
+
 				await renameFile.mutateAsync({
 					target: file.sd_path,
 					new_name: newName
 				});
 				setRenamingFileId(null);
+				// Stale invalidation is still triggered immediately, but the job completion
+				// event in useJobsDesktop.ts will perform the final authoritative invalidation.
 				await queryClient.invalidateQueries({
 					predicate: (query) =>
 						Array.isArray(query.queryKey) &&

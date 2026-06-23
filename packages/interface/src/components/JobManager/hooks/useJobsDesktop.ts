@@ -1,7 +1,12 @@
 import {sounds} from '@sd/assets/sounds';
-import {useJobs as useJobsCore, type UseJobsReturn} from '@sd/ts-client';
-import {useVolumeIndexingStore} from '../../../stores/volumeIndexingStore';
+import {
+	useJobs as useJobsCore,
+	type ExtendedJobListItem,
+	type UseJobsReturn
+} from '@sd/ts-client';
+import {useQueryClient} from '@tanstack/react-query';
 import {useEffect, useRef} from 'react';
+import {useVolumeIndexingStore} from '../../../stores/volumeIndexingStore';
 
 // Global set to track which jobs have already played their completion sound
 // This prevents multiple hook instances from playing the sound multiple times
@@ -10,6 +15,7 @@ const completedJobSounds = new Set<string>();
 // Global throttle to prevent multiple sounds within 5 seconds
 let lastSoundPlayedAt = 0;
 const SOUND_THROTTLE_MS = 5000;
+const FILE_QUERY_JOB_NAMES = new Set(['filecopy', 'movefiles', 'deletefiles', 'indexer']);
 
 /**
  * Desktop-specific wrapper around useJobs that adds:
@@ -18,9 +24,38 @@ const SOUND_THROTTLE_MS = 5000;
  */
 export function useJobs(): UseJobsReturn {
 	const {setVolumeJob, clearVolumeJob} = useVolumeIndexingStore();
+	const queryClient = useQueryClient();
+	const jobsRef = useRef<ExtendedJobListItem[]>([]);
+
+	const invalidateFileQueries = () => {
+		queryClient.invalidateQueries({
+			predicate: (query) =>
+				Array.isArray(query.queryKey) &&
+				typeof query.queryKey[0] === 'string' &&
+				(query.queryKey[0] === 'query:files.directory_listing' ||
+					query.queryKey[0] === 'query:search.files' ||
+					query.queryKey[0] === 'query:locations.list' ||
+					query.queryKey[0] === 'query:files.by_id')
+		});
+	};
+
+	const shouldInvalidateFileQueries = (jobId: string, jobType?: string) => {
+		const job = jobsRef.current.find((currentJob) => currentJob.id === jobId);
+		const identifiers = [jobType, job?.name].filter(
+			(identifier): identifier is string => !!identifier
+		);
+
+		return identifiers.some((identifier) =>
+			FILE_QUERY_JOB_NAMES.has(identifier.toLowerCase().replace(/[^a-z0-9]/g, ''))
+		);
+	};
 
 	const jobs = useJobsCore({
 		onJobCompleted: (jobId, jobType) => {
+			if (shouldInvalidateFileQueries(jobId, jobType)) {
+				invalidateFileQueries();
+			}
+
 			// Play completion sound
 			if (!completedJobSounds.has(jobId)) {
 				completedJobSounds.add(jobId);
@@ -31,7 +66,10 @@ export function useJobs(): UseJobsReturn {
 					lastSoundPlayedAt = now;
 
 					// Play job-specific sound
-					if (jobType?.includes('copy') || jobType?.includes('Copy')) {
+					if (
+						jobType?.includes('copy') ||
+						jobType?.includes('Copy')
+					) {
 						sounds.copy();
 					} else {
 						sounds.jobDone();
@@ -41,11 +79,20 @@ export function useJobs(): UseJobsReturn {
 				// Clean up old entries after 5 seconds to prevent memory leak
 				setTimeout(() => completedJobSounds.delete(jobId), 5000);
 			}
+		},
+		onJobFailed: (jobId) => {
+			if (shouldInvalidateFileQueries(jobId)) {
+				invalidateFileQueries();
+			}
+		},
+		onJobCancelled: (jobId) => {
+			if (shouldInvalidateFileQueries(jobId)) {
+				invalidateFileQueries();
+			}
 		}
 	});
 
 	// Ref for stable jobs access
-	const jobsRef = useRef(jobs.jobs);
 	useEffect(() => {
 		jobsRef.current = jobs.jobs;
 	}, [jobs.jobs]);
@@ -56,7 +103,10 @@ export function useJobs(): UseJobsReturn {
 			if (job.name === 'indexer' && job.status === 'running') {
 				const context = job.action_context?.context as any;
 				const volumeFingerprint = context?.volume_fingerprint;
-				if (volumeFingerprint && typeof volumeFingerprint === 'string') {
+				if (
+					volumeFingerprint &&
+					typeof volumeFingerprint === 'string'
+				) {
 					setVolumeJob(volumeFingerprint, job.id);
 				}
 			}
@@ -78,7 +128,10 @@ export function useJobs(): UseJobsReturn {
 			) {
 				const context = prevJob.action_context?.context as any;
 				const volumeFingerprint = context?.volume_fingerprint;
-				if (volumeFingerprint && typeof volumeFingerprint === 'string') {
+				if (
+					volumeFingerprint &&
+					typeof volumeFingerprint === 'string'
+				) {
 					clearVolumeJob(volumeFingerprint);
 				}
 			}

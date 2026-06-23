@@ -17,6 +17,7 @@ import {
 import {PathBar} from './components/PathBar';
 import {VirtualPathBar} from './components/VirtualPathBar';
 import {useExplorer, type ViewMode} from './context';
+import {useExplorerFiles} from './hooks/useExplorerFiles';
 import {useVirtualListing} from './hooks/useVirtualListing';
 import {SearchToolbar} from './SearchToolbar';
 import {SortMenu, SortMenuPanel} from './SortMenu';
@@ -28,6 +29,7 @@ import {GridView} from './views/GridView';
 import {KnowledgeView} from './views/KnowledgeView';
 import {ListView} from './views/ListView';
 import {MediaView} from './views/MediaView';
+import {MissingPathView} from './views/MissingPathView';
 import {SearchView} from './views/SearchView';
 import {SizeView} from './views/SizeView';
 import {ViewSettings, ViewSettingsPanel} from './ViewSettings';
@@ -64,6 +66,7 @@ export function ExplorerView() {
 	} = useExplorer();
 
 	const {isVirtualView} = useVirtualListing();
+	const {error: filesError, source: filesSource} = useExplorerFiles();
 	const isPreviewActive = !!quickPreviewFileId;
 
 	// In column view, the path bar should reflect the deepest column, not the root
@@ -340,7 +343,9 @@ export function ExplorerView() {
 					)}
 				>
 					<TabNavigationGuard>
-						{mode.type === 'search' ? (
+						{filesSource === 'directory' && filesError ? (
+							<MissingPathView error={filesError} />
+						) : mode.type === 'search' ? (
 							<SearchView />
 						) : viewMode === 'grid' ? (
 							<GridView />
