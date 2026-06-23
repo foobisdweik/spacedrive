@@ -271,13 +271,13 @@ impl IndexerJob {
 		let mut active_location: entities::location::ActiveModel = location.into();
 		active_location.scan_state = Set(scan_state.to_string());
 		active_location.error_message = Set(error_message);
-		active_location.updated_at = Set(chrono::Utc::now());
+		active_location.updated_at = Set(chrono::Utc::now().into());
 		if let Some(stats) = stats {
 			active_location.total_file_count = Set(stats.files.min(i64::MAX as u64) as i64);
 			active_location.total_byte_size = Set(stats.bytes.min(i64::MAX as u64) as i64);
 		}
 		if scan_state == "completed" {
-			active_location.last_scan_at = Set(Some(chrono::Utc::now()));
+			active_location.last_scan_at = Set(Some(chrono::Utc::now().into()));
 		}
 
 		active_location
@@ -860,11 +860,11 @@ impl JobHandler for IndexerJob {
 				}
 				Err(error) if error.is_interrupted() => {
 					if let Err(update_error) = self
-						.update_persistent_location_indexing_state(&ctx, "idle", None, None)
+						.update_persistent_location_indexing_state(&ctx, "pending", None, None)
 						.await
 					{
 						ctx.add_warning(format!(
-							"Failed to mark interrupted indexer location idle: {}",
+							"Failed to mark interrupted indexer location pending: {}",
 							update_error
 						));
 					}
@@ -874,14 +874,14 @@ impl JobHandler for IndexerJob {
 					if let Err(update_error) = self
 						.update_persistent_location_indexing_state(
 							&ctx,
-							"failed",
+							"error",
 							Some(error.to_string()),
 							None,
 						)
 						.await
 					{
 						ctx.add_warning(format!(
-							"Failed to mark indexer location failed: {}",
+							"Failed to mark indexer location error: {}",
 							update_error
 						));
 					}
@@ -912,11 +912,11 @@ impl JobHandler for IndexerJob {
 		ctx.log("Pausing indexer job");
 		if self.should_update_persistent_location_record() {
 			if let Err(update_error) = self
-				.update_persistent_location_indexing_state(ctx, "idle", None, None)
+				.update_persistent_location_indexing_state(ctx, "pending", None, None)
 				.await
 			{
 				ctx.add_warning(format!(
-					"Failed to mark paused indexer location idle: {}",
+					"Failed to mark paused indexer location pending: {}",
 					update_error
 				));
 			}
@@ -935,11 +935,11 @@ impl JobHandler for IndexerJob {
 		}
 		if self.should_update_persistent_location_record() {
 			if let Err(update_error) = self
-				.update_persistent_location_indexing_state(ctx, "idle", None, None)
+				.update_persistent_location_indexing_state(ctx, "pending", None, None)
 				.await
 			{
 				ctx.add_warning(format!(
-					"Failed to mark cancelled indexer location idle: {}",
+					"Failed to mark cancelled indexer location pending: {}",
 					update_error
 				));
 			}
