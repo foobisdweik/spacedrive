@@ -11,7 +11,8 @@ mod helpers;
 
 use anyhow::Result;
 use helpers::IndexingHarnessBuilder;
-use sd_core::location::IndexMode;
+use sd_core::{infra::db::entities, location::IndexMode};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 #[tokio::test]
 async fn test_basic_indexing() -> Result<()> {
@@ -38,6 +39,14 @@ async fn test_basic_indexing() -> Result<()> {
 
 	assert_eq!(file_count, 3, "Should index 3 files (excluding filtered)");
 	assert!(dir_count >= 1, "Should index at least 1 directory (subdir)");
+
+	let location_record = entities::location::Entity::find()
+		.filter(entities::location::Column::Uuid.eq(handle.uuid))
+		.one(harness.library.db().conn())
+		.await?
+		.expect("indexed location should still exist");
+	assert_eq!(location_record.scan_state, "completed");
+	assert_eq!(location_record.total_file_count, 3);
 
 	// Verify smart filtering worked
 	handle.verify_no_filtered_entries().await?;
