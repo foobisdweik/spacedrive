@@ -10,8 +10,66 @@ const spaceui = path.resolve(__dirname, '../../../spaceui/packages');
 const hasSpaceui = fs.existsSync(spaceui);
 const spacebot = path.resolve(__dirname, '../../../spacebot/packages');
 const hasSpacebot = fs.existsSync(spacebot);
-const bunNodeModule = (pkg: string) =>
-	path.dirname(require.resolve(`${pkg}/package.json`));
+const interfaceRequire = createRequire(
+	path.resolve(__dirname, '../../packages/interface/package.json')
+);
+
+const packageNameForBunFolder = (pkg: string) => pkg.replace('/', '+');
+
+const findPackageRoot = (resolved: string, pkg: string): string => {
+	let current = path.dirname(resolved);
+
+	while (current !== path.dirname(current)) {
+		const packageJson = path.join(current, 'package.json');
+
+		if (fs.existsSync(packageJson)) {
+			try {
+				const packageInfo = JSON.parse(
+					fs.readFileSync(packageJson, 'utf-8')
+				);
+
+				if (packageInfo?.name === pkg) return current;
+			} catch {}
+		}
+
+		current = path.dirname(current);
+	}
+
+	throw new Error(`Unable to find package root for ${pkg}`);
+};
+
+const resolvePackageRoot = (pkg: string): string => {
+	for (const resolver of [require, interfaceRequire]) {
+		for (const specifier of [`${pkg}/package.json`, pkg]) {
+			try {
+				const resolved = resolver.resolve(specifier);
+
+				return specifier.endsWith('/package.json')
+					? path.dirname(resolved)
+					: findPackageRoot(resolved, pkg);
+			} catch {}
+		}
+	}
+
+	const bunStore = path.resolve(__dirname, '../../node_modules/.bun');
+	const bunPackagePrefix = `${packageNameForBunFolder(pkg)}@`;
+	const candidates = fs.existsSync(bunStore)
+		? fs
+				.readdirSync(bunStore)
+				.filter((entry) => entry.startsWith(bunPackagePrefix))
+				.sort((a, b) => a.localeCompare(b, undefined, {numeric: true}))
+		: [];
+
+	for (const candidate of candidates.reverse()) {
+		const packageRoot = path.join(bunStore, candidate, 'node_modules', pkg);
+
+		if (fs.existsSync(packageRoot)) return packageRoot;
+	}
+
+	throw new Error(`Unable to resolve package root for ${pkg}`);
+};
+
+const bunNodeModule = (pkg: string) => resolvePackageRoot(pkg);
 
 export default defineConfig(() => ({
 	plugins: [react(), tailwindcss()],

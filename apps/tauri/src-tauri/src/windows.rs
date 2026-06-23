@@ -544,21 +544,11 @@ pub async fn resize_overlay_window(
 	Ok(())
 }
 
-/// Apply macOS window styling to current window (called from frontend when ready)
+/// Apply macOS window styling to the window that invoked the command.
 #[tauri::command]
-pub fn apply_macos_styling(app: AppHandle) -> Result<(), String> {
+pub fn apply_macos_styling(window: WebviewWindow) -> Result<(), String> {
 	#[cfg(target_os = "macos")]
 	{
-		let window = app
-			.get_webview_window(
-				&app.webview_windows()
-					.keys()
-					.last()
-					.ok_or("No windows found")?
-					.clone(),
-			)
-			.ok_or("Could not get current window")?;
-
 		match window.ns_window() {
 			Ok(ns_window) => unsafe {
 				sd_desktop_macos::set_titlebar_style(&ns_window, false);
