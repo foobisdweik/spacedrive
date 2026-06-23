@@ -23,11 +23,13 @@ const findPackageRoot = (resolved: string, pkg: string): string => {
 		const packageJson = path.join(current, 'package.json');
 
 		if (fs.existsSync(packageJson)) {
-			const packageInfo = JSON.parse(
-				fs.readFileSync(packageJson, 'utf-8')
-			);
+			try {
+				const packageInfo = JSON.parse(
+					fs.readFileSync(packageJson, 'utf-8')
+				);
 
-			if (packageInfo.name === pkg) return current;
+				if (packageInfo?.name === pkg) return current;
+			} catch {}
 		}
 
 		current = path.dirname(current);
