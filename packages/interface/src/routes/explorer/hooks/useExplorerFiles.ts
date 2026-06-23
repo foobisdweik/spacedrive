@@ -1,21 +1,27 @@
-import { useMemo } from "react";
-import type { DirectorySortBy, File, FileSearchInput, FileSearchOutput } from "@sd/ts-client";
-import { useNormalizedQuery } from "../../../contexts/SpacedriveContext";
-import { useExplorer } from "../context";
-import { useVirtualListing } from "./useVirtualListing";
+import type {
+	DirectorySortBy,
+	File,
+	FileSearchInput,
+	FileSearchOutput
+} from '@sd/ts-client';
+import {useMemo} from 'react';
+import {useNormalizedQuery} from '../../../contexts/SpacedriveContext';
+import {useExplorer} from '../context';
+import {useVirtualListing} from './useVirtualListing';
 
 export type FileSource =
-	| "search"
-	| "virtual"
-	| "directory"
-	| "recents"
-	| "filtered"
-	| "tag";
+	| 'search'
+	| 'virtual'
+	| 'directory'
+	| 'recents'
+	| 'filtered'
+	| 'tag';
 
 export interface ExplorerFilesResult {
 	files: File[];
 	isLoading: boolean;
 	source: FileSource;
+	error: Error | null;
 }
 
 /**
@@ -31,44 +37,47 @@ export interface ExplorerFilesResult {
  */
 export function useExplorerFiles(): ExplorerFilesResult {
 	const explorer = useExplorer();
-	const { mode, currentPath, sortBy, viewSettings } = explorer;
+	const {mode, currentPath, sortBy, viewSettings} = explorer;
 
 	// Check for virtual listing first
-	const { files: virtualFiles, isVirtualView } = useVirtualListing();
+	const {files: virtualFiles, isVirtualView} = useVirtualListing();
 
 	// Check mode types
-	const isSearchMode = mode.type === "search";
-	const isRecentsMode = mode.type === "recents";
-	const isFilteredMode = mode.type === "filtered";
-	const isTagMode = mode.type === "tag";
+	const isSearchMode = mode.type === 'search';
+	const isRecentsMode = mode.type === 'recents';
+	const isFilteredMode = mode.type === 'filtered';
+	const isTagMode = mode.type === 'tag';
 
 	// Build search query input
 	const searchQueryInput = useMemo<FileSearchInput | null>(() => {
 		if (!isSearchMode) return null;
 
 		const searchMode = mode;
-		if (searchMode.type !== "search") return null;
+		if (searchMode.type !== 'search') return null;
 
-		const { query, scope } = searchMode;
+		const {query, scope} = searchMode;
 
 		// Map explorer sortBy to search SortField
 		const searchSortField = (() => {
-			if (!sortBy) return "Relevance" as const;
-			const sortMap: Record<string, "Relevance" | "Name" | "Size" | "ModifiedAt" | "CreatedAt"> = {
-				name: "Name",
-				size: "Size",
-				modified: "ModifiedAt",
-				type: "Relevance",
+			if (!sortBy) return 'Relevance' as const;
+			const sortMap: Record<
+				string,
+				'Relevance' | 'Name' | 'Size' | 'ModifiedAt' | 'CreatedAt'
+			> = {
+				name: 'Name',
+				size: 'Size',
+				modified: 'ModifiedAt',
+				type: 'Relevance'
 			};
-			return sortMap[sortBy] || "Relevance";
+			return sortMap[sortBy] || 'Relevance';
 		})();
 
 		return {
 			query,
 			scope:
-				scope === "folder" && currentPath
-					? { Path: { path: currentPath } }
-					: "Library",
+				scope === 'folder' && currentPath
+					? {Path: {path: currentPath}}
+					: 'Library',
 			filters: {
 				file_types: null,
 				tags: null,
@@ -82,51 +91,51 @@ export function useExplorerFiles(): ExplorerFilesResult {
 				on_volumes: null,
 				not_on_volumes: null,
 				min_volume_count: null,
-				max_volume_count: null,
+				max_volume_count: null
 			},
-			mode: "Normal",
+			mode: 'Normal',
 			sort: {
 				field: searchSortField,
-				direction: "Desc",
+				direction: 'Desc'
 			},
 			pagination: {
 				limit: 1000,
-				offset: 0,
-			},
+				offset: 0
+			}
 		};
 	}, [isSearchMode, mode, currentPath, sortBy]);
 
 	// Build filtered query input (pre-applied SearchFilters, e.g. redundancy views)
 	const filteredQueryInput = useMemo<FileSearchInput | null>(() => {
-		if (!isFilteredMode || mode.type !== "filtered") return null;
+		if (!isFilteredMode || mode.type !== 'filtered') return null;
 
 		const searchSortField = (() => {
-			if (!sortBy) return "Size" as const;
+			if (!sortBy) return 'Size' as const;
 			const sortMap: Record<
 				string,
-				"Relevance" | "Name" | "Size" | "ModifiedAt" | "CreatedAt"
+				'Relevance' | 'Name' | 'Size' | 'ModifiedAt' | 'CreatedAt'
 			> = {
-				name: "Name",
-				size: "Size",
-				modified: "ModifiedAt",
-				type: "Size",
+				name: 'Name',
+				size: 'Size',
+				modified: 'ModifiedAt',
+				type: 'Size'
 			};
-			return sortMap[sortBy] || "Size";
+			return sortMap[sortBy] || 'Size';
 		})();
 
 		return {
-			query: "",
-			scope: "Library",
+			query: '',
+			scope: 'Library',
 			filters: mode.filters,
-			mode: "Fast",
+			mode: 'Fast',
 			sort: {
 				field: searchSortField,
-				direction: "Desc",
+				direction: 'Desc'
 			},
 			pagination: {
 				limit: 1000,
-				offset: 0,
-			},
+				offset: 0
+			}
 		};
 	}, [isFilteredMode, mode, sortBy]);
 
@@ -135,8 +144,8 @@ export function useExplorerFiles(): ExplorerFilesResult {
 		if (!isRecentsMode) return null;
 
 		return {
-			query: "", // Empty query to match all files
-			scope: "Library",
+			query: '', // Empty query to match all files
+			scope: 'Library',
 			filters: {
 				file_types: null,
 				tags: null,
@@ -150,78 +159,86 @@ export function useExplorerFiles(): ExplorerFilesResult {
 				on_volumes: null,
 				not_on_volumes: null,
 				min_volume_count: null,
-				max_volume_count: null,
+				max_volume_count: null
 			},
-			mode: "Fast", // Fast mode since we're just sorting by indexed_at
+			mode: 'Fast', // Fast mode since we're just sorting by indexed_at
 			sort: {
-				field: "IndexedAt", // Sort by when files were indexed
-				direction: "Desc", // Most recent first
+				field: 'IndexedAt', // Sort by when files were indexed
+				direction: 'Desc' // Most recent first
 			},
 			pagination: {
 				limit: 100, // Reasonable limit for recents screen
-				offset: 0,
-			},
+				offset: 0
+			}
 		};
 	}, [isRecentsMode]);
 
 	// Search query
 	const searchQuery = useNormalizedQuery<FileSearchInput, FileSearchOutput>({
-		query: "search.files",
+		query: 'search.files',
 		input: searchQueryInput!,
-		resourceType: "file",
+		resourceType: 'file',
 		pathScope:
-			isSearchMode && mode.type === "search" && mode.scope === "folder" && currentPath
+			isSearchMode &&
+			mode.type === 'search' &&
+			mode.scope === 'folder' &&
+			currentPath
 				? (currentPath as any)
 				: undefined,
-		enabled: isSearchMode && !!searchQueryInput && searchQueryInput.query.length >= 2,
+		enabled:
+			isSearchMode &&
+			!!searchQueryInput &&
+			searchQueryInput.query.length >= 2
 	});
 
 	// Recents query
 	const recentsQuery = useNormalizedQuery<FileSearchInput, FileSearchOutput>({
-		query: "search.files",
+		query: 'search.files',
 		input: recentsQueryInput!,
-		resourceType: "file",
-		enabled: isRecentsMode && !!recentsQueryInput,
+		resourceType: 'file',
+		enabled: isRecentsMode && !!recentsQueryInput
 	});
 
 	// Filtered query (pre-applied SearchFilters)
-	const filteredQuery = useNormalizedQuery<FileSearchInput, FileSearchOutput>({
-		query: "search.files",
-		input: filteredQueryInput!,
-		resourceType: "file",
-		enabled: isFilteredMode && !!filteredQueryInput,
-	});
+	const filteredQuery = useNormalizedQuery<FileSearchInput, FileSearchOutput>(
+		{
+			query: 'search.files',
+			input: filteredQueryInput!,
+			resourceType: 'file',
+			enabled: isFilteredMode && !!filteredQueryInput
+		}
+	);
 
 	// Tag query — fetches files tagged with a specific tag
 	const tagQueryInput = useMemo(() => {
-		if (!isTagMode || mode.type !== "tag") return null;
+		if (!isTagMode || mode.type !== 'tag') return null;
 		return {
 			tag_id: mode.tagId,
 			include_children: false,
-			min_confidence: 0.0,
+			min_confidence: 0.0
 		};
 	}, [isTagMode, mode]);
 
 	const tagQuery = useNormalizedQuery({
-		query: "files.by_tag",
+		query: 'files.by_tag',
 		input: tagQueryInput!,
-		resourceType: "file",
-		enabled: isTagMode && !!tagQueryInput,
+		resourceType: 'file',
+		enabled: isTagMode && !!tagQueryInput
 	});
 
 	// Directory query
 	const directoryQuery = useNormalizedQuery({
-		query: "files.directory_listing",
+		query: 'files.directory_listing',
 		input: currentPath
 			? {
 					path: currentPath,
 					limit: null,
 					include_hidden: false,
 					sort_by: sortBy as DirectorySortBy,
-					folders_first: viewSettings.foldersFirst,
+					folders_first: viewSettings.foldersFirst
 				}
 			: null!,
-		resourceType: "file",
+		resourceType: 'file',
 		enabled:
 			!!currentPath &&
 			!isVirtualView &&
@@ -229,41 +246,48 @@ export function useExplorerFiles(): ExplorerFilesResult {
 			!isRecentsMode &&
 			!isFilteredMode &&
 			!isTagMode,
-		pathScope: currentPath ?? undefined,
+		pathScope: currentPath ?? undefined
 	});
 
 	// Priority: filtered > tag > recents > search > virtual > directory
 	const source: FileSource = isFilteredMode
-		? "filtered"
+		? 'filtered'
 		: isTagMode
-			? "tag"
+			? 'tag'
 			: isRecentsMode
-				? "recents"
+				? 'recents'
 				: isSearchMode
-					? "search"
+					? 'search'
 					: isVirtualView
-						? "virtual"
-						: "directory";
+						? 'virtual'
+						: 'directory';
 
 	const files = useMemo(() => {
 		if (isFilteredMode) {
 			return (
-				(filteredQuery.data as FileSearchOutput | undefined)?.files || []
+				(filteredQuery.data as FileSearchOutput | undefined)?.files ||
+				[]
 			);
 		}
 		if (isTagMode) {
-			return (tagQuery.data as { files: File[] } | undefined)?.files ?? [];
+			return (tagQuery.data as {files: File[]} | undefined)?.files ?? [];
 		}
 		if (isRecentsMode) {
-			return (recentsQuery.data as FileSearchOutput | undefined)?.files || [];
+			return (
+				(recentsQuery.data as FileSearchOutput | undefined)?.files || []
+			);
 		}
 		if (isSearchMode) {
-			return (searchQuery.data as FileSearchOutput | undefined)?.files || [];
+			return (
+				(searchQuery.data as FileSearchOutput | undefined)?.files || []
+			);
 		}
 		if (isVirtualView) {
 			return virtualFiles || [];
 		}
-		return (directoryQuery.data as { files: File[] } | undefined)?.files ?? [];
+		return (
+			(directoryQuery.data as {files: File[]} | undefined)?.files ?? []
+		);
 	}, [
 		isFilteredMode,
 		isTagMode,
@@ -275,7 +299,7 @@ export function useExplorerFiles(): ExplorerFilesResult {
 		recentsQuery.data,
 		searchQuery.data,
 		virtualFiles,
-		directoryQuery.data,
+		directoryQuery.data
 	]);
 
 	const isLoading = isFilteredMode
@@ -290,5 +314,17 @@ export function useExplorerFiles(): ExplorerFilesResult {
 						? false
 						: directoryQuery.isLoading;
 
-	return { files, isLoading, source };
+	const error = isFilteredMode
+		? filteredQuery.error
+		: isTagMode
+			? tagQuery.error
+			: isRecentsMode
+				? recentsQuery.error
+				: isSearchMode
+					? searchQuery.error
+					: isVirtualView
+						? null
+						: directoryQuery.error;
+
+	return {files, isLoading, source, error: error ?? null};
 }

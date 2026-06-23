@@ -6,13 +6,14 @@
 use super::{database::CopyDatabaseQuery, input::CopyMethod, routing::CopyStrategyRouter};
 use crate::{
 	domain::addressing::{SdPath, SdPathBatch},
+	infra::event::Event,
 	infra::job::generic_progress::{GenericProgress, ToGenericProgress},
 	infra::job::prelude::*,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::{
-	collections::HashMap,
+	collections::{HashMap, HashSet},
 	path::PathBuf,
 	sync::{Arc, Mutex},
 	time::{Duration, Instant},
@@ -215,6 +216,7 @@ impl JobHandler for FileCopyJob {
 		let mut failed_copies = Vec::new();
 		let is_move = self.options.delete_after_copy;
 		let volume_manager = ctx.volume_manager();
+		let mut affected_directory_paths = HashSet::new();
 
 		// Phase 2: Database Query - Try to get instant estimates
 		let progress = CopyProgress {
@@ -582,6 +584,13 @@ impl JobHandler for FileCopyJob {
 						super::metadata::CopyFileStatus::Completed,
 					);
 
+					Self::record_affected_directory_paths(
+						&mut affected_directory_paths,
+						&resolved_source,
+						&final_destination,
+						is_move,
+					);
+
 					// If this is a move operation and the strategy didn't handle deletion,
 					// we need to delete the source after successful copy
 					if is_move && resolved_source.device_slug() == final_destination.device_slug() {
@@ -674,6 +683,8 @@ impl JobHandler for FileCopyJob {
 
 		// Persist final job state with all file statuses
 		self.persist_job_state_to_db(&ctx).await?;
+		self.refresh_affected_directory_listings(&ctx, &affected_directory_paths)
+			.await;
 
 		ctx.log(format!(
 			"Copy operation completed: {} copied, {} failed",
@@ -1049,6 +1060,48 @@ impl FileCopyJob {
 			destination,
 			MoveMode::Rename,
 		)
+	}
+
+	fn record_affected_directory_paths(
+		affected_paths: &mut HashSet<PathBuf>,
+		source: &SdPath,
+		destination: &SdPath,
+		is_move: bool,
+	) {
+		if is_move {
+			if let Some(source_parent) = source.as_local_path().and_then(|path| path.parent()) {
+				affected_paths.insert(source_parent.to_path_buf());
+			}
+		}
+
+		if let Some(destination_parent) = destination.as_local_path().and_then(|path| path.parent())
+		{
+			affected_paths.insert(destination_parent.to_path_buf());
+		}
+	}
+
+	async fn refresh_affected_directory_listings(
+		&self,
+		ctx: &JobContext<'_>,
+		affected_paths: &HashSet<PathBuf>,
+	) {
+		if affected_paths.is_empty() {
+			return;
+		}
+
+		let ephemeral_cache = ctx.library().core_context().ephemeral_cache();
+
+		for path in affected_paths {
+			ephemeral_cache.invalidate_path(path);
+			let cleared = ephemeral_cache.clear_for_reindex(path).await;
+			ctx.log_debug(format!(
+				"Invalidated directory listing cache for {} ({} stale entries cleared)",
+				path.display(),
+				cleared
+			));
+		}
+
+		ctx.library().event_bus().emit(Event::Refresh);
 	}
 
 	/// Calculate total size for progress reporting
@@ -1545,6 +1598,58 @@ fn format_bytes(bytes: u64) -> String {
 mod tests {
 	use super::*;
 	use std::thread;
+
+	#[test]
+	fn records_destination_parent_for_copy_operations() {
+		let source = SdPath::local("/tmp/source/file.txt");
+		let destination = SdPath::local("/tmp/destination/file.txt");
+		let mut affected_paths = HashSet::new();
+
+		FileCopyJob::record_affected_directory_paths(
+			&mut affected_paths,
+			&source,
+			&destination,
+			false,
+		);
+
+		assert_eq!(affected_paths.len(), 1);
+		assert!(affected_paths.contains(&PathBuf::from("/tmp/destination")));
+	}
+
+	#[test]
+	fn records_source_and_destination_parents_for_move_operations() {
+		let source = SdPath::local("/tmp/source/file.txt");
+		let destination = SdPath::local("/tmp/destination/file.txt");
+		let mut affected_paths = HashSet::new();
+
+		FileCopyJob::record_affected_directory_paths(
+			&mut affected_paths,
+			&source,
+			&destination,
+			true,
+		);
+
+		assert_eq!(affected_paths.len(), 2);
+		assert!(affected_paths.contains(&PathBuf::from("/tmp/source")));
+		assert!(affected_paths.contains(&PathBuf::from("/tmp/destination")));
+	}
+
+	#[test]
+	fn deduplicates_parent_for_rename_operations() {
+		let source = SdPath::local("/tmp/source/file.txt");
+		let destination = SdPath::local("/tmp/source/renamed.txt");
+		let mut affected_paths = HashSet::new();
+
+		FileCopyJob::record_affected_directory_paths(
+			&mut affected_paths,
+			&source,
+			&destination,
+			true,
+		);
+
+		assert_eq!(affected_paths.len(), 1);
+		assert!(affected_paths.contains(&PathBuf::from("/tmp/source")));
+	}
 
 	#[test]
 	fn test_speed_tracker_creation() {

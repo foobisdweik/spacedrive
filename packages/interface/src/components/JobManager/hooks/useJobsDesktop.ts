@@ -1,7 +1,8 @@
 import {sounds} from '@sd/assets/sounds';
 import {useJobs as useJobsCore, type UseJobsReturn} from '@sd/ts-client';
-import {useVolumeIndexingStore} from '../../../stores/volumeIndexingStore';
+import {useQueryClient} from '@tanstack/react-query';
 import {useEffect, useRef} from 'react';
+import {useVolumeIndexingStore} from '../../../stores/volumeIndexingStore';
 
 // Global set to track which jobs have already played their completion sound
 // This prevents multiple hook instances from playing the sound multiple times
@@ -18,9 +19,25 @@ const SOUND_THROTTLE_MS = 5000;
  */
 export function useJobs(): UseJobsReturn {
 	const {setVolumeJob, clearVolumeJob} = useVolumeIndexingStore();
+	const queryClient = useQueryClient();
+
+	const invalidateFileQueries = () => {
+		queryClient.invalidateQueries({
+			predicate: (query) =>
+				Array.isArray(query.queryKey) &&
+				typeof query.queryKey[0] === 'string' &&
+				(query.queryKey[0] === 'query:files.directory_listing' ||
+					query.queryKey[0] === 'query:search.files' ||
+					query.queryKey[0] === 'query:locations.list' ||
+					query.queryKey[0] === 'query:files.by_id')
+		});
+	};
 
 	const jobs = useJobsCore({
 		onJobCompleted: (jobId, jobType) => {
+			// Invalidate relevant queries when a job completes
+			invalidateFileQueries();
+
 			// Play completion sound
 			if (!completedJobSounds.has(jobId)) {
 				completedJobSounds.add(jobId);
@@ -31,7 +48,10 @@ export function useJobs(): UseJobsReturn {
 					lastSoundPlayedAt = now;
 
 					// Play job-specific sound
-					if (jobType?.includes('copy') || jobType?.includes('Copy')) {
+					if (
+						jobType?.includes('copy') ||
+						jobType?.includes('Copy')
+					) {
 						sounds.copy();
 					} else {
 						sounds.jobDone();
@@ -41,6 +61,12 @@ export function useJobs(): UseJobsReturn {
 				// Clean up old entries after 5 seconds to prevent memory leak
 				setTimeout(() => completedJobSounds.delete(jobId), 5000);
 			}
+		},
+		onJobFailed: () => {
+			invalidateFileQueries();
+		},
+		onJobCancelled: () => {
+			invalidateFileQueries();
 		}
 	});
 
@@ -56,7 +82,10 @@ export function useJobs(): UseJobsReturn {
 			if (job.name === 'indexer' && job.status === 'running') {
 				const context = job.action_context?.context as any;
 				const volumeFingerprint = context?.volume_fingerprint;
-				if (volumeFingerprint && typeof volumeFingerprint === 'string') {
+				if (
+					volumeFingerprint &&
+					typeof volumeFingerprint === 'string'
+				) {
 					setVolumeJob(volumeFingerprint, job.id);
 				}
 			}
@@ -78,7 +107,10 @@ export function useJobs(): UseJobsReturn {
 			) {
 				const context = prevJob.action_context?.context as any;
 				const volumeFingerprint = context?.volume_fingerprint;
-				if (volumeFingerprint && typeof volumeFingerprint === 'string') {
+				if (
+					volumeFingerprint &&
+					typeof volumeFingerprint === 'string'
+				) {
 					clearVolumeJob(volumeFingerprint);
 				}
 			}

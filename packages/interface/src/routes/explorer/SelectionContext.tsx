@@ -1,4 +1,9 @@
-import type {File, SdPath} from '@sd/ts-client';
+import type {
+	DirectoryListingOutput,
+	File,
+	FileSearchOutput,
+	SdPath
+} from '@sd/ts-client';
 import {useQueryClient} from '@tanstack/react-query';
 import {
 	createContext,
@@ -309,11 +314,56 @@ export function SelectionProvider({
 			}
 
 			try {
+				const updateRenamedFile = (candidate: File): File =>
+					candidate.id === file.id
+						? {
+								...candidate,
+								name: newName
+							}
+						: candidate;
+
+				// Optimistically update the visible name while invalidation reloads authoritative metadata.
+				queryClient.setQueriesData<DirectoryListingOutput>(
+					{
+						predicate: (query) =>
+							Array.isArray(query.queryKey) &&
+							typeof query.queryKey[0] === 'string' &&
+							query.queryKey[0] ===
+								'query:files.directory_listing'
+					},
+					(oldData) => {
+						if (!oldData) return oldData;
+
+						return {
+							...oldData,
+							files: oldData.files.map(updateRenamedFile)
+						};
+					}
+				);
+				queryClient.setQueriesData<FileSearchOutput>(
+					{
+						predicate: (query) =>
+							Array.isArray(query.queryKey) &&
+							typeof query.queryKey[0] === 'string' &&
+							query.queryKey[0] === 'query:search.files'
+					},
+					(oldData) => {
+						if (!oldData) return oldData;
+
+						return {
+							...oldData,
+							files: oldData.files.map(updateRenamedFile)
+						};
+					}
+				);
+
 				await renameFile.mutateAsync({
 					target: file.sd_path,
 					new_name: newName
 				});
 				setRenamingFileId(null);
+				// Stale invalidation is still triggered immediately, but the job completion
+				// event in useJobsDesktop.ts will perform the final authoritative invalidation.
 				await queryClient.invalidateQueries({
 					predicate: (query) =>
 						Array.isArray(query.queryKey) &&
