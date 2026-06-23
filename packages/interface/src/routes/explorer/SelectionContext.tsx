@@ -314,13 +314,65 @@ export function SelectionProvider({
 			}
 
 			try {
-				const updateRenamedFile = (candidate: File): File =>
-					candidate.id === file.id
-						? {
-								...candidate,
-								name: newName
+				const splitFileName = (fileName: string) => {
+					const lastDot = fileName.lastIndexOf('.');
+					if (lastDot > 0 && lastDot < fileName.length - 1) {
+						return {
+							name: fileName.slice(0, lastDot),
+							extension: fileName.slice(lastDot + 1)
+						};
+					}
+
+					return {name: fileName, extension: null};
+				};
+
+				const renamePath = (path: string) => {
+					const separatorIndex = path.lastIndexOf('/');
+					if (separatorIndex === -1) return newName;
+
+					return `${path.slice(0, separatorIndex + 1)}${newName}`;
+				};
+
+				const renameSdPath = (sdPath: SdPath): SdPath => {
+					if ('Physical' in sdPath) {
+						return {
+							Physical: {
+								...sdPath.Physical,
+								path: renamePath(sdPath.Physical.path)
 							}
-						: candidate;
+						};
+					}
+
+					if ('Cloud' in sdPath) {
+						return {
+							Cloud: {
+								...sdPath.Cloud,
+								path: renamePath(sdPath.Cloud.path)
+							}
+						};
+					}
+
+					return sdPath;
+				};
+
+				const updateRenamedFile = (candidate: File): File => {
+					if (candidate.id !== file.id) return candidate;
+
+					if (candidate.kind === 'File') {
+						return {
+							...candidate,
+							sd_path: renameSdPath(candidate.sd_path),
+							...splitFileName(newName)
+						};
+					}
+
+					return {
+						...candidate,
+						sd_path: renameSdPath(candidate.sd_path),
+						name: newName,
+						extension: null
+					};
+				};
 
 				// Optimistically update the visible name while invalidation reloads authoritative metadata.
 				queryClient.setQueriesData<DirectoryListingOutput>(
@@ -333,6 +385,7 @@ export function SelectionProvider({
 					},
 					(oldData) => {
 						if (!oldData) return oldData;
+						if (!Array.isArray(oldData.files)) return oldData;
 
 						return {
 							...oldData,
@@ -349,6 +402,7 @@ export function SelectionProvider({
 					},
 					(oldData) => {
 						if (!oldData) return oldData;
+						if (!Array.isArray(oldData.files)) return oldData;
 
 						return {
 							...oldData,
