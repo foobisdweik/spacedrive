@@ -136,7 +136,7 @@ function ShellLayoutContent() {
 	return (
 		<div
 			className={clsx(
-				'text-sidebar-ink bg-app relative flex h-screen select-none flex-col overflow-hidden border border-transparent',
+				'text-sidebar-ink relative flex h-screen select-none flex-col overflow-hidden border border-transparent',
 				platform.platform === 'tauri' && 'rounded-[10px]',
 			)}
 		>
@@ -211,7 +211,7 @@ function ShellLayoutContent() {
 				{/* Content area with tabs - positioned between sidebar and inspector */}
 				<div
 					className={clsx(
-						'relative flex flex-1 flex-col overflow-hidden pt-12',
+						'bg-app relative flex flex-1 flex-col overflow-hidden pt-12',
 						isSizeViewActive ? 'z-[30]' : 'z-[38]'
 					)}
 				>
@@ -249,7 +249,7 @@ function ShellLayoutContent() {
 							}}
 							className="relative z-[65] overflow-hidden"
 						>
-							<div className="flex h-full w-[280px] min-w-[280px] flex-col bg-transparent p-2">
+							<div className="bg-app flex h-full w-[280px] min-w-[280px] flex-col p-2">
 								<Inspector
 									currentLocation={currentLocation}
 									onPopOut={handlePopOutInspector}
