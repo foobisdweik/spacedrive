@@ -85,11 +85,13 @@ impl LibraryQuery for LocationsListQuery {
 				path: directory_path.path.clone().into(),
 			};
 
-			out.push(Location::from_db_model(
-				&location_model,
-				library_id,
-				sd_path,
-			));
+			let mut location = Location::from_db_model(&location_model, library_id, sd_path);
+
+			if let SdPath::Physical { path, .. } = &location.sd_path {
+				location.is_available = path.exists();
+			}
+
+			out.push(location);
 		}
 
 		Ok(LocationsListOutput { locations: out })

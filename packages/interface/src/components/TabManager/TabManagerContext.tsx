@@ -186,9 +186,9 @@ interface TabManagerContextValue {
 		updates: Partial<TabExplorerState>,
 	) => void;
 
-	// Selection state (per-tab, ephemeral - not persisted)
-	getSelectionIds: (tabId: string) => string[];
-	updateSelectionIds: (tabId: string, fileIds: string[]) => void;
+	// Selection state (per-tab, per-path, ephemeral - not persisted)
+	getSelectionIds: (tabId: string, path: string) => string[];
+	updateSelectionIds: (tabId: string, path: string, fileIds: string[]) => void;
 }
 
 const TabManagerContext = createContext<TabManagerContextValue | null>(null);
@@ -252,15 +252,10 @@ export function TabManagerProvider({
 		return initialMap;
 	});
 
-	// Per-tab selection state (ephemeral, not persisted to localStorage)
+	// Per-tab + per-path selection state (ephemeral, not persisted to localStorage)
 	const [selectionStates, setSelectionStates] = useState<
-		Map<string, string[]>
-	>(() => {
-		const initialMap = new Map<string, string[]>();
-		// Initialize with empty selection for first tab
-		initialMap.set(tabs[0].id, []);
-		return initialMap;
-	});
+		Map<string, Map<string, string[]>>
+	>(() => new Map());
 
 	const [defaultNewTabPath, setDefaultNewTabPathState] = useState<string>(
 		() => {
@@ -315,7 +310,7 @@ export function TabManagerProvider({
 			);
 
 			// Initialize empty selection state for the new tab
-			setSelectionStates((prev) => new Map(prev).set(newTab.id, []));
+			setSelectionStates((prev) => new Map(prev).set(newTab.id, new Map()));
 
 			setTabs((prev) => [...prev, newTab]);
 			setActiveTabId(newTab.id);
@@ -456,18 +451,24 @@ export function TabManagerProvider({
 	);
 
 	// ========================================================================
-	// Selection state (per-tab)
+	// Selection state (per-tab, per-path)
 	// ========================================================================
 
 	const getSelectionIds = useCallback(
-		(tabId: string): string[] => {
-			return selectionStates.get(tabId) ?? [];
+		(tabId: string, path: string): string[] => {
+			return selectionStates.get(tabId)?.get(path) ?? [];
 		},
 		[selectionStates],
 	);
 
-	const updateSelectionIds = useCallback((tabId: string, fileIds: string[]) => {
-		setSelectionStates((prev) => new Map(prev).set(tabId, fileIds));
+	const updateSelectionIds = useCallback((tabId: string, path: string, fileIds: string[]) => {
+		setSelectionStates((prev) => {
+			const next = new Map(prev);
+			const tabMap = new Map(next.get(tabId) ?? new Map());
+			tabMap.set(path, fileIds);
+			next.set(tabId, tabMap);
+			return next;
+		});
 	}, []);
 
 	// ========================================================================

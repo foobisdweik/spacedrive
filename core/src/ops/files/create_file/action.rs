@@ -120,10 +120,12 @@ async fn create_new_empty_file(path: &std::path::Path) -> Result<(), ActionError
 				});
 			}
 			Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-				return Err(ActionError::Validation {
-					field: "parent".to_string(),
-					message: format!("Parent directory does not exist: {}", parent.display()),
-				});
+				tokio::fs::create_dir_all(parent).await.map_err(|err| {
+					ActionError::Internal(format!(
+						"Failed to recreate missing parent directories: {}",
+						err
+					))
+				})?;
 			}
 			Err(e) => {
 				return Err(ActionError::Internal(format!(

@@ -162,7 +162,7 @@ impl MacOsHandler {
 					"Create event for non-existent path (likely misreported by FSEvents): {}",
 					path.display()
 				);
-				return Ok(vec![FsEvent::remove(path)]);
+				return self.process_remove(path).await;
 			}
 
 			// Path exists but we couldn't get inode (permission issue?)
@@ -342,13 +342,17 @@ impl MacOsHandler {
 					let mut recent = self.recent_dirs.write().await;
 					recent.insert(pending.path.clone(), Instant::now());
 				}
-				events.push(FsEvent::create_dir(pending.path.clone()));
+				if pending.path.exists() {
+					events.push(FsEvent::create_dir(pending.path.clone()));
+				}
 				debug!(
 					"Evicting create as directory (was buffered as file): {}",
 					pending.path.display()
 				);
 			} else {
-				events.push(FsEvent::create_file(pending.path.clone()));
+				if pending.path.exists() {
+					events.push(FsEvent::create_file(pending.path.clone()));
+				}
 				debug!("Evicting create as file: {}", pending.path.display());
 			}
 		}
@@ -365,7 +369,9 @@ impl MacOsHandler {
 		for (inode, pending) in removes.iter() {
 			if pending.timestamp.elapsed() > timeout {
 				to_remove.push(*inode);
-				events.push(FsEvent::remove(pending.path.clone()));
+				if !pending.path.exists() {
+					events.push(FsEvent::remove(pending.path.clone()));
+				}
 				trace!(
 					"Evicting remove (no matching create): {}",
 					pending.path.display()
@@ -400,7 +406,9 @@ impl MacOsHandler {
 			if timestamp.elapsed() > effective_timeout {
 				to_remove.push(path.clone());
 				// Emit as Create for files - the responder will detect if it's an update via inode
-				events.push(FsEvent::create_file(path.clone()));
+				if path.exists() {
+					events.push(FsEvent::create_file(path.clone()));
+				}
 				trace!(
 					"Evicting update (stabilized after {}ms): {}",
 					timestamp.elapsed().as_millis(),

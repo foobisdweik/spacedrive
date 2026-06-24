@@ -109,7 +109,7 @@ impl LibraryAction for CreateFolderAction {
 			SdPath::Physical { path, .. } => {
 				// Use LocalBackend to create the directory
 				let backend = LocalBackend::new(path.parent().unwrap_or(path));
-				backend.create_directory(path, false).await.map_err(|e| {
+				backend.create_directory(path, true).await.map_err(|e| {
 					ActionError::Internal(format!("Failed to create directory: {}", e))
 				})?;
 			}
