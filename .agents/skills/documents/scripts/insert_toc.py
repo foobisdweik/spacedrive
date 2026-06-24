@@ -57,7 +57,11 @@ def _set_update_fields_on_open(docx_path: Path) -> None:
         uf = root.find("w:updateFields", namespaces=NS)
         if uf is None:
             uf = etree.Element(f"{{{W_NS}}}updateFields")
-            root.insert(0, uf)
+            compat = root.find("w:compat", namespaces=NS)
+            if compat is not None:
+                compat.addprevious(uf)
+            else:
+                root.append(uf)
         uf.set(f"{{{W_NS}}}val", "true")
 
         tree.write(str(settings), xml_declaration=True, encoding="UTF-8", standalone="yes")

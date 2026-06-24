@@ -81,8 +81,11 @@ def set_protection(settings_root: etree._Element, mode: str) -> bool:
     dp.set(f"{{{W_NS}}}enforcement", "1")
     # don't lock formatting by default
     dp.set(f"{{{W_NS}}}formatting", "0")
-    # Place as first child for readability
-    settings_root.insert(0, dp)
+    compat = settings_root.find("w:compat", namespaces=NS)
+    if compat is not None:
+        compat.addprevious(dp)
+    else:
+        settings_root.append(dp)
     return True
 
 

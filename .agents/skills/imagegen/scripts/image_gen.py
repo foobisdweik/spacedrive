@@ -582,6 +582,7 @@ async def _run_generate_batch(args: argparse.Namespace) -> int:
         "output_format": args.output_format,
         "output_compression": args.output_compression,
         "moderation": args.moderation,
+        "response_format": "b64_json",
     }
 
     if args.dry_run:
@@ -721,6 +722,7 @@ def _generate(args: argparse.Namespace) -> None:
         "output_format": args.output_format,
         "output_compression": args.output_compression,
         "moderation": args.moderation,
+        "response_format": "b64_json",
     }
     payload = {k: v for k, v in payload.items() if v is not None}
 
@@ -789,6 +791,7 @@ def _edit(args: argparse.Namespace) -> None:
         "output_compression": args.output_compression,
         "input_fidelity": args.input_fidelity,
         "moderation": args.moderation,
+        "response_format": "b64_json",
     }
     payload = {k: v for k, v in payload.items() if v is not None}
 

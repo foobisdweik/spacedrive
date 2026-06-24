@@ -165,6 +165,10 @@ def main() -> None:
         if r < args.header_rows:
             _mark_row_as_header(table.rows[r])
 
+    from table_geometry import apply_table_geometry
+    col_widths_dxa = [int(w * 1440) for w in col_widths]
+    apply_table_geometry(table, col_widths_dxa)
+
     doc.save(str(out_path))
     print(f"[OK] Wrote {out_path} (rows={max_r}, cols={max_c}, sheet={ws.title!r})")
 
