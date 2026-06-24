@@ -106,8 +106,11 @@ export function SelectionProvider({
 	const clipboard = useClipboard();
 	const tabManager = useTabManager();
 	const queryClient = useQueryClient();
-	const {activeTabId, getSelectionIds, updateSelectionIds} = tabManager;
+	const {activeTabId, tabs, getSelectionIds, updateSelectionIds} = tabManager;
 	const renameFile = useLibraryMutation('files.rename');
+
+	const activeTab = tabs.find((t) => t.id === activeTabId);
+	const currentPath = activeTab?.savedPath ?? '/';
 
 	// Local state for File objects (not serializable, can't be stored in TabManager)
 	const [selectedFiles, setSelectedFilesInternal] = useState<File[]>([]);
@@ -115,15 +118,15 @@ export function SelectionProvider({
 	const [, setLastSelectedIndex] = useState(-1);
 	const [renamingFileId, setRenamingFileId] = useState<string | null>(null);
 
-	// Track the stored IDs for the active tab (separate from File objects)
-	const storedIds = getSelectionIds(activeTabId);
+	// Track the stored IDs for the active tab and path (separate from File objects)
+	const storedIds = getSelectionIds(activeTabId, currentPath);
 
-	// Clear selection when activeTabId changes (we'll restore it when files load)
+	// Clear selection when activeTabId or path changes (we'll restore it when files load)
 	useEffect(() => {
 		setSelectedFilesInternal([]);
 		setFocusedIndex(-1);
 		setLastSelectedIndex(-1);
-	}, [activeTabId]);
+	}, [activeTabId, currentPath]);
 
 	// Wrapper for setSelectedFiles that syncs to TabManager
 	// Supports both direct values and updater functions
@@ -138,13 +141,14 @@ export function SelectionProvider({
 				// Sync to TabManager
 				updateSelectionIds(
 					activeTabId,
+					currentPath,
 					nextFiles.map((f) => f.id)
 				);
 
 				return nextFiles;
 			});
 		},
-		[activeTabId, updateSelectionIds]
+		[activeTabId, currentPath, updateSelectionIds]
 	);
 
 	// Sync selected file IDs to platform (for cross-window state sharing)
@@ -471,6 +475,12 @@ export function SelectionProvider({
 
 			// Only update if we found matching files and they're different from current
 			if (matchingFiles.length > 0) {
+				setFocusedIndex((prev) => {
+					if (prev !== -1) return prev;
+					const newFocus = files.findIndex((f) => f.id === storedIds[0]);
+					return newFocus !== -1 ? newFocus : prev;
+				});
+
 				setSelectedFilesInternal((prev) => {
 					const prevIds = new Set(prev.map((f) => f.id));
 					const newIds = new Set(matchingFiles.map((f) => f.id));

@@ -186,13 +186,15 @@ function FileOperationDialog(props: FileOperationDialogProps) {
 							message: res.Preflight.issues[0].message
 						});
 					} else {
-						if (
-							res.Preflight.requires_confirmation &&
-							!hasSelectedConflictResolution.current
-						) {
-							setConflictResolution('AutoModifyName');
+						if (res.Preflight.requires_confirmation) {
+							if (!hasSelectedConflictResolution.current) {
+								setConflictResolution('AutoModifyName');
+							}
+							setPhase({type: 'form'});
+						} else {
+							// Fast path: auto-execute when there are no conflicts
+							executeOperation();
 						}
-						setPhase({type: 'form'});
 					}
 				} else {
 					setPhase({

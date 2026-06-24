@@ -602,6 +602,61 @@ impl JobHandler for FileCopyJob {
 							is_move,
 						);
 
+						// Notify the frontend immediately so the user sees the file appear incrementally
+						if let Some(dest_local) = final_destination.as_local_path() {
+							if let Ok(metadata) = std::fs::metadata(dest_local) {
+								let device_slug = final_destination
+									.device_slug()
+									.unwrap_or("local")
+									.to_string();
+								let parent_path = dest_local.parent().map(|p| {
+									crate::domain::addressing::SdPath::Physical {
+										device_slug: device_slug.clone(),
+										path: p.to_path_buf(),
+									}
+								});
+
+								let entry_metadata =
+									crate::ops::indexing::database_storage::EntryMetadata {
+										path: dest_local.to_path_buf(),
+										kind: if metadata.is_dir() {
+											crate::ops::indexing::state::EntryKind::Directory
+										} else if metadata.file_type().is_symlink() {
+											crate::ops::indexing::state::EntryKind::Symlink
+										} else {
+											crate::ops::indexing::state::EntryKind::File
+										},
+										size: metadata.len(),
+										modified: metadata.modified().ok(),
+										accessed: metadata.accessed().ok(),
+										created: metadata.created().ok(),
+										inode: None,
+										permissions: None,
+										is_hidden: false,
+									};
+
+								let ephemeral_file = crate::domain::file::File::from_ephemeral(
+									uuid::Uuid::new_v4(), // Temporary UUID
+									&entry_metadata,
+									final_destination.clone(),
+								);
+
+								if let Ok(resource_json) = serde_json::to_value(&ephemeral_file) {
+									ctx.library().event_bus().emit(
+										crate::infra::event::Event::ResourceChanged {
+											resource_type: "file".to_string(),
+											resource: resource_json,
+											metadata: Some(crate::infra::event::ResourceMetadata {
+												no_merge_fields: vec!["sd_path".to_string()],
+												alternate_ids: vec![],
+												affected_paths: parent_path.into_iter().collect(),
+											}),
+										},
+									);
+								}
+							}
+						}
+
 						// If this is a move operation and the strategy didn't handle deletion,
 						// we need to delete the source after successful copy
 						if is_move

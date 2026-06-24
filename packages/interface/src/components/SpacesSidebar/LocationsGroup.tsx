@@ -22,6 +22,7 @@ export function LocationsGroup({
   });
 
   const locations = locationsData?.locations ?? [];
+  const activeLocations = locations.filter((loc: any) => loc.is_available);
 
   return (
     <div>
@@ -36,12 +37,12 @@ export function LocationsGroup({
       {/* Items */}
       {!isCollapsed && (
         <div className="space-y-0.5">
-          {locations.map((location: any, index: number) => (
+          {activeLocations.map((location: any, index: number) => (
             <SpaceItem
               key={location.id}
               item={location}
               allowInsertion={false}
-              isLastItem={index === locations.length - 1}
+              isLastItem={index === activeLocations.length - 1}
             />
           ))}
         </div>
