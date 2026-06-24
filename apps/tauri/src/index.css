@@ -71,7 +71,7 @@
 
 html,
 body {
-	background-color: var(--color-app);
+	background-color: transparent;
 }
 
 body {
