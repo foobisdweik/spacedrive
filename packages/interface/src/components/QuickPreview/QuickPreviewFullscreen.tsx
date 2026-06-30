@@ -71,11 +71,29 @@ export function QuickPreviewFullscreen({
 		if (!isOpen) return;
 
 		const handleKeyDown = (e: KeyboardEvent) => {
-			// Only handle close events - let Explorer handle navigation
 			if (e.code === "Escape" || e.code === "Space") {
 				e.preventDefault();
 				e.stopImmediatePropagation();
 				onClose();
+				return;
+			}
+
+			// Navigate between items. The footer advertises ← / → and the
+			// onNext/onPrevious callbacks move the selection (which the Syncer
+			// mirrors back into the preview), but nothing was wired to the arrow
+			// keys — the Explorer's own arrow handlers don't run while the preview
+			// is open, so the keys did nothing. Handle them here directly.
+			if (e.code === "ArrowRight") {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				onNext?.();
+				return;
+			}
+
+			if (e.code === "ArrowLeft") {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				onPrevious?.();
 			}
 		};
 
@@ -84,7 +102,7 @@ export function QuickPreviewFullscreen({
 			window.removeEventListener("keydown", handleKeyDown, {
 				capture: true,
 			});
-	}, [isOpen, onClose]);
+	}, [isOpen, onClose, onNext, onPrevious]);
 
 	// Get background style based on content type
 	const getBackgroundClass = () => {

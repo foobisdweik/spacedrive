@@ -40,14 +40,18 @@ export const TextViewer = memo(
 					onLoad?.(new UIEvent('load', {}));
 
 					const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+					// Accumulate decoded text across reads. Splitting each chunk in
+					// isolation (and replacing `lines` with it) dropped earlier
+					// content and mis-split lines that straddled a chunk boundary.
+					let buffer = '';
 					return reader.read().then(function ingestLines({
 						done,
 						value
 					}): void | Promise<void> {
 						if (done) return;
 
-						const chunks = value.split('\n');
-						setLines([...chunks]);
+						buffer += value;
+						setLines(buffer.split('\n'));
 
 						if (isSidebarPreview) return;
 

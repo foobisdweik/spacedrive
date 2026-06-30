@@ -131,6 +131,17 @@ export function ExplorerView() {
 		[viewMode, columnStack, navigateToPath, setViewMode]
 	);
 
+	// View-mode shortcuts (Cmd+Alt+1..6). Kept off Cmd+1..6 so they don't
+	// collide with the global tab switcher (global.selectTab1-9).
+	useKeybind('explorer.setViewGrid', () => handleViewModeChange('grid'));
+	useKeybind('explorer.setViewList', () => handleViewModeChange('list'));
+	useKeybind('explorer.setViewMedia', () => handleViewModeChange('media'));
+	useKeybind('explorer.setViewColumn', () => handleViewModeChange('column'));
+	useKeybind('explorer.setViewSize', () => handleViewModeChange('size'));
+	useKeybind('explorer.setViewKnowledge', () => handleViewModeChange('knowledge'), {
+		enabled: import.meta.env.DEV
+	});
+
 	// Memoize submenu content to prevent infinite re-renders
 	const viewModeSubmenu = useMemo(
 		() => (
