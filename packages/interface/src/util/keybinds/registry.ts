@@ -122,6 +122,58 @@ export const explorerKeybinds = {
 		preventDefault: true
 	}),
 
+	// View modes
+	// Cmd+Alt+1..6 — deliberately NOT Cmd+1..6, which the global tab
+	// switcher (global.selectTab1-9) already owns. Sharing the chord made the
+	// advertised view shortcuts silently switch tabs instead.
+	setViewGrid: defineKeybind({
+		id: 'explorer.setViewGrid',
+		label: 'Grid View',
+		combo: { modifiers: ['Cmd', 'Alt'], key: '1' },
+		scope: 'explorer',
+		preventDefault: true
+	}),
+
+	setViewList: defineKeybind({
+		id: 'explorer.setViewList',
+		label: 'List View',
+		combo: { modifiers: ['Cmd', 'Alt'], key: '2' },
+		scope: 'explorer',
+		preventDefault: true
+	}),
+
+	setViewMedia: defineKeybind({
+		id: 'explorer.setViewMedia',
+		label: 'Media View',
+		combo: { modifiers: ['Cmd', 'Alt'], key: '3' },
+		scope: 'explorer',
+		preventDefault: true
+	}),
+
+	setViewColumn: defineKeybind({
+		id: 'explorer.setViewColumn',
+		label: 'Column View',
+		combo: { modifiers: ['Cmd', 'Alt'], key: '4' },
+		scope: 'explorer',
+		preventDefault: true
+	}),
+
+	setViewSize: defineKeybind({
+		id: 'explorer.setViewSize',
+		label: 'Size View',
+		combo: { modifiers: ['Cmd', 'Alt'], key: '5' },
+		scope: 'explorer',
+		preventDefault: true
+	}),
+
+	setViewKnowledge: defineKeybind({
+		id: 'explorer.setViewKnowledge',
+		label: 'Knowledge View',
+		combo: { modifiers: ['Cmd', 'Alt'], key: '6' },
+		scope: 'explorer',
+		preventDefault: true
+	}),
+
 	// Grid/List navigation (arrow keys)
 	moveUp: defineKeybind({
 		id: 'explorer.moveUp',
