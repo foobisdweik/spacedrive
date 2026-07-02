@@ -320,6 +320,45 @@ impl FileSyncService {
 		Ok(Some(handle.id()))
 	}
 
+	async fn record_delete_job_id(
+		&self,
+		conduit_id: i32,
+		job_id: Option<JobId>,
+		source_to_target: bool,
+		direction: &str,
+	) -> Result<()> {
+		let Some(job_id) = job_id else {
+			return Ok(());
+		};
+
+		let recorded = {
+			let mut syncs = self.active_syncs.write().await;
+			if let Some(sync) = syncs.get_mut(&conduit_id) {
+				if source_to_target {
+					sync.source_to_target.delete_job_id = Some(job_id);
+					true
+				} else if let Some(target_to_source) = sync.target_to_source.as_mut() {
+					target_to_source.delete_job_id = Some(job_id);
+					true
+				} else {
+					false
+				}
+			} else {
+				false
+			}
+		};
+
+		if !recorded {
+			let _ = self.library.jobs().cancel_job(job_id).await;
+			return Err(anyhow::anyhow!(
+				"Sync was canceled before {} delete job could be tracked",
+				direction
+			));
+		}
+
+		Ok(())
+	}
+
 	async fn record_sync_failure(&self, conduit_id: i32, message: String) -> Result<()> {
 		let generation = self
 			.active_syncs
@@ -412,6 +451,9 @@ impl FileSyncService {
 				return Err(err);
 			}
 		};
+		self.record_delete_job_id(conduit_id, source_delete_job_id, true, "source → target")
+			.await?;
+
 		let target_delete_job_id = if let Some(ops) = &target_to_source_delete_ops {
 			match self.dispatch_delete_job(ops, "target → source").await {
 				Ok(job_id) => job_id,
@@ -427,16 +469,8 @@ impl FileSyncService {
 		} else {
 			None
 		};
-
-		{
-			let mut syncs = self.active_syncs.write().await;
-			if let Some(sync) = syncs.get_mut(&conduit_id) {
-				sync.source_to_target.delete_job_id = source_delete_job_id;
-				if let Some(target_to_source) = sync.target_to_source.as_mut() {
-					target_to_source.delete_job_id = target_delete_job_id;
-				}
-			}
-		}
+		self.record_delete_job_id(conduit_id, target_delete_job_id, false, "target → source")
+			.await?;
 
 		info!(
 			"Waiting for delete jobs to complete for conduit {}",

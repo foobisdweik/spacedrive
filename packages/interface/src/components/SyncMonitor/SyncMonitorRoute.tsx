@@ -378,7 +378,16 @@ export function SyncMonitorRoute() {
 		const source = sourceResolveQuery.data?.entry_id;
 		const target = targetResolveQuery.data?.entry_id;
 
-		if (!source || !target) {
+		if (!source) {
+			setTargetPickerError(
+				sourceResolveQuery.isError
+					? 'Failed to resolve the source directory.'
+					: 'Resolving source directory.'
+			);
+			return;
+		}
+
+		if (!target) {
 			setTargetPickerError('Select a target directory.');
 			return;
 		}

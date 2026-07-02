@@ -75,18 +75,18 @@ impl PathDiffResult {
 		let mut entries = self.only_in_source.iter().collect::<Vec<_>>();
 		entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
-		let mut selected_relative_paths: Vec<PathBuf> = Vec::new();
+		let mut selected_parent: Option<PathBuf> = None;
 		let mut sources = Vec::new();
 
 		for entry in entries {
-			if selected_relative_paths
-				.iter()
-				.any(|selected| entry.relative_path.starts_with(selected))
+			if selected_parent
+				.as_ref()
+				.is_some_and(|parent| entry.relative_path.starts_with(parent))
 			{
 				continue;
 			}
 
-			selected_relative_paths.push(entry.relative_path.clone());
+			selected_parent = Some(entry.relative_path.clone());
 			sources.push(entry.sd_path.clone());
 		}
 

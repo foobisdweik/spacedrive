@@ -10,7 +10,6 @@ use crate::util::prelude::*;
 use crate::context::Context;
 use crate::context::OutputFormat;
 use sd_core::infra::job::types::JobId;
-use sd_core::infra::query::LibraryQuery;
 
 use self::args::*;
 
