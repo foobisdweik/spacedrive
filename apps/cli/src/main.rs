@@ -191,7 +191,7 @@ enum Commands {
 	#[command(subcommand)]
 	Library(LibraryCmd),
 	/// File operations
-	#[command(subcommand)]
+	#[command(subcommand, visible_alias = "files")]
 	File(FileCmd),
 	/// Indexing operations
 	#[command(subcommand)]

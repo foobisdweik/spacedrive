@@ -4,6 +4,7 @@ use crate::{
 		action::{error::ActionError, LibraryAction},
 		api::SessionContext,
 		db::entities::{sync_conduit, sync_generation},
+		event::Event,
 		job::types::JobId,
 		query::{LibraryQuery, QueryError, QueryResult},
 	},
@@ -195,6 +196,7 @@ impl LibraryAction for CreateConduitAction {
 			.await
 			.map_err(to_action_error)?;
 
+		emit_conduit_changed(&library, conduit.id, "created");
 		Ok(conduit_response(conduit, false))
 	}
 
@@ -248,6 +250,7 @@ impl LibraryAction for UpdateConduitAction {
 			.map_err(to_action_error)?;
 
 		let is_syncing = service.is_syncing(conduit.id).await;
+		emit_conduit_changed(&library, conduit.id, "updated");
 		Ok(conduit_response(conduit, is_syncing))
 	}
 
@@ -278,7 +281,9 @@ impl LibraryAction for DeleteConduitAction {
 			.conduit_manager()
 			.delete_conduit(self.input.conduit_id)
 			.await
-			.map_err(to_action_error)
+			.map_err(to_action_error)?;
+		emit_conduit_changed(&library, self.input.conduit_id, "deleted");
+		Ok(())
 	}
 
 	fn action_kind(&self) -> &'static str {
@@ -345,6 +350,7 @@ impl LibraryAction for PauseSyncAction {
 			.cancel_sync(self.input.conduit_id)
 			.await
 			.map_err(to_action_error)?;
+		emit_conduit_changed(&library, self.input.conduit_id, "paused");
 		sync_status_for_action(&service, self.input.conduit_id).await
 	}
 
@@ -377,6 +383,7 @@ impl LibraryAction for ResumeSyncAction {
 			.set_enabled(self.input.conduit_id, true)
 			.await
 			.map_err(to_action_error)?;
+		emit_conduit_changed(&library, self.input.conduit_id, "resumed");
 		sync_status_for_action(&service, self.input.conduit_id).await
 	}
 
@@ -662,6 +669,14 @@ fn generation_response(generation: sync_generation::Model) -> SyncGenerationResp
 		verified_at: generation.verified_at,
 		verification_status: generation.verification_status,
 	}
+}
+
+fn emit_conduit_changed(library: &Library, conduit_id: i32, change_type: &str) {
+	library.event_bus().emit(Event::FileSyncConduitChanged {
+		library_id: library.id(),
+		conduit_id,
+		change_type: change_type.to_string(),
+	});
 }
 
 fn to_action_error(error: anyhow::Error) -> ActionError {

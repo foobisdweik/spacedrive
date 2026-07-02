@@ -3,6 +3,7 @@ use crate::{
 	domain::addressing::{SdPath, SdPathBatch},
 	infra::{
 		db::entities::{sync_conduit, sync_generation},
+		event::Event,
 		job::types::JobId,
 	},
 	library::Library,
@@ -52,9 +53,11 @@ struct SyncOperation {
 
 	/// Jobs for source → target direction
 	source_to_target: JobBatch,
+	source_to_target_delete_ops: DirectionalOps,
 
 	/// Jobs for target → source direction (only for bidirectional mode)
 	target_to_source: Option<JobBatch>,
+	target_to_source_delete_ops: Option<DirectionalOps>,
 }
 
 impl FileSyncService {
@@ -168,10 +171,13 @@ impl FileSyncService {
 		// If there's nothing to sync, mark as complete immediately
 		if copy_count == 0 && delete_count == 0 && operations.conflicts.is_empty() {
 			info!("No changes to sync for conduit {}", conduit_id);
+			let generation = conduit.sync_generation + 1;
+			self.emit_file_sync_started(conduit_id, generation);
 			self.conduit_manager.update_after_sync(conduit_id).await?;
+			self.emit_file_sync_completed(conduit_id, generation);
 			return Ok(SyncHandle {
 				conduit_id,
-				generation: conduit.sync_generation + 1,
+				generation,
 				source_to_target: JobBatch {
 					copy_job_id: None,
 					delete_job_id: None,
@@ -185,6 +191,7 @@ impl FileSyncService {
 			.conduit_manager
 			.create_generation(conduit_id, conduit.sync_generation + 1, conflicts_resolved)
 			.await?;
+		self.emit_file_sync_started(conduit_id, generation.generation);
 
 		// Dispatch source → target jobs
 		let source_to_target = self
@@ -208,10 +215,13 @@ impl FileSyncService {
 			generation_id: generation.id,
 			started_at: chrono::Utc::now(),
 			source_to_target: source_to_target.clone(),
+			source_to_target_delete_ops: operations.source_to_target.clone(),
 			target_to_source: target_to_source.clone(),
+			target_to_source_delete_ops: operations.target_to_source.clone(),
 		};
 
 		self.active_syncs.write().await.insert(conduit_id, sync_op);
+		self.emit_file_sync_progress(conduit_id, generation.generation, "queued");
 
 		// Start monitoring background task
 		let service = self.clone();
@@ -229,7 +239,8 @@ impl FileSyncService {
 		})
 	}
 
-	/// Dispatch copy and delete jobs for a single direction
+	/// Dispatch copy jobs for a single direction. Delete jobs are dispatched by
+	/// the monitor after all copy jobs complete.
 	async fn dispatch_job_batch(
 		&self,
 		_conduit: &sync_conduit::Model,
@@ -274,40 +285,69 @@ impl FileSyncService {
 			None
 		};
 
-		let delete_job_id = if !operations.to_delete.is_empty() {
-			info!(
-				"{}: Dispatching delete job for {} files",
-				direction,
-				operations.to_delete.len()
-			);
-
-			let device_slug = crate::device::get_current_device_slug();
-
-			let paths: Vec<SdPath> = operations
-				.to_delete
-				.iter()
-				.map(|e| e.to_sdpath(device_slug.clone()))
-				.collect();
-
-			let mut job = DeleteJob::new(SdPathBatch::new(paths), DeleteMode::Permanent);
-			job.confirm_permanent = true; // File sync requires confirmation
-
-			let handle = jobs.dispatch(job).await?;
-			Some(handle.id())
-		} else {
-			None
-		};
-
 		Ok(JobBatch {
 			copy_job_id,
-			delete_job_id,
+			delete_job_id: None,
 		})
+	}
+
+	async fn dispatch_delete_job(
+		&self,
+		operations: &DirectionalOps,
+		direction: &str,
+	) -> Result<Option<JobId>> {
+		if operations.to_delete.is_empty() {
+			return Ok(None);
+		}
+
+		info!(
+			"{}: Dispatching delete job for {} files after copy completion",
+			direction,
+			operations.to_delete.len()
+		);
+
+		let device_slug = crate::device::get_current_device_slug();
+		let paths: Vec<SdPath> = operations
+			.to_delete
+			.iter()
+			.map(|e| e.to_sdpath(device_slug.clone()))
+			.collect();
+
+		let mut job = DeleteJob::new(SdPathBatch::new(paths), DeleteMode::Permanent);
+		job.confirm_permanent = true;
+
+		let handle = self.library.jobs().dispatch(job).await?;
+		Ok(Some(handle.id()))
+	}
+
+	async fn record_sync_failure(&self, conduit_id: i32, message: String) -> Result<()> {
+		let generation = self
+			.active_syncs
+			.read()
+			.await
+			.get(&conduit_id)
+			.map(|sync| sync.generation);
+		let result = self
+			.conduit_manager
+			.record_sync_error(conduit_id, message.clone())
+			.await;
+		self.active_syncs.write().await.remove(&conduit_id);
+		self.emit_file_sync_failed(conduit_id, generation, message);
+		result?;
+		Ok(())
 	}
 
 	/// Monitor sync operation and update state when complete
 	async fn monitor_sync_internal(&self, conduit_id: i32) -> Result<()> {
 		// Get job batches
-		let (source_to_target, target_to_source, generation_id) = {
+		let (
+			source_to_target,
+			target_to_source,
+			source_to_target_delete_ops,
+			target_to_source_delete_ops,
+			generation,
+			generation_id,
+		) = {
 			let syncs = self.active_syncs.read().await;
 			let sync = syncs
 				.get(&conduit_id)
@@ -315,11 +355,15 @@ impl FileSyncService {
 			(
 				sync.source_to_target.clone(),
 				sync.target_to_source.clone(),
+				sync.source_to_target_delete_ops.clone(),
+				sync.target_to_source_delete_ops.clone(),
+				sync.generation,
 				sync.generation_id,
 			)
 		};
 
 		// Phase 1: Wait for all copy jobs to complete
+		self.emit_file_sync_progress(conduit_id, generation, "copying");
 		info!(
 			"Waiting for copy jobs to complete for conduit {}",
 			conduit_id
@@ -339,47 +383,113 @@ impl FileSyncService {
 			if let Some(handle) = self.library.jobs().get_job(job_id).await {
 				if let Err(err) = handle.wait().await {
 					error!("Copy job {} failed: {}", job_id, err);
-					self.conduit_manager
-						.record_sync_error(conduit_id, format!("Copy job failed: {}", err))
+					self.record_sync_failure(conduit_id, format!("Copy job failed: {}", err))
 						.await?;
 					return Err(anyhow::anyhow!("Copy job failed: {}", err));
+				}
+			} else {
+				let message = format!("Copy job {} not found", job_id);
+				error!("{}", message);
+				self.record_sync_failure(conduit_id, message.clone())
+					.await?;
+				return Err(anyhow::anyhow!(message));
+			}
+		}
+
+		// Phase 2: Dispatch and wait for all delete jobs after copies have completed.
+		self.emit_file_sync_progress(conduit_id, generation, "deleting");
+		let source_delete_job_id = match self
+			.dispatch_delete_job(&source_to_target_delete_ops, "source → target")
+			.await
+		{
+			Ok(job_id) => job_id,
+			Err(err) => {
+				self.record_sync_failure(
+					conduit_id,
+					format!("Failed to dispatch source → target delete job: {}", err),
+				)
+				.await?;
+				return Err(err);
+			}
+		};
+		let target_delete_job_id = if let Some(ops) = &target_to_source_delete_ops {
+			match self.dispatch_delete_job(ops, "target → source").await {
+				Ok(job_id) => job_id,
+				Err(err) => {
+					self.record_sync_failure(
+						conduit_id,
+						format!("Failed to dispatch target → source delete job: {}", err),
+					)
+					.await?;
+					return Err(err);
+				}
+			}
+		} else {
+			None
+		};
+
+		{
+			let mut syncs = self.active_syncs.write().await;
+			if let Some(sync) = syncs.get_mut(&conduit_id) {
+				sync.source_to_target.delete_job_id = source_delete_job_id;
+				if let Some(target_to_source) = sync.target_to_source.as_mut() {
+					target_to_source.delete_job_id = target_delete_job_id;
 				}
 			}
 		}
 
-		// Phase 2: Wait for all delete jobs to complete (after copies)
 		info!(
 			"Waiting for delete jobs to complete for conduit {}",
 			conduit_id
 		);
 
 		let mut delete_job_ids = Vec::new();
-		if let Some(id) = source_to_target.delete_job_id {
+		if let Some(id) = source_delete_job_id {
 			delete_job_ids.push(id);
 		}
-		if let Some(ops) = &target_to_source {
-			if let Some(id) = ops.delete_job_id {
-				delete_job_ids.push(id);
-			}
+		if let Some(id) = target_delete_job_id {
+			delete_job_ids.push(id);
 		}
 
 		for job_id in delete_job_ids {
 			if let Some(handle) = self.library.jobs().get_job(job_id).await {
 				if let Err(err) = handle.wait().await {
 					error!("Delete job {} failed: {}", job_id, err);
-					self.conduit_manager
-						.record_sync_error(conduit_id, format!("Delete job failed: {}", err))
+					self.record_sync_failure(conduit_id, format!("Delete job failed: {}", err))
 						.await?;
 					return Err(anyhow::anyhow!("Delete job failed: {}", err));
 				}
+			} else {
+				let message = format!("Delete job {} not found", job_id);
+				error!("{}", message);
+				self.record_sync_failure(conduit_id, message.clone())
+					.await?;
+				return Err(anyhow::anyhow!(message));
 			}
 		}
 
 		// Phase 3: Mark sync as complete
-		self.conduit_manager
+		self.emit_file_sync_progress(conduit_id, generation, "finalizing");
+		if let Err(err) = self
+			.conduit_manager
 			.complete_generation(generation_id)
+			.await
+		{
+			self.record_sync_failure(
+				conduit_id,
+				format!("Failed to complete generation: {}", err),
+			)
 			.await?;
-		self.conduit_manager.update_after_sync(conduit_id).await?;
+			return Err(err);
+		}
+		if let Err(err) = self.conduit_manager.update_after_sync(conduit_id).await {
+			self.record_sync_failure(
+				conduit_id,
+				format!("Failed to update conduit after sync: {}", err),
+			)
+			.await?;
+			return Err(err);
+		}
 
 		info!(
 			"Sync operations completed for conduit {}, starting verification",
@@ -387,12 +497,23 @@ impl FileSyncService {
 		);
 
 		// Phase 4: Verification (simplified for MVP)
-		self.conduit_manager
+		self.emit_file_sync_progress(conduit_id, generation, "verifying");
+		if let Err(err) = self
+			.conduit_manager
 			.update_verification_status(generation_id, "verified")
+			.await
+		{
+			self.record_sync_failure(
+				conduit_id,
+				format!("Failed to update verification status: {}", err),
+			)
 			.await?;
+			return Err(err);
+		}
 
 		// Remove from active syncs
 		self.active_syncs.write().await.remove(&conduit_id);
+		self.emit_file_sync_completed(conduit_id, generation);
 
 		info!(
 			"Sync fully completed and verified for conduit {}",
@@ -410,6 +531,40 @@ impl FileSyncService {
 	/// Get the conduit manager
 	pub fn conduit_manager(&self) -> &Arc<ConduitManager> {
 		&self.conduit_manager
+	}
+
+	fn emit_file_sync_started(&self, conduit_id: i32, generation: i64) {
+		self.library.event_bus().emit(Event::FileSyncStarted {
+			library_id: self.library.id(),
+			conduit_id,
+			generation,
+		});
+	}
+
+	fn emit_file_sync_progress(&self, conduit_id: i32, generation: i64, phase: &str) {
+		self.library.event_bus().emit(Event::FileSyncProgress {
+			library_id: self.library.id(),
+			conduit_id,
+			generation,
+			phase: phase.to_string(),
+		});
+	}
+
+	fn emit_file_sync_completed(&self, conduit_id: i32, generation: i64) {
+		self.library.event_bus().emit(Event::FileSyncCompleted {
+			library_id: self.library.id(),
+			conduit_id,
+			generation,
+		});
+	}
+
+	fn emit_file_sync_failed(&self, conduit_id: i32, generation: Option<i64>, error: String) {
+		self.library.event_bus().emit(Event::FileSyncFailed {
+			library_id: self.library.id(),
+			conduit_id,
+			generation,
+			error,
+		});
 	}
 }
 

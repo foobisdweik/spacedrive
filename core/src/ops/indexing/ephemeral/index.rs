@@ -856,6 +856,94 @@ impl Default for EphemeralIndex {
 	}
 }
 
+#[cfg(test)]
+mod tests {
+	use std::{
+		collections::HashMap,
+		path::{Path, PathBuf},
+		sync::Mutex,
+		time::SystemTime,
+	};
+
+	use async_trait::async_trait;
+	use uuid::Uuid;
+
+	use super::*;
+	use crate::{filetype::FileTypeRegistry, ops::indexing::reconciliation::PersistentUuidLookup};
+
+	fn file_metadata() -> EntryMetadata {
+		EntryMetadata {
+			path: PathBuf::from("image.jpg"),
+			kind: EntryKind::File,
+			size: 12,
+			modified: Some(SystemTime::UNIX_EPOCH),
+			accessed: None,
+			created: Some(SystemTime::UNIX_EPOCH),
+			inode: None,
+			permissions: None,
+			is_hidden: false,
+		}
+	}
+
+	#[test]
+	fn reconcile_persistent_uuids_replaces_existing_ephemeral_uuid() {
+		let mut index = EphemeralIndex::new().expect("failed to create index");
+		let path = PathBuf::from("/library/photos/image.jpg");
+		let ephemeral_uuid = Uuid::new_v4();
+		let persistent_uuid = Uuid::new_v4();
+
+		index
+			.add_entry(path.clone(), ephemeral_uuid, file_metadata())
+			.expect("failed to add entry");
+
+		let count =
+			index.reconcile_persistent_uuids(&HashMap::from([(path.clone(), persistent_uuid)]));
+
+		assert_eq!(count, 1);
+		assert_eq!(index.get_entry_uuid(&path), Some(persistent_uuid));
+	}
+
+	struct TestPersistentLookup {
+		uuids: HashMap<PathBuf, Uuid>,
+		calls: Mutex<usize>,
+	}
+
+	#[async_trait]
+	impl PersistentUuidLookup for TestPersistentLookup {
+		async fn lookup_uuid(&self, path: &Path) -> Option<Uuid> {
+			*self.calls.lock().expect("lock poisoned") += 1;
+			self.uuids.get(path).copied()
+		}
+	}
+
+	#[tokio::test]
+	async fn get_or_resolve_uuid_uses_persistent_lookup_and_caches_result() {
+		let mut index = EphemeralIndex::new().expect("failed to create index");
+		let registry = FileTypeRegistry::default();
+		let path = PathBuf::from("/volume/photos/raw.nef");
+		let persistent_uuid = Uuid::new_v4();
+		let lookup = TestPersistentLookup {
+			uuids: HashMap::from([(path.clone(), persistent_uuid)]),
+			calls: Mutex::new(0),
+		};
+
+		index
+			.add_entry_with_registry(path.clone(), None, file_metadata(), &registry)
+			.expect("failed to add entry without uuid");
+
+		assert_eq!(
+			index.get_or_resolve_uuid(&path, Some(&lookup)).await,
+			Some(persistent_uuid)
+		);
+		assert_eq!(index.get_entry_uuid(&path), Some(persistent_uuid));
+		assert_eq!(
+			index.get_or_resolve_uuid(&path, Some(&lookup)).await,
+			Some(persistent_uuid)
+		);
+		assert_eq!(*lookup.calls.lock().expect("lock poisoned"), 1);
+	}
+}
+
 /// Statistics about an ephemeral index
 #[derive(Debug, Clone)]
 pub struct EphemeralIndexStats {

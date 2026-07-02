@@ -1295,4 +1295,19 @@ mod tests {
 		let background_job = IndexerJob::new(background_config);
 		assert!(!background_job.should_update_persistent_location_record());
 	}
+
+	#[test]
+	fn complete_scan_config_is_ephemeral_recursive_and_disables_rules() {
+		let config = IndexerJobConfig::complete_scan(test_path(), IndexScope::Recursive);
+
+		assert_eq!(config.persistence, IndexPersistence::Ephemeral);
+		assert_eq!(config.scope, IndexScope::Recursive);
+		assert!(!config.is_volume_indexing);
+		assert!(!config.rule_toggles.no_system_files);
+		assert!(!config.rule_toggles.no_hidden);
+		assert!(!config.rule_toggles.no_git);
+		assert!(!config.rule_toggles.gitignore);
+		assert!(!config.rule_toggles.only_images);
+		assert!(!config.rule_toggles.no_dev_dirs);
+	}
 }
