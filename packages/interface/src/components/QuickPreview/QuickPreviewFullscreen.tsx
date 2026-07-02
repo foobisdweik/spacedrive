@@ -84,16 +84,20 @@ export function QuickPreviewFullscreen({
 			// keys — the Explorer's own arrow handlers don't run while the preview
 			// is open, so the keys did nothing. Handle them here directly.
 			if (e.code === "ArrowRight") {
-				e.preventDefault();
-				e.stopImmediatePropagation();
-				onNext?.();
+				if (hasNext) {
+					e.preventDefault();
+					e.stopImmediatePropagation();
+					onNext?.();
+				}
 				return;
 			}
 
 			if (e.code === "ArrowLeft") {
-				e.preventDefault();
-				e.stopImmediatePropagation();
-				onPrevious?.();
+				if (hasPrevious) {
+					e.preventDefault();
+					e.stopImmediatePropagation();
+					onPrevious?.();
+				}
 			}
 		};
 
@@ -102,7 +106,7 @@ export function QuickPreviewFullscreen({
 			window.removeEventListener("keydown", handleKeyDown, {
 				capture: true,
 			});
-	}, [isOpen, onClose, onNext, onPrevious]);
+	}, [isOpen, onClose, onNext, onPrevious, hasNext, hasPrevious]);
 
 	// Get background style based on content type
 	const getBackgroundClass = () => {

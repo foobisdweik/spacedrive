@@ -39,21 +39,31 @@ export const TextViewer = memo(
 					if (!response.body) return;
 					onLoad?.(new UIEvent('load', {}));
 
+					setLines([]);
 					const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-					// Accumulate decoded text across reads. Splitting each chunk in
-					// isolation (and replacing `lines` with it) dropped earlier
-					// content and mis-split lines that straddled a chunk boundary.
-					let buffer = '';
+					// Process chunks incrementally: carry the partial trailing line
+					// (`pendingLine`) across reads and append only newly-completed
+					// lines. Re-splitting an ever-growing buffer on every chunk was
+					// O(N^2) in time and reallocated the whole line array each read.
+					let pendingLine = '';
 					return reader.read().then(function ingestLines({
 						done,
 						value
 					}): void | Promise<void> {
-						if (done) return;
+						if (done) {
+							if (pendingLine) setLines((prev) => [...prev, pendingLine]);
+							return;
+						}
 
-						buffer += value;
-						setLines(buffer.split('\n'));
+						const chunks = value.split('\n');
+						chunks[0] = pendingLine + chunks[0];
+						pendingLine = chunks.pop() ?? '';
+						if (chunks.length > 0) setLines((prev) => [...prev, ...chunks]);
 
-						if (isSidebarPreview) return;
+						if (isSidebarPreview) {
+							if (pendingLine) setLines((prev) => [...prev, pendingLine]);
+							return;
+						}
 
 						return reader.read().then(ingestLines);
 					});
