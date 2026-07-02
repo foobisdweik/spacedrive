@@ -7,6 +7,7 @@
 @import '@spacedrive/tokens/css/themes/slate';
 @import '@spacedrive/tokens/css/themes/nord';
 @import '@spacedrive/tokens/css/themes/mocha';
+@import '../../../packages/interface/src/oled-theme.css';
 
 /* Tell Tailwind v4 where to scan for utility classes */
 @source "../../../packages/ui/src";

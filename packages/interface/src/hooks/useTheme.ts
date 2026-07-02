@@ -1,37 +1,43 @@
-import { useEffect } from 'react';
-import { useCoreQuery, useSpacedriveClient } from '../contexts/SpacedriveContext';
+import {useEffect} from 'react';
+import {useCoreQuery, useSpacedriveClient} from '../contexts/SpacedriveContext';
 
 const THEME_CLASS_MAP: Record<string, string> = {
 	light: 'vanilla-theme',
 	dark: '', // default, no class needed
+	oled: 'oled-theme',
 	midnight: 'midnight-theme',
 	noir: 'noir-theme',
 	slate: 'slate-theme',
 	nord: 'nord-theme',
-	mocha: 'mocha-theme',
+	mocha: 'mocha-theme'
 };
+
+const THEME_CLASSES = [
+	'vanilla-theme',
+	'oled-theme',
+	'midnight-theme',
+	'noir-theme',
+	'slate-theme',
+	'nord-theme',
+	'mocha-theme'
+];
 
 export function applyTheme(theme: string) {
 	let resolvedTheme = theme;
 
 	// Handle system theme
 	if (theme === 'system') {
-		const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+		const prefersDark = window.matchMedia(
+			'(prefers-color-scheme: dark)'
+		).matches;
 		resolvedTheme = prefersDark ? 'dark' : 'light';
 	}
 
 	// Apply theme class to document
 	const themeClass = THEME_CLASS_MAP[resolvedTheme];
 
-	// Remove all theme classes
-	document.documentElement.classList.remove(
-		'vanilla-theme',
-		'midnight-theme',
-		'noir-theme',
-		'slate-theme',
-		'nord-theme',
-		'mocha-theme'
-	);
+	document.documentElement.classList.remove(...THEME_CLASSES);
+	document.documentElement.dataset.theme = resolvedTheme;
 
 	// Add the new theme class if it's not dark (dark is default)
 	if (themeClass) {
@@ -41,7 +47,10 @@ export function applyTheme(theme: string) {
 
 export function useTheme() {
 	const client = useSpacedriveClient();
-	const { data: config, refetch } = useCoreQuery({ type: 'config.app.get', input: null as any });
+	const {data: config, refetch} = useCoreQuery({
+		type: 'config.app.get',
+		input: null as any
+	});
 
 	// Apply theme on mount and when config changes
 	useEffect(() => {
@@ -59,7 +68,10 @@ export function useTheme() {
 
 		const handleEvent = (event: any) => {
 			if ('ConfigChanged' in event) {
-				console.log('[useTheme] Received ConfigChanged event:', event.ConfigChanged);
+				console.log(
+					'[useTheme] Received ConfigChanged event:',
+					event.ConfigChanged
+				);
 				const configEvent = event.ConfigChanged;
 				if (configEvent?.field === 'theme') {
 					// Refetch config to get the new theme value
@@ -79,7 +91,9 @@ export function useTheme() {
 		client.subscribeFiltered(filter, handleEvent).then((unsub) => {
 			console.log('[useTheme] ConfigChanged subscription created');
 			if (isCancelled) {
-				console.log('[useTheme] Subscription was cancelled during setup, cleaning up');
+				console.log(
+					'[useTheme] Subscription was cancelled during setup, cleaning up'
+				);
 				unsub();
 			} else {
 				unsubscribe = unsub;

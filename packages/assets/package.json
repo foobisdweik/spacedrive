@@ -30,7 +30,8 @@
 		"types.d.ts"
 	],
 	"scripts": {
-		"gen": "node ./scripts/generate.mjs"
+		"gen": "node ./scripts/generate.mjs",
+		"gen:oled": "node ./scripts/generate-oled.mjs"
 	},
 	"dependencies": {
 		"react": "^19.0.0"

@@ -1,41 +1,32 @@
-import type { File } from "@sd/ts-client";
-import { getContentKind } from "@sd/ts-client";
-import { File as FileComponent } from "../../routes/explorer/File";
-import { formatBytes } from "../../routes/explorer/utils";
-import { usePlatform } from "../../contexts/PlatformContext";
-import { useServer } from "../../contexts/ServerContext";
 import {
-	useState,
-	useEffect,
-	useRef,
-	useCallback,
-	lazy,
-	Suspense,
-} from "react";
-import {
-	MagnifyingGlassPlus,
-	MagnifyingGlassMinus,
 	ArrowCounterClockwise,
 	Cube,
-} from "@phosphor-icons/react";
-import { VideoPlayer } from "./VideoPlayer";
-import type {
-	VideoControlsState,
-	VideoControlsCallbacks,
-} from "./VideoControls";
-import { AudioPlayer } from "./AudioPlayer";
-import { useZoomPan } from "./useZoomPan";
-import { TextViewer } from "./TextViewer";
-import { WithPrismTheme } from "./prism";
-import { sounds } from "@sd/assets/sounds";
-import { CircleButton } from "@spacedrive/primitives";
-import { DirectoryPreview } from "./DirectoryPreview";
+	MagnifyingGlassMinus,
+	MagnifyingGlassPlus
+} from '@phosphor-icons/react';
+import {sounds} from '@sd/assets/sounds';
+import type {File} from '@sd/ts-client';
+import {getContentKind} from '@sd/ts-client';
+import {CircleButton} from '@spacedrive/primitives';
+import {lazy, Suspense, useCallback, useEffect, useRef, useState} from 'react';
+import {usePlatform} from '../../contexts/PlatformContext';
+import {useServer} from '../../contexts/ServerContext';
+import {useDisplayState} from '../../hooks/useDisplayAsset';
+import {File as FileComponent} from '../../routes/explorer/File';
+import {formatBytes} from '../../routes/explorer/utils';
+import {AudioPlayer} from './AudioPlayer';
+import {DirectoryPreview} from './DirectoryPreview';
+import {WithPrismTheme} from './prism';
+import {TextViewer} from './TextViewer';
+import {useZoomPan} from './useZoomPan';
+import type {VideoControlsCallbacks, VideoControlsState} from './VideoControls';
+import {VideoPlayer} from './VideoPlayer';
 
 const MeshViewer = lazy(() =>
-	import("./MeshViewer").then((m) => ({ default: m.MeshViewer })),
+	import('./MeshViewer').then((m) => ({default: m.MeshViewer}))
 );
 const MeshViewerUI = lazy(() =>
-	import("./MeshViewer").then((m) => ({ default: m.MeshViewerUI })),
+	import('./MeshViewer').then((m) => ({default: m.MeshViewerUI}))
 );
 
 interface ContentRendererProps {
@@ -46,17 +37,19 @@ interface ContentRendererProps {
 	getVideoCallbacks?: (callbacks: VideoControlsCallbacks) => void;
 }
 
-function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
+function ImageRenderer({file, onZoomChange}: ContentRendererProps) {
 	const platform = usePlatform();
-	const { buildSidecarUrl } = useServer();
+	const {buildSidecarUrl} = useServer();
+	const {oled, hdr} = useDisplayState();
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [originalLoaded, setOriginalLoaded] = useState(false);
 	const [originalUrl, setOriginalUrl] = useState<string | null>(null);
 	const [shouldLoadOriginal, setShouldLoadOriginal] = useState(false);
 	const [showSplat, setShowSplat] = useState(false);
 	const [splatLoaded, setSplatLoaded] = useState(false);
-	const { zoom, zoomIn, zoomOut, reset, isZoomed, transform } =
-		useZoomPan(containerRef as React.RefObject<HTMLElement>);
+	const {zoom, zoomIn, zoomOut, reset, isZoomed, transform} = useZoomPan(
+		containerRef as React.RefObject<HTMLElement>
+	);
 
 	// Track MeshViewer controls state
 	const [meshControls, setMeshControls] = useState<{
@@ -71,15 +64,21 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 		swayAmount: 0.25,
 		swaySpeed: 0.5,
 		cameraDistance: 0.5,
-		isGaussianSplat: false,
+		isGaussianSplat: false
 	});
 
 	// Get a stable identifier for the image file itself
 	const imageFileId = file.content_identity?.uuid || file.id;
+	const extension =
+		file.extension?.toLowerCase() ||
+		file.name.split('.').pop()?.toLowerCase();
+	const isHdrCandidate = extension
+		? ['avif', 'heic', 'heif', 'jxl', 'exr', 'hdr'].includes(extension)
+		: false;
 
 	// Check if Gaussian splat sidecar exists and get URL
 	const splatSidecar = file.sidecars?.find(
-		(s) => s.kind === "gaussian_splat" && s.format === "ply",
+		(s) => s.kind === 'gaussian_splat' && s.format === 'ply'
 	);
 	const hasSplat = !!splatSidecar;
 
@@ -90,7 +89,7 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 					file.content_identity.uuid,
 					splatSidecar!.kind,
 					splatSidecar!.variant,
-					splatSidecar!.format,
+					splatSidecar!.format
 				)
 			: null;
 
@@ -107,12 +106,15 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 		setShowSplat(false);
 		setSplatLoaded(false);
 
-		const timer = setTimeout(() => {
-			setShouldLoadOriginal(true);
-		}, 50);
+		const timer = setTimeout(
+			() => {
+				setShouldLoadOriginal(true);
+			},
+			isHdrCandidate ? 0 : 50
+		);
 
 		return () => clearTimeout(timer);
-	}, [imageFileId]);
+	}, [imageFileId, isHdrCandidate]);
 
 	useEffect(() => {
 		if (!shouldLoadOriginal || !platform.convertFileSrc) {
@@ -124,18 +126,18 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 
 		if (!physicalPath) {
 			console.log(
-				"[ImageRenderer] No physical path available, sd_path:",
-				file.sd_path,
+				'[ImageRenderer] No physical path available, sd_path:',
+				file.sd_path
 			);
 			return;
 		}
 
 		const url = platform.convertFileSrc(physicalPath);
 		console.log(
-			"[ImageRenderer] Loading original from:",
+			'[ImageRenderer] Loading original from:',
 			physicalPath,
-			"-> URL:",
-			url,
+			'-> URL:',
+			url
 		);
 		setOriginalUrl(url);
 	}, [shouldLoadOriginal, imageFileId, file.sd_path, platform]);
@@ -143,15 +145,15 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 	// Get highest resolution thumbnail first
 	const getHighestResThumbnail = () => {
 		const thumbnails =
-			file.sidecars?.filter((s) => s.kind === "thumb") || [];
+			file.sidecars?.filter((s) => s.kind === 'thumb') || [];
 		if (thumbnails.length === 0) return null;
 
 		const highest = thumbnails.sort((a, b) => {
 			const aSize = parseInt(
-				a.variant.split("x")[0]?.replace(/\D/g, "") || "0",
+				a.variant.split('x')[0]?.replace(/\D/g, '') || '0'
 			);
 			const bSize = parseInt(
-				b.variant.split("x")[0]?.replace(/\D/g, "") || "0",
+				b.variant.split('x')[0]?.replace(/\D/g, '') || '0'
 			);
 			return bSize - aSize;
 		})[0];
@@ -163,16 +165,17 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 			contentUuid,
 			highest.kind,
 			highest.variant,
-			highest.format,
+			highest.format
 		);
 	};
 
 	const thumbnailUrl = getHighestResThumbnail();
+	const showThumbnail = thumbnailUrl && !(isHdrCandidate && originalLoaded);
 
 	// Stable callback to prevent re-renders that would reinitialize MeshViewer
 	const handleSplatLoaded = useCallback(() => {
 		console.log(
-			"[ImageRenderer] Splat is fully visible, hiding image overlay",
+			'[ImageRenderer] Splat is fully visible, hiding image overlay'
 		);
 		setSplatLoaded(true);
 		sounds.splat();
@@ -192,12 +195,12 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 				{/* Fullscreen canvas layer */}
 				<Suspense
 					fallback={
-						<div className="relative w-full h-full z-10 pointer-events-none bg-black flex items-center justify-center">
-							{thumbnailUrl && (
+						<div className="pointer-events-none relative z-10 flex h-full w-full items-center justify-center bg-black">
+							{showThumbnail && (
 								<img
 									src={thumbnailUrl}
 									alt={file.name}
-									className="w-full h-full object-contain"
+									className="h-full w-full object-contain"
 									draggable={false}
 								/>
 							)}
@@ -205,9 +208,9 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 								<img
 									src={originalUrl}
 									alt={file.name}
-									className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
+									className="absolute inset-0 h-full w-full object-contain transition-opacity duration-300"
 									style={{
-										opacity: originalLoaded ? 1 : 0,
+										opacity: originalLoaded ? 1 : 0
 									}}
 									draggable={false}
 								/>
@@ -229,13 +232,13 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 
 				{/* Image overlay - shown during splat loading, fades out when loaded */}
 				{!splatLoaded && (
-					<div className="relative w-full h-full z-10 pointer-events-none bg-black flex items-center justify-center">
+					<div className="pointer-events-none relative z-10 flex h-full w-full items-center justify-center bg-black">
 						{/* Thumbnail (always available) */}
-						{thumbnailUrl && (
+						{showThumbnail && (
 							<img
 								src={thumbnailUrl}
 								alt={file.name}
-								className="w-full h-full object-contain"
+								className="h-full w-full object-contain"
 								draggable={false}
 							/>
 						)}
@@ -244,8 +247,8 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 							<img
 								src={originalUrl}
 								alt={file.name}
-								className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
-								style={{ opacity: originalLoaded ? 1 : 0 }}
+								className="absolute inset-0 h-full w-full object-contain transition-opacity duration-300"
+								style={{opacity: originalLoaded ? 1 : 0}}
 								draggable={false}
 							/>
 						)}
@@ -253,9 +256,9 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 				)}
 
 				{/* Safe area UI overlay */}
-				<div className="relative w-full h-full z-30 pointer-events-none">
+				<div className="pointer-events-none relative z-30 h-full w-full">
 					{/* Toggle button */}
-					<div className="absolute top-4 left-4 pointer-events-auto">
+					<div className="pointer-events-auto absolute left-4 top-4">
 						<CircleButton
 							icon={Cube}
 							onClick={() => {
@@ -275,25 +278,25 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 							setAutoRotate={(v) =>
 								setMeshControls((c) => ({
 									...c,
-									autoRotate: v,
+									autoRotate: v
 								}))
 							}
 							swayAmount={meshControls.swayAmount}
 							setSwayAmount={(v) =>
 								setMeshControls((c) => ({
 									...c,
-									swayAmount: v,
+									swayAmount: v
 								}))
 							}
 							swaySpeed={meshControls.swaySpeed}
 							setSwaySpeed={(v) =>
-								setMeshControls((c) => ({ ...c, swaySpeed: v }))
+								setMeshControls((c) => ({...c, swaySpeed: v}))
 							}
 							cameraDistance={meshControls.cameraDistance}
 							setCameraDistance={(v) =>
 								setMeshControls((c) => ({
 									...c,
-									cameraDistance: v,
+									cameraDistance: v
 								}))
 							}
 							isGaussianSplat={meshControls.isGaussianSplat}
@@ -309,14 +312,15 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 	return (
 		<div
 			ref={containerRef}
-			className={`relative w-full h-full flex items-center justify-center ${isZoomed ? "overflow-visible" : "overflow-hidden"}`}
+			className={`relative flex h-full w-full items-center justify-center ${oled || isHdrCandidate ? 'bg-black' : ''} ${isZoomed ? 'overflow-visible' : 'overflow-hidden'}`}
+			data-hdr-preview={isHdrCandidate && hdr ? 'true' : undefined}
 		>
 			{/* Persistent shimmer - always ready */}
 			{persistentShimmer}
 
 			{/* Splat Toggle (top-left) */}
 			{hasSplat && (
-				<div className="absolute top-4 left-4 z-10">
+				<div className="absolute left-4 top-4 z-10">
 					<CircleButton
 						icon={Cube}
 						onClick={() => {
@@ -329,17 +333,17 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 			)}
 
 			{/* Zoom Controls */}
-			<div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+			<div className="absolute right-4 top-4 z-10 flex flex-col gap-2">
 				<button
 					onClick={zoomIn}
-					className="rounded-lg bg-app-box/80 p-2 text-ink backdrop-blur-xl transition-colors hover:bg-app-hover"
+					className="bg-app-box/80 text-ink hover:bg-app-hover rounded-lg p-2 backdrop-blur-xl transition-colors"
 					title="Zoom in (+)"
 				>
 					<MagnifyingGlassPlus size={20} weight="bold" />
 				</button>
 				<button
 					onClick={zoomOut}
-					className="rounded-lg bg-app-box/80 p-2 text-ink backdrop-blur-xl transition-colors hover:bg-app-hover"
+					className="bg-app-box/80 text-ink hover:bg-app-hover rounded-lg p-2 backdrop-blur-xl transition-colors"
 					title="Zoom out (-)"
 				>
 					<MagnifyingGlassMinus size={20} weight="bold" />
@@ -347,7 +351,7 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 				{zoom > 1 && (
 					<button
 						onClick={reset}
-						className="rounded-lg bg-app-box/80 p-2 text-ink backdrop-blur-xl transition-colors hover:bg-app-hover"
+						className="bg-app-box/80 text-ink hover:bg-app-hover rounded-lg p-2 backdrop-blur-xl transition-colors"
 						title="Reset zoom (0)"
 					>
 						<ArrowCounterClockwise size={20} weight="bold" />
@@ -357,22 +361,22 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 
 			{/* Zoom level indicator */}
 			{zoom > 1 && (
-				<div className="absolute top-4 left-4 z-10 rounded-lg bg-app-box/80 px-3 py-1.5 text-sm font-medium text-ink backdrop-blur-xl">
+				<div className="bg-app-box/80 text-ink absolute left-4 top-4 z-10 rounded-lg px-3 py-1.5 text-sm font-medium backdrop-blur-xl">
 					{Math.round(zoom * 100)}%
 				</div>
 			)}
 
 			{/* Image container with zoom/pan transform */}
 			<div
-				className="relative w-full h-full flex items-center justify-center"
+				className="relative flex h-full w-full items-center justify-center"
 				style={transform}
 			>
 				{/* High-res thumbnail (always rendered as background layer) */}
-				{thumbnailUrl && (
+				{showThumbnail && (
 					<img
 						src={thumbnailUrl}
 						alt={file.name}
-						className="w-full h-full object-contain"
+						className="h-full w-full object-contain"
 						draggable={false}
 					/>
 				)}
@@ -382,16 +386,16 @@ function ImageRenderer({ file, onZoomChange }: ContentRendererProps) {
 					<img
 						src={originalUrl}
 						alt={file.name}
-						className="absolute inset-0 w-full h-full object-contain"
+						className="absolute inset-0 h-full w-full object-contain"
 						style={{
 							opacity: originalLoaded ? 1 : 0,
-							transition: "opacity 0.3s",
+							transition: 'opacity 0.3s'
 						}}
 						onLoad={() => setOriginalLoaded(true)}
 						onError={(e) =>
 							console.error(
-								"[ImageRenderer] Original failed to load:",
-								e,
+								'[ImageRenderer] Original failed to load:',
+								e
 							)
 						}
 						draggable={false}
@@ -407,7 +411,7 @@ function VideoRenderer({
 	onZoomChange,
 	onVideoControlsStateChange,
 	onShowVideoControlsChange,
-	getVideoCallbacks,
+	getVideoCallbacks
 }: ContentRendererProps) {
 	const platform = usePlatform();
 	const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -437,27 +441,27 @@ function VideoRenderer({
 		const physicalPath = sdPath?.Physical?.path;
 
 		if (!physicalPath) {
-			console.log("[VideoRenderer] No physical path available");
+			console.log('[VideoRenderer] No physical path available');
 			return;
 		}
 
 		const url = platform.convertFileSrc(physicalPath);
 		console.log(
-			"[VideoRenderer] Loading video from:",
+			'[VideoRenderer] Loading video from:',
 			physicalPath,
-			"-> URL:",
-			url,
+			'-> URL:',
+			url
 		);
 		setVideoUrl(url);
 	}, [shouldLoadVideo, videoFileId, file.sd_path, platform]);
 
 	if (!videoUrl) {
 		return (
-			<div className="w-full h-full flex items-center justify-center">
+			<div className="flex h-full w-full items-center justify-center">
 				<FileComponent.Thumb
 					file={file}
 					size={800}
-					className="max-w-full max-h-full"
+					className="max-h-full max-w-full"
 				/>
 			</div>
 		);
@@ -475,7 +479,7 @@ function VideoRenderer({
 	);
 }
 
-function AudioRenderer({ file }: ContentRendererProps) {
+function AudioRenderer({file}: ContentRendererProps) {
 	const platform = usePlatform();
 	const [audioUrl, setAudioUrl] = useState<string | null>(null);
 	const [shouldLoadAudio, setShouldLoadAudio] = useState(false);
@@ -504,26 +508,26 @@ function AudioRenderer({ file }: ContentRendererProps) {
 		const physicalPath = sdPath?.Physical?.path;
 
 		if (!physicalPath) {
-			console.log("[AudioRenderer] No physical path available");
+			console.log('[AudioRenderer] No physical path available');
 			return;
 		}
 
 		const url = platform.convertFileSrc(physicalPath);
 		console.log(
-			"[AudioRenderer] Loading audio from:",
+			'[AudioRenderer] Loading audio from:',
 			physicalPath,
-			"-> URL:",
-			url,
+			'-> URL:',
+			url
 		);
 		setAudioUrl(url);
 	}, [shouldLoadAudio, audioFileId, file.sd_path, platform]);
 
 	if (!audioUrl) {
 		return (
-			<div className="w-full h-full flex items-center justify-center">
+			<div className="flex h-full w-full items-center justify-center">
 				<div className="text-center">
 					<FileComponent.Thumb file={file} size={200} />
-					<div className="mt-6 text-ink text-lg font-medium">
+					<div className="text-ink mt-6 text-lg font-medium">
 						{file.name}
 					</div>
 				</div>
@@ -534,18 +538,18 @@ function AudioRenderer({ file }: ContentRendererProps) {
 	return <AudioPlayer src={audioUrl} file={file} />;
 }
 
-function DocumentRenderer({ file }: ContentRendererProps) {
+function DocumentRenderer({file}: ContentRendererProps) {
 	return (
-		<div className="w-full h-full flex items-center justify-center">
+		<div className="flex h-full w-full items-center justify-center">
 			<div className="text-center">
 				<FileComponent.Thumb file={file} size={200} />
-				<div className="mt-6 text-ink text-lg font-medium">
+				<div className="text-ink mt-6 text-lg font-medium">
 					{file.name}
 				</div>
-				<div className="text-ink-dull text-sm mt-2 capitalize">
-					{getContentKind(file) ?? "unknown"}
+				<div className="text-ink-dull mt-2 text-sm capitalize">
+					{getContentKind(file) ?? 'unknown'}
 				</div>
-				<div className="text-ink-dull text-xs mt-1">
+				<div className="text-ink-dull mt-1 text-xs">
 					{formatBytes(file.size || 0)}
 				</div>
 			</div>
@@ -553,7 +557,7 @@ function DocumentRenderer({ file }: ContentRendererProps) {
 	);
 }
 
-function TextRenderer({ file }: ContentRendererProps) {
+function TextRenderer({file}: ContentRendererProps) {
 	const platform = usePlatform();
 	const [textUrl, setTextUrl] = useState<string | null>(null);
 	const [shouldLoadText, setShouldLoadText] = useState(false);
@@ -580,31 +584,31 @@ function TextRenderer({ file }: ContentRendererProps) {
 		const physicalPath = sdPath?.Physical?.path;
 
 		if (!physicalPath) {
-			console.log("[TextRenderer] No physical path available");
+			console.log('[TextRenderer] No physical path available');
 			return;
 		}
 
 		const url = platform.convertFileSrc(physicalPath);
 		console.log(
-			"[TextRenderer] Loading text from:",
+			'[TextRenderer] Loading text from:',
 			physicalPath,
-			"-> URL:",
-			url,
+			'-> URL:',
+			url
 		);
 		setTextUrl(url);
 	}, [shouldLoadText, textFileId, file.sd_path, platform]);
 
-	const extension = file.name.split(".").pop()?.toLowerCase();
+	const extension = file.name.split('.').pop()?.toLowerCase();
 
 	if (!textUrl) {
 		return (
-			<div className="w-full h-full flex items-center justify-center">
+			<div className="flex h-full w-full items-center justify-center">
 				<div className="text-center">
 					<FileComponent.Thumb file={file} size={120} />
-					<div className="mt-4 text-ink text-lg font-medium">
+					<div className="text-ink mt-4 text-lg font-medium">
 						{file.name}
 					</div>
-					<div className="text-ink-dull text-sm mt-2">Loading...</div>
+					<div className="text-ink-dull mt-2 text-sm">Loading...</div>
 				</div>
 			</div>
 		);
@@ -616,24 +620,24 @@ function TextRenderer({ file }: ContentRendererProps) {
 			<TextViewer
 				src={textUrl}
 				codeExtension={extension}
-				className="w-full h-full overflow-auto bg-app p-4 text-ink"
+				className="bg-app text-ink h-full w-full overflow-auto p-4"
 			/>
 		</>
 	);
 }
 
-function DefaultRenderer({ file }: ContentRendererProps) {
+function DefaultRenderer({file}: ContentRendererProps) {
 	return (
-		<div className="w-full h-full flex items-center justify-center">
+		<div className="flex h-full w-full items-center justify-center">
 			<div className="text-center">
 				<FileComponent.Thumb file={file} size={200} />
-				<div className="mt-6 text-ink text-lg font-medium">
+				<div className="text-ink mt-6 text-lg font-medium">
 					{file.name}
 				</div>
-				<div className="text-ink-dull text-sm mt-2 capitalize">
-					{getContentKind(file) ?? "unknown"}
+				<div className="text-ink-dull mt-2 text-sm capitalize">
+					{getContentKind(file) ?? 'unknown'}
 				</div>
-				<div className="text-ink-dull text-xs mt-1">
+				<div className="text-ink-dull mt-1 text-xs">
 					{formatBytes(file.size || 0)}
 				</div>
 			</div>
@@ -646,19 +650,19 @@ export function ContentRenderer({
 	onZoomChange,
 	onVideoControlsStateChange,
 	onShowVideoControlsChange,
-	getVideoCallbacks,
+	getVideoCallbacks
 }: ContentRendererProps) {
 	// Handle directories with grid preview of subdirectories
-	if (file.kind === "Directory") {
+	if (file.kind === 'Directory') {
 		return <DirectoryPreview file={file} />;
 	}
 
 	const kind = getContentKind(file);
 
 	switch (kind) {
-		case "image":
+		case 'image':
 			return <ImageRenderer file={file} onZoomChange={onZoomChange} />;
-		case "video":
+		case 'video':
 			return (
 				<VideoRenderer
 					file={file}
@@ -668,13 +672,13 @@ export function ContentRenderer({
 					getVideoCallbacks={getVideoCallbacks}
 				/>
 			);
-		case "audio":
+		case 'audio':
 			return <AudioRenderer file={file} />;
-		case "mesh":
+		case 'mesh':
 			return (
 				<Suspense
 					fallback={
-						<div className="w-full h-full flex items-center justify-center">
+						<div className="flex h-full w-full items-center justify-center">
 							<FileComponent.Thumb file={file} size={200} />
 						</div>
 					}
@@ -682,14 +686,14 @@ export function ContentRenderer({
 					<MeshViewer file={file} />
 				</Suspense>
 			);
-		case "document":
-		case "book":
-		case "spreadsheet":
-		case "presentation":
+		case 'document':
+		case 'book':
+		case 'spreadsheet':
+		case 'presentation':
 			return <DocumentRenderer file={file} />;
-		case "text":
-		case "code":
-		case "config":
+		case 'text':
+		case 'code':
+		case 'config':
 			return <TextRenderer file={file} />;
 		default:
 			return <DefaultRenderer file={file} />;

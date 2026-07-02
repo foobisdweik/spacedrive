@@ -4625,7 +4625,7 @@ telemetry_enabled?: boolean | null;
  */
 log_level?: string | null;
 /**
- * Theme preference (system, light, dark)
+ * Theme preference (system, light, dark, oled, or another named theme)
  */
 theme?: string | null;
 /**
