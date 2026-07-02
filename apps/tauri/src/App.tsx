@@ -12,6 +12,7 @@ import {
 	SpacedriveProvider,
 	ServerProvider,
 	JobsProvider,
+	ThemeApplier,
 } from "@sd/interface";
 import {
 	SpacebotProvider,
@@ -31,7 +32,7 @@ import {
 	useSyncPreferencesStore,
 } from "@sd/ts-client";
 import type { Event as CoreEvent } from "@sd/ts-client";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { DragOverlay } from "./routes/DragOverlay";
 import { ContextMenuWindow } from "./routes/ContextMenuWindow";
 import { DragDemo } from "./components/DragDemo";
@@ -56,6 +57,25 @@ function getInitialRoute() {
 	if (label.startsWith("voice-overlay")) return "/voice-overlay";
 
 	return "/";
+}
+
+function AppProviders({
+	client,
+	children,
+}: {
+	client: SpacedriveClient;
+	children: ReactNode;
+}) {
+	return (
+		<PlatformProvider platform={platform}>
+			<SpacedriveProvider client={client}>
+				<ServerProvider>
+					<ThemeApplier />
+					{children}
+				</ServerProvider>
+			</SpacedriveProvider>
+		</PlatformProvider>
+	);
 }
 
 function App() {
@@ -246,62 +266,46 @@ function App() {
 	// Route to different UIs based on window type
 	if (route === "/settings") {
 		return (
-			<PlatformProvider platform={platform}>
-				<SpacedriveProvider client={client}>
-					<ServerProvider>
-						<Settings />
-					</ServerProvider>
-				</SpacedriveProvider>
-			</PlatformProvider>
+			<AppProviders client={client}>
+				<Settings />
+			</AppProviders>
 		);
 	}
 
 	if (route === "/inspector") {
 		return (
-			<PlatformProvider platform={platform}>
-				<SpacedriveProvider client={client}>
-					<ServerProvider>
-						<JobsProvider>
-							<div className="h-screen bg-app overflow-hidden pt-[52px]">
-								{/* Drag region for macOS traffic lights area */}
-								<div
-									data-tauri-drag-region
-									className="absolute inset-x-0 top-0 h-[52px] z-50"
-								/>
-								<PopoutInspector />
-							</div>
-						</JobsProvider>
-					</ServerProvider>
-				</SpacedriveProvider>
-			</PlatformProvider>
+			<AppProviders client={client}>
+				<JobsProvider>
+					<div className="h-screen bg-app overflow-hidden pt-[52px]">
+						{/* Drag region for macOS traffic lights area */}
+						<div
+							data-tauri-drag-region
+							className="absolute inset-x-0 top-0 h-[52px] z-50"
+						/>
+						<PopoutInspector />
+					</div>
+				</JobsProvider>
+			</AppProviders>
 		);
 	}
 
 	if (route === "/quick-preview") {
 		return (
-			<PlatformProvider platform={platform}>
-				<SpacedriveProvider client={client}>
-					<ServerProvider>
-						<div className="h-screen bg-app overflow-hidden">
-							<QuickPreview />
-						</div>
-					</ServerProvider>
-				</SpacedriveProvider>
-			</PlatformProvider>
+			<AppProviders client={client}>
+				<div className="h-screen bg-app overflow-hidden">
+					<QuickPreview />
+				</div>
+			</AppProviders>
 		);
 	}
 
 	if (route === "/job-manager") {
 		return (
-			<PlatformProvider platform={platform}>
-				<SpacedriveProvider client={client}>
-					<ServerProvider>
-						<div className="h-screen bg-app overflow-hidden rounded-[10px] border border-transparent frame">
-							<JobsScreen />
-						</div>
-					</ServerProvider>
-				</SpacedriveProvider>
-			</PlatformProvider>
+			<AppProviders client={client}>
+				<div className="h-screen bg-app overflow-hidden rounded-[10px] border border-transparent frame">
+					<JobsScreen />
+				</div>
+			</AppProviders>
 		);
 	}
 
@@ -346,23 +350,19 @@ function App() {
 		);
 
 		return (
-			<PlatformProvider platform={platform}>
-				<SpacedriveProvider client={client}>
-					<ServerProvider>
-						<div className="h-screen overflow-hidden bg-app rounded-[10px] border border-transparent frame">
-							<RouterProvider router={spacebotRouter} />
-						</div>
-					</ServerProvider>
-				</SpacedriveProvider>
-			</PlatformProvider>
+			<AppProviders client={client}>
+				<div className="h-screen overflow-hidden bg-app rounded-[10px] border border-transparent frame">
+					<RouterProvider router={spacebotRouter} />
+				</div>
+			</AppProviders>
 		);
 	}
 
 	if (route === "/voice-overlay") {
 		return (
-			<PlatformProvider platform={platform}>
+			<AppProviders client={client}>
 				<VoiceOverlay />
-			</PlatformProvider>
+			</AppProviders>
 		);
 	}
 

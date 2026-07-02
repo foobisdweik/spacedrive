@@ -19,19 +19,20 @@ import { useTheme } from "./hooks/useTheme";
 
 interface ShellProps {
 	client: SpacedriveClient;
+	applyTheme?: boolean;
 }
 
-function ThemeApplier() {
+export function ThemeApplier() {
 	useTheme();
 	return null;
 }
 
-function ShellWithTabs() {
+function ShellWithTabs({ applyTheme = true }: { applyTheme?: boolean }) {
 	const { router } = useTabManager();
 
 	return (
 		<DndProvider>
-			<ThemeApplier />
+			{applyTheme && <ThemeApplier />}
 			<RouterProvider router={router} />
 		</DndProvider>
 	);
@@ -41,7 +42,7 @@ function ShellWithTabs() {
  * Tauri-specific wrapper that prevents Shell from rendering until daemon is connected.
  * This avoids the connection storm where hundreds of queries try to execute before daemon is ready.
  */
-function ShellWithDaemonCheck() {
+function ShellWithDaemonCheck({ applyTheme }: { applyTheme: boolean }) {
 	const daemonStatus = useDaemonStatus();
 	const { isConnected, isStarting } = daemonStatus;
 
@@ -52,7 +53,7 @@ function ShellWithDaemonCheck() {
 				<>
 					<TabManagerProvider routes={explorerRoutes}>
 						<TabKeyboardHandler />
-						<ShellWithTabs />
+						<ShellWithTabs applyTheme={applyTheme} />
 					</TabManagerProvider>
 					<Dialogs />
 					<Toaster />
@@ -76,7 +77,7 @@ function ShellWithDaemonCheck() {
 	);
 }
 
-export function Shell({ client }: ShellProps) {
+export function Shell({ client, applyTheme = true }: ShellProps) {
 	const platform = usePlatform();
 	const isTauri = platform.platform === "tauri";
 
@@ -86,13 +87,13 @@ export function Shell({ client }: ShellProps) {
 				<TooltipProvider>
 					{isTauri ? (
 						// Tauri: Wait for daemon connection before rendering content
-						<ShellWithDaemonCheck />
+						<ShellWithDaemonCheck applyTheme={applyTheme} />
 					) : (
 						// Web: Render immediately (daemon connection handled differently)
 						<>
 							<TabManagerProvider routes={explorerRoutes}>
 								<TabKeyboardHandler />
-								<ShellWithTabs />
+								<ShellWithTabs applyTheme={applyTheme} />
 							</TabManagerProvider>
 							<Dialogs />
 							<Toaster />
