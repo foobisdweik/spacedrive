@@ -55,15 +55,29 @@ function physicalPath(path: SdPath | null | undefined): string | null {
 	return path && 'Physical' in path ? path.Physical.path : null;
 }
 
+function comparablePhysicalPath(
+	path: SdPath | null | undefined
+): string | null {
+	const value = physicalPath(path);
+	return value?.replace(/\\/g, '/').replace(/\/+$/, '') ?? null;
+}
+
 function physicalParent(path: SdPath | null | undefined): SdPath | null {
 	if (!path || !('Physical' in path)) return null;
-	const normalized = path.Physical.path.replace(/\/+$/, '');
-	const index = normalized.lastIndexOf('/');
+	const normalized = path.Physical.path.replace(/[\\/]+$/, '');
+	const index = Math.max(
+		normalized.lastIndexOf('/'),
+		normalized.lastIndexOf('\\')
+	);
 	if (index <= 0) return path;
+	const parent =
+		normalized[1] === ':' && index === 2
+			? normalized.slice(0, index + 1)
+			: normalized.slice(0, index);
 	return {
 		Physical: {
 			device_slug: path.Physical.device_slug,
-			path: normalized.slice(0, index)
+			path: parent
 		}
 	};
 }
@@ -72,7 +86,7 @@ function samePhysicalPath(
 	left: SdPath | null | undefined,
 	right: SdPath | null | undefined
 ): boolean {
-	return physicalPath(left) === physicalPath(right);
+	return comparablePhysicalPath(left) === comparablePhysicalPath(right);
 }
 
 function statusTone(conduit: SyncConduitResponse): string {
@@ -333,25 +347,31 @@ export function SyncMonitorRoute() {
 		}
 
 		setFormError(null);
-		const conduit = await createConduit.mutateAsync({
-			source_entry_id: source,
-			target_entry_id: target,
-			sync_mode: syncMode,
-			schedule
-		});
-		await updateConduit.mutateAsync({
-			conduit_id: conduit.id,
-			sync_mode: null,
-			enabled: null,
-			schedule: null,
-			use_index_rules: useIndexRules,
-			index_mode_override: null,
-			parallel_transfers: null,
-			bandwidth_limit_mbps: null
-		});
-		setSelectedConduitId(conduit.id);
-		setSourceEntryId('');
-		setTargetEntryId('');
+		try {
+			const conduit = await createConduit.mutateAsync({
+				source_entry_id: source,
+				target_entry_id: target,
+				sync_mode: syncMode,
+				schedule
+			});
+			await updateConduit.mutateAsync({
+				conduit_id: conduit.id,
+				sync_mode: null,
+				enabled: null,
+				schedule: null,
+				use_index_rules: useIndexRules,
+				index_mode_override: null,
+				parallel_transfers: null,
+				bandwidth_limit_mbps: null
+			});
+			setSelectedConduitId(conduit.id);
+			setSourceEntryId('');
+			setTargetEntryId('');
+		} catch (err) {
+			setFormError(
+				err instanceof Error ? err.message : 'Failed to create conduit'
+			);
+		}
 	};
 
 	const handleCreatePickedConduit = async () => {
@@ -369,27 +389,33 @@ export function SyncMonitorRoute() {
 		}
 
 		setTargetPickerError(null);
-		const conduit = await createConduit.mutateAsync({
-			source_entry_id: source,
-			target_entry_id: target,
-			sync_mode: syncMode,
-			schedule
-		});
-		await updateConduit.mutateAsync({
-			conduit_id: conduit.id,
-			sync_mode: null,
-			enabled: null,
-			schedule: null,
-			use_index_rules: useIndexRules,
-			index_mode_override: null,
-			parallel_transfers: null,
-			bandwidth_limit_mbps: null
-		});
-		setSelectedConduitId(conduit.id);
-		const next = new URLSearchParams(searchParams);
-		next.delete('source');
-		next.delete('sourceName');
-		setSearchParams(next, {replace: true});
+		try {
+			const conduit = await createConduit.mutateAsync({
+				source_entry_id: source,
+				target_entry_id: target,
+				sync_mode: syncMode,
+				schedule
+			});
+			await updateConduit.mutateAsync({
+				conduit_id: conduit.id,
+				sync_mode: null,
+				enabled: null,
+				schedule: null,
+				use_index_rules: useIndexRules,
+				index_mode_override: null,
+				parallel_transfers: null,
+				bandwidth_limit_mbps: null
+			});
+			setSelectedConduitId(conduit.id);
+			const next = new URLSearchParams(searchParams);
+			next.delete('source');
+			next.delete('sourceName');
+			setSearchParams(next, {replace: true});
+		} catch (err) {
+			setTargetPickerError(
+				err instanceof Error ? err.message : 'Failed to create conduit'
+			);
+		}
 	};
 
 	const handleToggleEnabled = (conduit: SyncConduitResponse) => {

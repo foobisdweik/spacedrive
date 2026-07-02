@@ -331,7 +331,7 @@ impl FileSyncService {
 			.conduit_manager
 			.record_sync_error(conduit_id, message.clone())
 			.await;
-		self.active_syncs.write().await.remove(&conduit_id);
+		let _ = self.cancel_sync(conduit_id).await;
 		self.emit_file_sync_failed(conduit_id, generation, message);
 		result?;
 		Ok(())
