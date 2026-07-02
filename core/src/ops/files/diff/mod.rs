@@ -1,9 +1,16 @@
 use crate::{
 	context::CoreContext,
-	domain::{addressing::SdPath, content_identity::ContentHashGenerator},
+	domain::{
+		addressing::{SdPath, SdPathBatch},
+		content_identity::ContentHashGenerator,
+	},
 	infra::query::{LibraryQuery, QueryError, QueryResult},
-	ops::indexing::{
-		database_storage::EntryMetadata, state::EntryKind, IndexScope, IndexerJob, IndexerJobConfig,
+	ops::{
+		files::copy::input::{CopyMethod, FileCopyInput},
+		indexing::{
+			database_storage::EntryMetadata, state::EntryKind, IndexScope, IndexerJob,
+			IndexerJobConfig,
+		},
 	},
 };
 use chrono::{DateTime, Utc};
@@ -60,6 +67,40 @@ pub struct PathDiffResult {
 	pub matched_count: usize,
 	pub copy_size: u64,
 	pub total_scanned: usize,
+}
+
+impl PathDiffResult {
+	/// Build a copy input for entries that exist only in the source tree.
+	pub fn missing_copy_input(&self, destination: SdPath) -> FileCopyInput {
+		let mut entries = self.only_in_source.iter().collect::<Vec<_>>();
+		entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+
+		let mut selected_parent: Option<PathBuf> = None;
+		let mut sources = Vec::new();
+
+		for entry in entries {
+			if selected_parent
+				.as_ref()
+				.is_some_and(|parent| entry.relative_path.starts_with(parent))
+			{
+				continue;
+			}
+
+			selected_parent = Some(entry.relative_path.clone());
+			sources.push(entry.sd_path.clone());
+		}
+
+		FileCopyInput {
+			sources: SdPathBatch { paths: sources },
+			destination,
+			overwrite: false,
+			verify_checksum: false,
+			preserve_timestamps: true,
+			move_files: false,
+			copy_method: CopyMethod::Auto,
+			on_conflict: None,
+		}
+	}
 }
 
 pub struct PathDiffQuery {
@@ -651,5 +692,42 @@ mod tests {
 		assert_eq!(result.matched_count, 1);
 		assert!(result.only_in_source.is_empty());
 		assert!(result.only_in_target.is_empty());
+	}
+
+	#[test]
+	fn missing_copy_input_uses_only_source_entries() {
+		let result = PathDiffResult {
+			only_in_source: vec![entry("missing.txt", 10, 1)],
+			modified: vec![entry("changed.txt", 20, 2)],
+			..Default::default()
+		};
+
+		let input = result.missing_copy_input(SdPath::local("/target"));
+
+		assert_eq!(input.sources.paths.len(), 1);
+		assert_eq!(input.sources.paths[0], SdPath::local("/source/missing.txt"));
+		assert_eq!(input.destination, SdPath::local("/target"));
+	}
+
+	#[test]
+	fn missing_copy_input_skips_children_when_parent_is_selected() {
+		let result = PathDiffResult {
+			only_in_source: vec![
+				entry("photos", 0, 1),
+				entry("photos/image.jpg", 10, 1),
+				entry("z.txt", 1, 1),
+			],
+			..Default::default()
+		};
+
+		let input = result.missing_copy_input(SdPath::local("/target"));
+
+		assert_eq!(
+			input.sources.paths,
+			vec![
+				SdPath::local("/source/photos"),
+				SdPath::local("/source/z.txt")
+			]
+		);
 	}
 }

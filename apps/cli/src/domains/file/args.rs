@@ -1,9 +1,12 @@
-use clap::Args;
+use clap::{Args, ValueEnum};
 use std::path::PathBuf;
 
 use sd_core::{
 	domain::addressing::{SdPath, SdPathBatch},
-	ops::files::copy::input::{CopyMethod, FileCopyInput},
+	ops::files::{
+		copy::input::{CopyMethod, FileCopyInput},
+		diff::{DiffStrategy, PathDiffInput},
+	},
 };
 
 #[derive(Args, Debug, Clone)]
@@ -53,6 +56,59 @@ impl From<FileCopyArgs> for FileCopyInput {
 			move_files: args.move_files,
 			copy_method: args.method,
 			on_conflict: None,
+		}
+	}
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct FileDiffArgs {
+	/// Source directory to compare
+	pub source: PathBuf,
+
+	/// Target directory to compare against
+	pub target: PathBuf,
+
+	/// Comparison strategy to use
+	#[arg(long, value_enum, default_value_t = CliDiffStrategy::Heuristic)]
+	pub strategy: CliDiffStrategy,
+
+	/// Include normally filtered files such as node_modules, .git, and hidden files
+	#[arg(long, default_value_t = false)]
+	pub no_rules: bool,
+
+	/// Copy files that are missing from the target
+	#[arg(long, default_value_t = false)]
+	pub copy: bool,
+
+	/// Overwrite destination conflicts when used with --copy
+	#[arg(long, default_value_t = false)]
+	pub overwrite: bool,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum CliDiffStrategy {
+	Heuristic,
+	Content,
+	Hybrid,
+}
+
+impl From<CliDiffStrategy> for DiffStrategy {
+	fn from(strategy: CliDiffStrategy) -> Self {
+		match strategy {
+			CliDiffStrategy::Heuristic => DiffStrategy::Heuristic,
+			CliDiffStrategy::Content => DiffStrategy::Content,
+			CliDiffStrategy::Hybrid => DiffStrategy::Hybrid,
+		}
+	}
+}
+
+impl From<&FileDiffArgs> for PathDiffInput {
+	fn from(args: &FileDiffArgs) -> Self {
+		Self {
+			source: SdPath::local(args.source.clone()),
+			target: SdPath::local(args.target.clone()),
+			strategy: args.strategy.into(),
+			use_index_rules: !args.no_rules,
 		}
 	}
 }

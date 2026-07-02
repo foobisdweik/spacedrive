@@ -300,6 +300,33 @@ pub enum Event {
 		message: String,
 		timestamp: String,
 	},
+	FileSyncConduitChanged {
+		library_id: Uuid,
+		conduit_id: i32,
+		change_type: String,
+	},
+	FileSyncStarted {
+		library_id: Uuid,
+		conduit_id: i32,
+		generation: i64,
+	},
+	FileSyncProgress {
+		library_id: Uuid,
+		conduit_id: i32,
+		generation: i64,
+		phase: String,
+	},
+	FileSyncCompleted {
+		library_id: Uuid,
+		conduit_id: i32,
+		generation: i64,
+	},
+	FileSyncFailed {
+		library_id: Uuid,
+		conduit_id: i32,
+		generation: Option<i64>,
+		error: String,
+	},
 
 	// Generic resource events (normalized cache)
 	// Works for ALL resources: Location, Tag, Album, File, etc.
@@ -939,6 +966,11 @@ impl EventFilter for Event {
 				| Event::SyncActivity { .. }
 				| Event::SyncConnectionChanged { .. }
 				| Event::SyncError { .. }
+				| Event::FileSyncConduitChanged { .. }
+				| Event::FileSyncStarted { .. }
+				| Event::FileSyncProgress { .. }
+				| Event::FileSyncCompleted { .. }
+				| Event::FileSyncFailed { .. }
 		)
 	}
 
@@ -989,6 +1021,21 @@ impl EventFilter for Event {
 				library_id: lid, ..
 			}
 			| Event::SyncError {
+				library_id: lid, ..
+			}
+			| Event::FileSyncConduitChanged {
+				library_id: lid, ..
+			}
+			| Event::FileSyncStarted {
+				library_id: lid, ..
+			}
+			| Event::FileSyncProgress {
+				library_id: lid, ..
+			}
+			| Event::FileSyncCompleted {
+				library_id: lid, ..
+			}
+			| Event::FileSyncFailed {
 				library_id: lid, ..
 			} => *lid == library_id,
 			_ => false,

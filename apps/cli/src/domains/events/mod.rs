@@ -330,6 +330,60 @@ fn summarize_event(event: &Event) -> String {
 			format!("Indexing failed for location {}: {}", location_id, error)
 		}
 
+		// File sync events
+		Event::FileSyncConduitChanged {
+			conduit_id,
+			change_type,
+			..
+		} => {
+			format!("File sync conduit {} changed: {}", conduit_id, change_type)
+		}
+		Event::FileSyncStarted {
+			conduit_id,
+			generation,
+			..
+		} => {
+			format!(
+				"File sync started for conduit {} generation {}",
+				conduit_id, generation
+			)
+		}
+		Event::FileSyncProgress {
+			conduit_id,
+			generation,
+			phase,
+			..
+		} => {
+			format!(
+				"File sync progress for conduit {} generation {}: {}",
+				conduit_id, generation, phase
+			)
+		}
+		Event::FileSyncCompleted {
+			conduit_id,
+			generation,
+			..
+		} => {
+			format!(
+				"File sync completed for conduit {} generation {}",
+				conduit_id, generation
+			)
+		}
+		Event::FileSyncFailed {
+			conduit_id,
+			generation,
+			error,
+			..
+		} => {
+			let generation = generation
+				.map(|value| format!(" generation {}", value))
+				.unwrap_or_default();
+			format!(
+				"File sync failed for conduit {}{}: {}",
+				conduit_id, generation, error
+			)
+		}
+
 		// Device events
 		Event::DeviceConnected {
 			device_id,

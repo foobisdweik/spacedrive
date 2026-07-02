@@ -1,4 +1,5 @@
 import {
+	ArrowsClockwise,
 	ArrowSquareOut,
 	Copy,
 	Crop,
@@ -25,6 +26,7 @@ import {
 import type {File, SdPath} from '@sd/ts-client';
 import {getContentKind, isVirtualFile} from '@sd/ts-client';
 import {toast} from '@spacedrive/primitives';
+import {useNavigate} from 'react-router-dom';
 import {useFileOperationDialog} from '../../../components/modals/FileOperationModal';
 import {usePlatform} from '../../../contexts/PlatformContext';
 import {useLibraryMutation} from '../../../contexts/SpacedriveContext';
@@ -48,6 +50,7 @@ export function useFileContextMenu({
 	selected
 }: UseFileContextMenuProps) {
 	const {navigateToPath, currentPath, mode} = useExplorer();
+	const navigate = useNavigate();
 	const platform = usePlatform();
 	const refetchTagQueries = useRefetchTagQueries();
 
@@ -223,6 +226,24 @@ export function useFileContextMenu({
 					physicalPaths.length > 0 && !!platform.shareFiles
 			},
 			{type: 'separator'},
+			{
+				icon: ArrowsClockwise,
+				label: 'Sync to...',
+				onClick: () => {
+					if (!file) return;
+					const params = new URLSearchParams({
+						source: file.id,
+						sourceName: file.name
+					});
+					navigate(`/sync?${params.toString()}`);
+				},
+				condition: () =>
+					!!file &&
+					file.kind === 'Directory' &&
+					'Physical' in file.sd_path &&
+					!hasVirtualFiles &&
+					(!selected || selectedFiles.length <= 1)
+			},
 			{
 				icon: Pencil,
 				label: 'Rename',

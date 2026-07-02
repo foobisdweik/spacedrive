@@ -8,8 +8,8 @@ use crate::format_bytes;
 use crate::util::prelude::*;
 
 use crate::context::Context;
+use crate::context::OutputFormat;
 use sd_core::infra::job::types::JobId;
-use sd_core::infra::query::LibraryQuery;
 
 use self::args::*;
 
@@ -17,6 +17,8 @@ use self::args::*;
 pub enum FileCmd {
 	/// Copy files
 	Copy(FileCopyArgs),
+	/// Compare two directories and show files missing or changed in the target
+	Diff(FileDiffArgs),
 	/// Get file information
 	Info(FileInfoArgs),
 	/// List directory contents
@@ -36,6 +38,9 @@ pub async fn run(ctx: &Context, cmd: FileCmd) -> Result<()> {
 			print_output!(ctx, &job_id, |id: &JobId| {
 				println!("Dispatched copy job {}", id);
 			});
+		}
+		FileCmd::Diff(args) => {
+			run_diff(ctx, args).await?;
 		}
 		FileCmd::Info(args) => {
 			let file_info = get_file_info(ctx, &args.path).await?;
@@ -103,6 +108,88 @@ pub async fn run(ctx: &Context, cmd: FileCmd) -> Result<()> {
 			);
 		}
 	}
+	Ok(())
+}
+
+async fn run_diff(ctx: &Context, args: FileDiffArgs) -> Result<()> {
+	use sd_core::domain::addressing::SdPath;
+	use sd_core::ops::files::diff::{DiffEntry, PathDiffInput, PathDiffResult};
+
+	let input = PathDiffInput::from(&args);
+	let diff: PathDiffResult = execute_query!(ctx, input);
+	let copy_job = if args.copy && !diff.only_in_source.is_empty() {
+		let mut copy_input = diff.missing_copy_input(SdPath::local(args.target.clone()));
+		copy_input.overwrite = args.overwrite;
+		Some(run_copy_with_confirmation(ctx, copy_input).await?)
+	} else {
+		None
+	};
+
+	match ctx.format {
+		OutputFormat::Human => {
+			print_diff_summary(&diff);
+
+			if args.copy {
+				if let Some(job_id) = copy_job {
+					println!();
+					println!("Dispatched copy job {}", job_id);
+				} else {
+					println!();
+					println!("No missing files to copy.");
+				}
+			}
+		}
+		OutputFormat::Json => {
+			if args.copy {
+				let output = serde_json::json!({
+					"diff": diff,
+					"copy_job": copy_job,
+				});
+				crate::util::output::print_json(&output);
+			} else {
+				crate::util::output::print_json(&diff);
+			}
+		}
+	}
+
+	fn add_diff_rows(table: &mut comfy_table::Table, status: &str, entries: &[DiffEntry]) {
+		for entry in entries {
+			table.add_row(vec![
+				status.to_string(),
+				entry.relative_path.display().to_string(),
+				format_bytes(entry.size),
+			]);
+		}
+	}
+
+	fn print_diff_summary(diff: &PathDiffResult) {
+		println!("Scanned {} entries", diff.total_scanned);
+		println!("Matched: {}", diff.matched_count);
+		println!("Only in source: {}", diff.only_in_source.len());
+		println!("Modified: {}", diff.modified.len());
+		println!("Only in target: {}", diff.only_in_target.len());
+		println!("Copy candidate size: {}", format_bytes(diff.copy_size));
+
+		if diff.only_in_source.is_empty()
+			&& diff.modified.is_empty()
+			&& diff.only_in_target.is_empty()
+		{
+			println!();
+			println!("No differences found.");
+			return;
+		}
+
+		let mut table = comfy_table::Table::new();
+		table.load_preset(UTF8_BORDERS_ONLY);
+		table.set_header(vec!["Status", "Path", "Size"]);
+		add_diff_rows(&mut table, "Missing", &diff.only_in_source);
+		add_diff_rows(&mut table, "Modified", &diff.modified);
+		add_diff_rows(&mut table, "Extra", &diff.only_in_target);
+
+		println!();
+		println!("{}", table);
+	}
+
 	Ok(())
 }
 
