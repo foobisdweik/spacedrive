@@ -24,7 +24,7 @@ pub struct UpdateAppConfigInput {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub log_level: Option<String>,
 
-	/// Theme preference (system, light, dark)
+	/// Theme preference (system, light, dark, oled, or another named theme)
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub theme: Option<String>,
 
@@ -142,7 +142,7 @@ impl CoreAction for UpdateAppConfigAction {
 		// Validate theme
 		if let Some(ref theme) = self.input.theme {
 			let valid_themes = [
-				"system", "light", "dark", "midnight", "noir", "slate", "nord", "mocha",
+				"system", "light", "dark", "oled", "midnight", "noir", "slate", "nord", "mocha",
 			];
 			if !valid_themes.contains(&theme.to_lowercase().as_str()) {
 				return Err(ActionError::Validation {

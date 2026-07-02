@@ -17,6 +17,7 @@ import {
 import {ReactQueryDevtools} from '@tanstack/react-query-devtools';
 import {useEffect, useState} from 'react';
 import {Outlet, useLocation, useNavigate} from 'react-router-dom';
+import {useDisplayAsset} from '../hooks/useDisplayAsset';
 import {
 	agents,
 	isMacOS,
@@ -24,6 +25,26 @@ import {
 	projects,
 	useSpacebot
 } from './SpacebotContext';
+
+function ProjectBall({
+	sources,
+	name
+}: {
+	sources: (typeof projects)[number]['ball'];
+	name: string;
+}) {
+	const src = useDisplayAsset(sources);
+
+	return (
+		<img
+			src={src}
+			alt=""
+			title={name}
+			className="size-7 shrink-0 object-contain"
+			draggable={false}
+		/>
+	);
+}
 
 function SidebarHistoryItem({
 	conversation,
@@ -74,7 +95,9 @@ function SidebarHistory() {
 	if (conversationsError) {
 		return (
 			<div className="px-3 py-2 text-xs">
-				<div className="text-red-400">Could not load conversations.</div>
+				<div className="text-red-400">
+					Could not load conversations.
+				</div>
 				<div className="text-sidebar-inkDull mt-1 break-words font-mono text-[10px] leading-relaxed">
 					{conversationsError.message}
 				</div>
@@ -308,11 +331,9 @@ export function SpacebotLayout() {
 										key={project.name}
 										className="hover:bg-sidebar-box flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors"
 									>
-										<img
-											src={project.ball}
-											alt=""
-											className="size-7 shrink-0 object-contain"
-											draggable={false}
+										<ProjectBall
+											sources={project.ball}
+											name={project.name}
 										/>
 										<div>
 											<div className="text-sidebar-ink text-sm font-medium">

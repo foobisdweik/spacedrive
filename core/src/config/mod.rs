@@ -41,7 +41,7 @@ pub fn default_data_dir() -> Result<PathBuf> {
 /// User preferences
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Preferences {
-	pub theme: String,    // "light", "dark", "system"
+	pub theme: String,    // "system", "light", "dark", or a named theme
 	pub language: String, // ISO 639-1 code
 }
 

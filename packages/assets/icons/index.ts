@@ -3,400 +3,1188 @@
  * To regenerate this file, run: pnpm assets gen
  */
 
+import Album_Light_OLED_HDR from './Album_Light_OLED_HDR.avif';
+import Album_Light_OLED from './Album_Light_OLED.png';
 import Album_Light from './Album_Light.png';
+import Album_OLED_HDR from './Album_OLED_HDR.avif';
+import Album_OLED from './Album_OLED.png';
+import Album20_OLED_HDR from './Album-20_OLED_HDR.avif';
+import Album20_OLED from './Album-20_OLED.png';
 import Album20 from './Album-20.png';
 import Album from './Album.png';
+import Alias_Light_OLED_HDR from './Alias_Light_OLED_HDR.avif';
+import Alias_Light_OLED from './Alias_Light_OLED.png';
 import Alias_Light from './Alias_Light.png';
+import Alias_OLED_HDR from './Alias_OLED_HDR.avif';
+import Alias_OLED from './Alias_OLED.png';
+import Alias20_OLED_HDR from './Alias-20_OLED_HDR.avif';
+import Alias20_OLED from './Alias-20_OLED.png';
 import Alias20 from './Alias-20.png';
 import Alias from './Alias.png';
+import AmazonS3_OLED_HDR from './AmazonS3_OLED_HDR.avif';
+import AmazonS3_OLED from './AmazonS3_OLED.png';
 import AmazonS3 from './AmazonS3.png';
+import AndroidPhotos_OLED_HDR from './AndroidPhotos_OLED_HDR.avif';
+import AndroidPhotos_OLED from './AndroidPhotos_OLED.png';
 import AndroidPhotos from './AndroidPhotos.png';
+import AppleFiles_OLED_HDR from './AppleFiles_OLED_HDR.avif';
+import AppleFiles_OLED from './AppleFiles_OLED.png';
 import AppleFiles from './AppleFiles.png';
+import ApplePhotos_OLED_HDR from './ApplePhotos_OLED_HDR.avif';
+import ApplePhotos_OLED from './ApplePhotos_OLED.png';
 import ApplePhotos from './ApplePhotos.png';
+import Application_Light_OLED_HDR from './Application_Light_OLED_HDR.avif';
+import Application_Light_OLED from './Application_Light_OLED.png';
 import Application_Light from './Application_Light.png';
+import Application_OLED_HDR from './Application_OLED_HDR.avif';
+import Application_OLED from './Application_OLED.png';
 import Application from './Application.png';
+import Archive_Light_OLED_HDR from './Archive_Light_OLED_HDR.avif';
+import Archive_Light_OLED from './Archive_Light_OLED.png';
 import Archive_Light from './Archive_Light.png';
+import Archive_OLED_HDR from './Archive_OLED_HDR.avif';
+import Archive_OLED from './Archive_OLED.png';
+import Archive20_OLED_HDR from './Archive-20_OLED_HDR.avif';
+import Archive20_OLED from './Archive-20_OLED.png';
 import Archive20 from './Archive-20.png';
 import Archive from './Archive.png';
+import Audio_Light_OLED_HDR from './Audio_Light_OLED_HDR.avif';
+import Audio_Light_OLED from './Audio_Light_OLED.png';
 import Audio_Light from './Audio_Light.png';
+import Audio_OLED_HDR from './Audio_OLED_HDR.avif';
+import Audio_OLED from './Audio_OLED.png';
+import Audio20_OLED_HDR from './Audio-20_OLED_HDR.avif';
+import Audio20_OLED from './Audio-20_OLED.png';
 import Audio20 from './Audio-20.png';
 import Audio from './Audio.png';
+import BackBlaze_OLED_HDR from './BackBlaze_OLED_HDR.avif';
+import BackBlaze_OLED from './BackBlaze_OLED.png';
 import BackBlaze from './BackBlaze.png';
+import Ball_OLED_HDR from './Ball_OLED_HDR.avif';
+import Ball_OLED from './Ball_OLED.png';
 import Ball from './Ball.png';
+import Book_Light_OLED_HDR from './Book_Light_OLED_HDR.avif';
+import Book_Light_OLED from './Book_Light_OLED.png';
 import Book_Light from './Book_Light.png';
+import Book_OLED_HDR from './Book_OLED_HDR.avif';
+import Book_OLED from './Book_OLED.png';
+import Book20_OLED_HDR from './Book-20_OLED_HDR.avif';
+import Book20_OLED from './Book-20_OLED.png';
 import Book20 from './Book-20.png';
 import Book from './Book.png';
+import BookBlue_OLED_HDR from './BookBlue_OLED_HDR.avif';
+import BookBlue_OLED from './BookBlue_OLED.png';
 import BookBlue from './BookBlue.png';
+import Box_OLED_HDR from './Box_OLED_HDR.avif';
+import Box_OLED from './Box_OLED.png';
 import Box from './Box.png';
+import CloudSync_Light_OLED_HDR from './CloudSync_Light_OLED_HDR.avif';
+import CloudSync_Light_OLED from './CloudSync_Light_OLED.png';
 import CloudSync_Light from './CloudSync_Light.png';
+import CloudSync_OLED_HDR from './CloudSync_OLED_HDR.avif';
+import CloudSync_OLED from './CloudSync_OLED.png';
 import CloudSync from './CloudSync.png';
+import Code20_OLED_HDR from './Code-20_OLED_HDR.avif';
+import Code20_OLED from './Code-20_OLED.png';
 import Code20 from './Code-20.png';
+import Collection_Light_OLED_HDR from './Collection_Light_OLED_HDR.avif';
+import Collection_Light_OLED from './Collection_Light_OLED.png';
 import Collection_Light from './Collection_Light.png';
+import Collection_OLED_HDR from './Collection_OLED_HDR.avif';
+import Collection_OLED from './Collection_OLED.png';
+import Collection20_OLED_HDR from './Collection-20_OLED_HDR.avif';
+import Collection20_OLED from './Collection-20_OLED.png';
 import Collection20 from './Collection-20.png';
 import Collection from './Collection.png';
+import CollectionSparkle_Light_OLED_HDR from './CollectionSparkle_Light_OLED_HDR.avif';
+import CollectionSparkle_Light_OLED from './CollectionSparkle_Light_OLED.png';
 import CollectionSparkle_Light from './CollectionSparkle_Light.png';
+import CollectionSparkle_OLED_HDR from './CollectionSparkle_OLED_HDR.avif';
+import CollectionSparkle_OLED from './CollectionSparkle_OLED.png';
 import CollectionSparkle from './CollectionSparkle.png';
+import Compute_OLED_HDR from './Compute_OLED_HDR.avif';
+import Compute_OLED from './Compute_OLED.png';
 import Compute from './Compute.png';
+import Config20_OLED_HDR from './Config-20_OLED_HDR.avif';
+import Config20_OLED from './Config-20_OLED.png';
 import Config20 from './Config-20.png';
+import Database_Light_OLED_HDR from './Database_Light_OLED_HDR.avif';
+import Database_Light_OLED from './Database_Light_OLED.png';
 import Database_Light from './Database_Light.png';
+import Database_OLED_HDR from './Database_OLED_HDR.avif';
+import Database_OLED from './Database_OLED.png';
+import Database20_OLED_HDR from './Database-20_OLED_HDR.avif';
+import Database20_OLED from './Database-20_OLED.png';
 import Database20 from './Database-20.png';
 import Database from './Database.png';
+import DAV_OLED_HDR from './DAV_OLED_HDR.avif';
+import DAV_OLED from './DAV_OLED.png';
 import DAV from './DAV.png';
+import DeleteLocation_OLED_HDR from './DeleteLocation_OLED_HDR.avif';
+import DeleteLocation_OLED from './DeleteLocation_OLED.png';
 import DeleteLocation from './DeleteLocation.png';
+import Devices_OLED_HDR from './Devices_OLED_HDR.avif';
+import Devices_OLED from './Devices_OLED.png';
 import Devices from './Devices.png';
+import Document_doc_Light_OLED_HDR from './Document_doc_Light_OLED_HDR.avif';
+import Document_doc_Light_OLED from './Document_doc_Light_OLED.png';
 import Document_doc_Light from './Document_doc_Light.png';
+import Document_doc_OLED_HDR from './Document_doc_OLED_HDR.avif';
+import Document_doc_OLED from './Document_doc_OLED.png';
 import Document_doc from './Document_doc.png';
+import Document_Light_OLED_HDR from './Document_Light_OLED_HDR.avif';
+import Document_Light_OLED from './Document_Light_OLED.png';
 import Document_Light from './Document_Light.png';
+import Document_memory_OLED_HDR from './Document_memory_OLED_HDR.avif';
+import Document_memory_OLED from './Document_memory_OLED.png';
 import Document_memory from './Document_memory.png';
+import Document_OLED_HDR from './Document_OLED_HDR.avif';
+import Document_OLED from './Document_OLED.png';
+import Document_pdf_Light_OLED_HDR from './Document_pdf_Light_OLED_HDR.avif';
+import Document_pdf_Light_OLED from './Document_pdf_Light_OLED.png';
 import Document_pdf_Light from './Document_pdf_Light.png';
+import Document_pdf_OLED_HDR from './Document_pdf_OLED_HDR.avif';
+import Document_pdf_OLED from './Document_pdf_OLED.png';
 import Document_pdf from './Document_pdf.png';
+import Document_srt_OLED_HDR from './Document_srt_OLED_HDR.avif';
+import Document_srt_OLED from './Document_srt_OLED.png';
 import Document_srt from './Document_srt.png';
+import Document_xls_Light_OLED_HDR from './Document_xls_Light_OLED_HDR.avif';
+import Document_xls_Light_OLED from './Document_xls_Light_OLED.png';
 import Document_xls_Light from './Document_xls_Light.png';
+import Document_xls_OLED_HDR from './Document_xls_OLED_HDR.avif';
+import Document_xls_OLED from './Document_xls_OLED.png';
 import Document_xls from './Document_xls.png';
+import Document_xmp_OLED_HDR from './Document_xmp_OLED_HDR.avif';
+import Document_xmp_OLED from './Document_xmp_OLED.png';
 import Document_xmp from './Document_xmp.png';
+import Document20_OLED_HDR from './Document-20_OLED_HDR.avif';
+import Document20_OLED from './Document-20_OLED.png';
 import Document20 from './Document-20.png';
 import Document from './Document.png';
+import Dotfile20_OLED_HDR from './Dotfile-20_OLED_HDR.avif';
+import Dotfile20_OLED from './Dotfile-20_OLED.png';
 import Dotfile20 from './Dotfile-20.png';
+import Drive_Light_OLED_HDR from './Drive_Light_OLED_HDR.avif';
+import Drive_Light_OLED from './Drive_Light_OLED.png';
 import Drive_Light from './Drive_Light.png';
+import Drive_OLED_HDR from './Drive_OLED_HDR.avif';
+import Drive_OLED from './Drive_OLED.png';
+import DriveAmazonS3_Light_OLED_HDR from './Drive-AmazonS3_Light_OLED_HDR.avif';
+import DriveAmazonS3_Light_OLED from './Drive-AmazonS3_Light_OLED.png';
 import DriveAmazonS3_Light from './Drive-AmazonS3_Light.png';
+import DriveAmazonS3_OLED_HDR from './Drive-AmazonS3_OLED_HDR.avif';
+import DriveAmazonS3_OLED from './Drive-AmazonS3_OLED.png';
 import DriveAmazonS3 from './Drive-AmazonS3.png';
+import DriveBackBlaze_Light_OLED_HDR from './Drive-BackBlaze_Light_OLED_HDR.avif';
+import DriveBackBlaze_Light_OLED from './Drive-BackBlaze_Light_OLED.png';
 import DriveBackBlaze_Light from './Drive-BackBlaze_Light.png';
+import DriveBackBlaze_OLED_HDR from './Drive-BackBlaze_OLED_HDR.avif';
+import DriveBackBlaze_OLED from './Drive-BackBlaze_OLED.png';
 import DriveBackBlaze from './Drive-BackBlaze.png';
+import Drivebox_Light_OLED_HDR from './Drive-box_Light_OLED_HDR.avif';
+import Drivebox_Light_OLED from './Drive-box_Light_OLED.png';
 import Drivebox_Light from './Drive-box_Light.png';
+import DriveBox_OLED_HDR from './Drive-Box_OLED_HDR.avif';
+import DriveBox_OLED from './Drive-Box_OLED.png';
 import DriveBox from './Drive-Box.png';
+import DriveDarker_OLED_HDR from './Drive-Darker_OLED_HDR.avif';
+import DriveDarker_OLED from './Drive-Darker_OLED.png';
 import DriveDarker from './Drive-Darker.png';
+import DriveDAV_Light_OLED_HDR from './Drive-DAV_Light_OLED_HDR.avif';
+import DriveDAV_Light_OLED from './Drive-DAV_Light_OLED.png';
 import DriveDAV_Light from './Drive-DAV_Light.png';
+import DriveDAV_OLED_HDR from './Drive-DAV_OLED_HDR.avif';
+import DriveDAV_OLED from './Drive-DAV_OLED.png';
 import DriveDAV from './Drive-DAV.png';
+import DriveDropbox_Light_OLED_HDR from './Drive-Dropbox_Light_OLED_HDR.avif';
+import DriveDropbox_Light_OLED from './Drive-Dropbox_Light_OLED.png';
 import DriveDropbox_Light from './Drive-Dropbox_Light.png';
+import DriveDropbox_OLED_HDR from './Drive-Dropbox_OLED_HDR.avif';
+import DriveDropbox_OLED from './Drive-Dropbox_OLED.png';
 import DriveDropbox from './Drive-Dropbox.png';
+import DriveGoogleDrive_Light_OLED_HDR from './Drive-GoogleDrive_Light_OLED_HDR.avif';
+import DriveGoogleDrive_Light_OLED from './Drive-GoogleDrive_Light_OLED.png';
 import DriveGoogleDrive_Light from './Drive-GoogleDrive_Light.png';
+import DriveGoogleDrive_OLED_HDR from './Drive-GoogleDrive_OLED_HDR.avif';
+import DriveGoogleDrive_OLED from './Drive-GoogleDrive_OLED.png';
 import DriveGoogleDrive from './Drive-GoogleDrive.png';
+import DriveMega_Light_OLED_HDR from './Drive-Mega_Light_OLED_HDR.avif';
+import DriveMega_Light_OLED from './Drive-Mega_Light_OLED.png';
 import DriveMega_Light from './Drive-Mega_Light.png';
+import DriveMega_OLED_HDR from './Drive-Mega_OLED_HDR.avif';
+import DriveMega_OLED from './Drive-Mega_OLED.png';
 import DriveMega from './Drive-Mega.png';
+import DriveOneDrive_Light_OLED_HDR from './Drive-OneDrive_Light_OLED_HDR.avif';
+import DriveOneDrive_Light_OLED from './Drive-OneDrive_Light_OLED.png';
 import DriveOneDrive_Light from './Drive-OneDrive_Light.png';
+import DriveOneDrive_OLED_HDR from './Drive-OneDrive_OLED_HDR.avif';
+import DriveOneDrive_OLED from './Drive-OneDrive_OLED.png';
 import DriveOneDrive from './Drive-OneDrive.png';
+import DriveOpenStack_Light_OLED_HDR from './Drive-OpenStack_Light_OLED_HDR.avif';
+import DriveOpenStack_Light_OLED from './Drive-OpenStack_Light_OLED.png';
 import DriveOpenStack_Light from './Drive-OpenStack_Light.png';
+import DriveOpenStack_OLED_HDR from './Drive-OpenStack_OLED_HDR.avif';
+import DriveOpenStack_OLED from './Drive-OpenStack_OLED.png';
 import DriveOpenStack from './Drive-OpenStack.png';
+import DrivePCloud_Light_OLED_HDR from './Drive-PCloud_Light_OLED_HDR.avif';
+import DrivePCloud_Light_OLED from './Drive-PCloud_Light_OLED.png';
 import DrivePCloud_Light from './Drive-PCloud_Light.png';
+import DrivePCloud_OLED_HDR from './Drive-PCloud_OLED_HDR.avif';
+import DrivePCloud_OLED from './Drive-PCloud_OLED.png';
 import DrivePCloud from './Drive-PCloud.png';
 import Drive from './Drive.png';
+import Dropbox_OLED_HDR from './Dropbox_OLED_HDR.avif';
+import Dropbox_OLED from './Dropbox_OLED.png';
 import Dropbox from './Dropbox.png';
+import Encrypted_Light_OLED_HDR from './Encrypted_Light_OLED_HDR.avif';
+import Encrypted_Light_OLED from './Encrypted_Light_OLED.png';
 import Encrypted_Light from './Encrypted_Light.png';
+import Encrypted_OLED_HDR from './Encrypted_OLED_HDR.avif';
+import Encrypted_OLED from './Encrypted_OLED.png';
+import Encrypted20_OLED_HDR from './Encrypted-20_OLED_HDR.avif';
+import Encrypted20_OLED from './Encrypted-20_OLED.png';
 import Encrypted20 from './Encrypted-20.png';
 import Encrypted from './Encrypted.png';
+import Entity_Light_OLED_HDR from './Entity_Light_OLED_HDR.avif';
+import Entity_Light_OLED from './Entity_Light_OLED.png';
 import Entity_Light from './Entity_Light.png';
+import Entity_OLED_HDR from './Entity_OLED_HDR.avif';
+import Entity_OLED from './Entity_OLED.png';
 import Entity from './Entity.png';
+import Executable_Light_old_OLED_HDR from './Executable_Light_old_OLED_HDR.avif';
+import Executable_Light_old_OLED from './Executable_Light_old_OLED.png';
 import Executable_Light_old from './Executable_Light_old.png';
+import Executable_Light_OLED_HDR from './Executable_Light_OLED_HDR.avif';
+import Executable_Light_OLED from './Executable_Light_OLED.png';
 import Executable_Light from './Executable_Light.png';
+import Executable_old_OLED_HDR from './Executable_old_OLED_HDR.avif';
+import Executable_old_OLED from './Executable_old_OLED.png';
 import Executable_old from './Executable_old.png';
+import Executable_OLED_HDR from './Executable_OLED_HDR.avif';
+import Executable_OLED from './Executable_OLED.png';
+import Executable20_OLED_HDR from './Executable-20_OLED_HDR.avif';
+import Executable20_OLED from './Executable-20_OLED.png';
 import Executable20 from './Executable-20.png';
 import Executable from './Executable.png';
+import Face_Light_OLED_HDR from './Face_Light_OLED_HDR.avif';
+import Face_Light_OLED from './Face_Light_OLED.png';
 import Face_Light from './Face_Light.png';
+import Folder_Light_OLED_HDR from './Folder_Light_OLED_HDR.avif';
+import Folder_Light_OLED from './Folder_Light_OLED.png';
 import Folder_Light from './Folder_Light.png';
+import Folder_OLED_HDR from './Folder_OLED_HDR.avif';
+import Folder_OLED from './Folder_OLED.png';
+import Folder20_OLED_HDR from './Folder-20_OLED_HDR.avif';
+import Folder20_OLED from './Folder-20_OLED.png';
 import Folder20 from './Folder-20.png';
+import Foldertagxmp_OLED_HDR from './Folder-tag-xmp_OLED_HDR.avif';
+import Foldertagxmp_OLED from './Folder-tag-xmp_OLED.png';
 import Foldertagxmp from './Folder-tag-xmp.png';
 import Folder from './Folder.png';
+import FolderGrey_Light_OLED_HDR from './FolderGrey_Light_OLED_HDR.avif';
+import FolderGrey_Light_OLED from './FolderGrey_Light_OLED.png';
 import FolderGrey_Light from './FolderGrey_Light.png';
+import FolderGrey_OLED_HDR from './FolderGrey_OLED_HDR.avif';
+import FolderGrey_OLED from './FolderGrey_OLED.png';
 import FolderGrey from './FolderGrey.png';
+import FolderNoSpace_Light_OLED_HDR from './FolderNoSpace_Light_OLED_HDR.avif';
+import FolderNoSpace_Light_OLED from './FolderNoSpace_Light_OLED.png';
 import FolderNoSpace_Light from './FolderNoSpace_Light.png';
+import FolderNoSpace_OLED_HDR from './FolderNoSpace_OLED_HDR.avif';
+import FolderNoSpace_OLED from './FolderNoSpace_OLED.png';
 import FolderNoSpace from './FolderNoSpace.png';
+import Font20_OLED_HDR from './Font-20_OLED_HDR.avif';
+import Font20_OLED from './Font-20_OLED.png';
 import Font20 from './Font-20.png';
+import Game_Light_OLED_HDR from './Game_Light_OLED_HDR.avif';
+import Game_Light_OLED from './Game_Light_OLED.png';
 import Game_Light from './Game_Light.png';
+import Game_OLED_HDR from './Game_OLED_HDR.avif';
+import Game_OLED from './Game_OLED.png';
 import Game from './Game.png';
+import Globe_Light_OLED_HDR from './Globe_Light_OLED_HDR.avif';
+import Globe_Light_OLED from './Globe_Light_OLED.png';
 import Globe_Light from './Globe_Light.png';
+import Globe_OLED_HDR from './Globe_OLED_HDR.avif';
+import Globe_OLED from './Globe_OLED.png';
 import Globe from './Globe.png';
+import GlobeAlt_OLED_HDR from './GlobeAlt_OLED_HDR.avif';
+import GlobeAlt_OLED from './GlobeAlt_OLED.png';
 import GlobeAlt from './GlobeAlt.png';
+import GoogleDrive_OLED_HDR from './GoogleDrive_OLED_HDR.avif';
+import GoogleDrive_OLED from './GoogleDrive_OLED.png';
 import GoogleDrive from './GoogleDrive.png';
+import HDD_Light_OLED_HDR from './HDD_Light_OLED_HDR.avif';
+import HDD_Light_OLED from './HDD_Light_OLED.png';
 import HDD_Light from './HDD_Light.png';
+import HDD_OLED_HDR from './HDD_OLED_HDR.avif';
+import HDD_OLED from './HDD_OLED.png';
 import HDD from './HDD.png';
+import Heart_Light_OLED_HDR from './Heart_Light_OLED_HDR.avif';
+import Heart_Light_OLED from './Heart_Light_OLED.png';
 import Heart_Light from './Heart_Light.png';
+import Heart_OLED_HDR from './Heart_OLED_HDR.avif';
+import Heart_OLED from './Heart_OLED.png';
 import Heart from './Heart.png';
+import Home_Light_OLED_HDR from './Home_Light_OLED_HDR.avif';
+import Home_Light_OLED from './Home_Light_OLED.png';
 import Home_Light from './Home_Light.png';
+import Home_OLED_HDR from './Home_OLED_HDR.avif';
+import Home_OLED from './Home_OLED.png';
 import Home from './Home.png';
+import Image_Light_OLED_HDR from './Image_Light_OLED_HDR.avif';
+import Image_Light_OLED from './Image_Light_OLED.png';
 import Image_Light from './Image_Light.png';
+import Image_OLED_HDR from './Image_OLED_HDR.avif';
+import Image_OLED from './Image_OLED.png';
+import Image20_OLED_HDR from './Image-20_OLED_HDR.avif';
+import Image20_OLED from './Image-20_OLED.png';
 import Image20 from './Image-20.png';
 import Image from './Image.png';
+import Indexed_OLED_HDR from './Indexed_OLED_HDR.avif';
+import Indexed_OLED from './Indexed_OLED.png';
 import Indexed from './Indexed.png';
+import Key_Light_OLED_HDR from './Key_Light_OLED_HDR.avif';
+import Key_Light_OLED from './Key_Light_OLED.png';
 import Key_Light from './Key_Light.png';
+import Key_OLED_HDR from './Key_OLED_HDR.avif';
+import Key_OLED from './Key_OLED.png';
+import Key20_OLED_HDR from './Key-20_OLED_HDR.avif';
+import Key20_OLED from './Key-20_OLED.png';
 import Key20 from './Key-20.png';
 import Key from './Key.png';
+import Keys_Light_OLED_HDR from './Keys_Light_OLED_HDR.avif';
+import Keys_Light_OLED from './Keys_Light_OLED.png';
 import Keys_Light from './Keys_Light.png';
+import Keys_OLED_HDR from './Keys_OLED_HDR.avif';
+import Keys_OLED from './Keys_OLED.png';
 import Keys from './Keys.png';
+import Laptop_Light_OLED_HDR from './Laptop_Light_OLED_HDR.avif';
+import Laptop_Light_OLED from './Laptop_Light_OLED.png';
 import Laptop_Light from './Laptop_Light.png';
+import Laptop_OLED_HDR from './Laptop_OLED_HDR.avif';
+import Laptop_OLED from './Laptop_OLED.png';
 import Laptop from './Laptop.png';
+import Link_Light_OLED_HDR from './Link_Light_OLED_HDR.avif';
+import Link_Light_OLED from './Link_Light_OLED.png';
 import Link_Light from './Link_Light.png';
+import Link_OLED_HDR from './Link_OLED_HDR.avif';
+import Link_OLED from './Link_OLED.png';
+import Link20_OLED_HDR from './Link-20_OLED_HDR.avif';
+import Link20_OLED from './Link-20_OLED.png';
 import Link20 from './Link-20.png';
 import Link from './Link.png';
+import Location_OLED_HDR from './Location_OLED_HDR.avif';
+import Location_OLED from './Location_OLED.png';
 import Location from './Location.png';
+import LocationManaged_OLED_HDR from './LocationManaged_OLED_HDR.avif';
+import LocationManaged_OLED from './LocationManaged_OLED.png';
 import LocationManaged from './LocationManaged.png';
+import LocationReplica_OLED_HDR from './LocationReplica_OLED_HDR.avif';
+import LocationReplica_OLED from './LocationReplica_OLED.png';
 import LocationReplica from './LocationReplica.png';
+import Lock_Light_OLED_HDR from './Lock_Light_OLED_HDR.avif';
+import Lock_Light_OLED from './Lock_Light_OLED.png';
 import Lock_Light from './Lock_Light.png';
+import Lock_OLED_HDR from './Lock_OLED_HDR.avif';
+import Lock_OLED from './Lock_OLED.png';
 import Lock from './Lock.png';
+import Mega_OLED_HDR from './Mega_OLED_HDR.avif';
+import Mega_OLED from './Mega_OLED.png';
 import Mega from './Mega.png';
+import Mesh_Light_OLED_HDR from './Mesh_Light_OLED_HDR.avif';
+import Mesh_Light_OLED from './Mesh_Light_OLED.png';
 import Mesh_Light from './Mesh_Light.png';
+import Mesh_OLED_HDR from './Mesh_OLED_HDR.avif';
+import Mesh_OLED from './Mesh_OLED.png';
+import Mesh20_OLED_HDR from './Mesh-20_OLED_HDR.avif';
+import Mesh20_OLED from './Mesh-20_OLED.png';
 import Mesh20 from './Mesh-20.png';
 import Mesh from './Mesh.png';
+import MiniSilverBox_OLED_HDR from './MiniSilverBox_OLED_HDR.avif';
+import MiniSilverBox_OLED from './MiniSilverBox_OLED.png';
 import MiniSilverBox from './MiniSilverBox.png';
+import Mobile_Light_OLED_HDR from './Mobile_Light_OLED_HDR.avif';
+import Mobile_Light_OLED from './Mobile_Light_OLED.png';
 import Mobile_Light from './Mobile_Light.png';
+import Mobile_OLED_HDR from './Mobile_OLED_HDR.avif';
+import Mobile_OLED from './Mobile_OLED.png';
+import MobileAndroid_OLED_HDR from './Mobile-Android_OLED_HDR.avif';
+import MobileAndroid_OLED from './Mobile-Android_OLED.png';
 import MobileAndroid from './Mobile-Android.png';
 import Mobile from './Mobile.png';
+import MoveLocation_Light_OLED_HDR from './MoveLocation_Light_OLED_HDR.avif';
+import MoveLocation_Light_OLED from './MoveLocation_Light_OLED.png';
 import MoveLocation_Light from './MoveLocation_Light.png';
+import MoveLocation_OLED_HDR from './MoveLocation_OLED_HDR.avif';
+import MoveLocation_OLED from './MoveLocation_OLED.png';
 import MoveLocation from './MoveLocation.png';
+import Movie_Light_OLED_HDR from './Movie_Light_OLED_HDR.avif';
+import Movie_Light_OLED from './Movie_Light_OLED.png';
 import Movie_Light from './Movie_Light.png';
+import Movie_OLED_HDR from './Movie_OLED_HDR.avif';
+import Movie_OLED from './Movie_OLED.png';
 import Movie from './Movie.png';
+import NewLocation_OLED_HDR from './NewLocation_OLED_HDR.avif';
+import NewLocation_OLED from './NewLocation_OLED.png';
 import NewLocation from './NewLocation.png';
+import Node_Light_OLED_HDR from './Node_Light_OLED_HDR.avif';
+import Node_Light_OLED from './Node_Light_OLED.png';
 import Node_Light from './Node_Light.png';
+import Node_OLED_HDR from './Node_OLED_HDR.avif';
+import Node_OLED from './Node_OLED.png';
 import Node from './Node.png';
+import OneDrive_OLED_HDR from './OneDrive_OLED_HDR.avif';
+import OneDrive_OLED from './OneDrive_OLED.png';
 import OneDrive from './OneDrive.png';
+import OpenStack_OLED_HDR from './OpenStack_OLED_HDR.avif';
+import OpenStack_OLED from './OpenStack_OLED.png';
 import OpenStack from './OpenStack.png';
+import Package_Light_OLED_HDR from './Package_Light_OLED_HDR.avif';
+import Package_Light_OLED from './Package_Light_OLED.png';
 import Package_Light from './Package_Light.png';
+import Package_OLED_HDR from './Package_OLED_HDR.avif';
+import Package_OLED from './Package_OLED.png';
+import Package20_OLED_HDR from './Package-20_OLED_HDR.avif';
+import Package20_OLED from './Package-20_OLED.png';
 import Package20 from './Package-20.png';
 import Package from './Package.png';
+import PC_OLED_HDR from './PC_OLED_HDR.avif';
+import PC_OLED from './PC_OLED.png';
 import PC from './PC.png';
+import PCloud_OLED_HDR from './PCloud_OLED_HDR.avif';
+import PCloud_OLED from './PCloud_OLED.png';
 import PCloud from './PCloud.png';
+import Scrapbook_Light_OLED_HDR from './Scrapbook_Light_OLED_HDR.avif';
+import Scrapbook_Light_OLED from './Scrapbook_Light_OLED.png';
 import Scrapbook_Light from './Scrapbook_Light.png';
+import Scrapbook_OLED_HDR from './Scrapbook_OLED_HDR.avif';
+import Scrapbook_OLED from './Scrapbook_OLED.png';
 import Scrapbook from './Scrapbook.png';
+import Screenshot_Light_OLED_HDR from './Screenshot_Light_OLED_HDR.avif';
+import Screenshot_Light_OLED from './Screenshot_Light_OLED.png';
 import Screenshot_Light from './Screenshot_Light.png';
+import Screenshot_OLED_HDR from './Screenshot_OLED_HDR.avif';
+import Screenshot_OLED from './Screenshot_OLED.png';
+import Screenshot20_OLED_HDR from './Screenshot-20_OLED_HDR.avif';
+import Screenshot20_OLED from './Screenshot-20_OLED.png';
 import Screenshot20 from './Screenshot-20.png';
 import Screenshot from './Screenshot.png';
+import ScreenshotAlt_OLED_HDR from './ScreenshotAlt_OLED_HDR.avif';
+import ScreenshotAlt_OLED from './ScreenshotAlt_OLED.png';
 import ScreenshotAlt from './ScreenshotAlt.png';
+import SD_Light_OLED_HDR from './SD_Light_OLED_HDR.avif';
+import SD_Light_OLED from './SD_Light_OLED.png';
 import SD_Light from './SD_Light.png';
+import SD_OLED_HDR from './SD_OLED_HDR.avif';
+import SD_OLED from './SD_OLED.png';
 import SD from './SD.png';
+import Search_Light_OLED_HDR from './Search_Light_OLED_HDR.avif';
+import Search_Light_OLED from './Search_Light_OLED.png';
 import Search_Light from './Search_Light.png';
+import Search_OLED_HDR from './Search_OLED_HDR.avif';
+import Search_OLED from './Search_OLED.png';
 import Search from './Search.png';
+import SearchAlt_OLED_HDR from './SearchAlt_OLED_HDR.avif';
+import SearchAlt_OLED from './SearchAlt_OLED.png';
 import SearchAlt from './SearchAlt.png';
+import Server_Light_OLED_HDR from './Server_Light_OLED_HDR.avif';
+import Server_Light_OLED from './Server_Light_OLED.png';
 import Server_Light from './Server_Light.png';
+import Server_OLED_HDR from './Server_OLED_HDR.avif';
+import Server_OLED from './Server_OLED.png';
 import Server from './Server.png';
+import SilverBox_OLED_HDR from './SilverBox_OLED_HDR.avif';
+import SilverBox_OLED from './SilverBox_OLED.png';
 import SilverBox from './SilverBox.png';
+import Spacedrop_Light_OLED_HDR from './Spacedrop_Light_OLED_HDR.avif';
+import Spacedrop_Light_OLED from './Spacedrop_Light_OLED.png';
 import Spacedrop_Light from './Spacedrop_Light.png';
+import Spacedrop_OLED_HDR from './Spacedrop_OLED_HDR.avif';
+import Spacedrop_OLED from './Spacedrop_OLED.png';
+import Spacedrop1_OLED_HDR from './Spacedrop-1_OLED_HDR.avif';
+import Spacedrop1_OLED from './Spacedrop-1_OLED.png';
 import Spacedrop1 from './Spacedrop-1.png';
 import Spacedrop from './Spacedrop.png';
+import Storage_OLED_HDR from './Storage_OLED_HDR.avif';
+import Storage_OLED from './Storage_OLED.png';
 import Storage from './Storage.png';
+import Sync_Light_OLED_HDR from './Sync_Light_OLED_HDR.avif';
+import Sync_Light_OLED from './Sync_Light_OLED.png';
 import Sync_Light from './Sync_Light.png';
+import Sync_OLED_HDR from './Sync_OLED_HDR.avif';
+import Sync_OLED from './Sync_OLED.png';
 import Sync from './Sync.png';
+import Tablet_Light_OLED_HDR from './Tablet_Light_OLED_HDR.avif';
+import Tablet_Light_OLED from './Tablet_Light_OLED.png';
 import Tablet_Light from './Tablet_Light.png';
+import Tablet_OLED_HDR from './Tablet_OLED_HDR.avif';
+import Tablet_OLED from './Tablet_OLED.png';
 import Tablet from './Tablet.png';
+import Tags_Light_OLED_HDR from './Tags_Light_OLED_HDR.avif';
+import Tags_Light_OLED from './Tags_Light_OLED.png';
 import Tags_Light from './Tags_Light.png';
+import Tags_OLED_HDR from './Tags_OLED_HDR.avif';
+import Tags_OLED from './Tags_OLED.png';
 import Tags from './Tags.png';
+import Terminal_Light_OLED_HDR from './Terminal_Light_OLED_HDR.avif';
+import Terminal_Light_OLED from './Terminal_Light_OLED.png';
 import Terminal_Light from './Terminal_Light.png';
+import Terminal_OLED_HDR from './Terminal_OLED_HDR.avif';
+import Terminal_OLED from './Terminal_OLED.png';
 import Terminal from './Terminal.png';
+import Text_Light_OLED_HDR from './Text_Light_OLED_HDR.avif';
+import Text_Light_OLED from './Text_Light_OLED.png';
 import Text_Light from './Text_Light.png';
+import Text_OLED_HDR from './Text_OLED_HDR.avif';
+import Text_OLED from './Text_OLED.png';
+import Text_txt_OLED_HDR from './Text_txt_OLED_HDR.avif';
+import Text_txt_OLED from './Text_txt_OLED.png';
 import Text_txt from './Text_txt.png';
+import Text20_OLED_HDR from './Text-20_OLED_HDR.avif';
+import Text20_OLED from './Text-20_OLED.png';
 import Text20 from './Text-20.png';
 import Text from './Text.png';
+import TextAlt_Light_OLED_HDR from './TextAlt_Light_OLED_HDR.avif';
+import TextAlt_Light_OLED from './TextAlt_Light_OLED.png';
 import TextAlt_Light from './TextAlt_Light.png';
+import TextAlt_OLED_HDR from './TextAlt_OLED_HDR.avif';
+import TextAlt_OLED from './TextAlt_OLED.png';
 import TextAlt from './TextAlt.png';
+import TexturedMesh_Light_OLED_HDR from './TexturedMesh_Light_OLED_HDR.avif';
+import TexturedMesh_Light_OLED from './TexturedMesh_Light_OLED.png';
 import TexturedMesh_Light from './TexturedMesh_Light.png';
+import TexturedMesh_OLED_HDR from './TexturedMesh_OLED_HDR.avif';
+import TexturedMesh_OLED from './TexturedMesh_OLED.png';
 import TexturedMesh from './TexturedMesh.png';
+import Trash_Light_OLED_HDR from './Trash_Light_OLED_HDR.avif';
+import Trash_Light_OLED from './Trash_Light_OLED.png';
 import Trash_Light from './Trash_Light.png';
+import Trash_OLED_HDR from './Trash_OLED_HDR.avif';
+import Trash_OLED from './Trash_OLED.png';
 import Trash from './Trash.png';
+import Undefined_Light_OLED_HDR from './Undefined_Light_OLED_HDR.avif';
+import Undefined_Light_OLED from './Undefined_Light_OLED.png';
 import Undefined_Light from './Undefined_Light.png';
+import Undefined_OLED_HDR from './Undefined_OLED_HDR.avif';
+import Undefined_OLED from './Undefined_OLED.png';
 import Undefined from './Undefined.png';
+import Unknown20_OLED_HDR from './Unknown-20_OLED_HDR.avif';
+import Unknown20_OLED from './Unknown-20_OLED.png';
 import Unknown20 from './Unknown-20.png';
+import Video_Light_OLED_HDR from './Video_Light_OLED_HDR.avif';
+import Video_Light_OLED from './Video_Light_OLED.png';
 import Video_Light from './Video_Light.png';
+import Video_OLED_HDR from './Video_OLED_HDR.avif';
+import Video_OLED from './Video_OLED.png';
+import Video20_OLED_HDR from './Video-20_OLED_HDR.avif';
+import Video20_OLED from './Video-20_OLED.png';
 import Video20 from './Video-20.png';
 import Video from './Video.png';
+import WebPageArchive20_OLED_HDR from './WebPageArchive-20_OLED_HDR.avif';
+import WebPageArchive20_OLED from './WebPageArchive-20_OLED.png';
 import WebPageArchive20 from './WebPageArchive-20.png';
+import Widget_Light_OLED_HDR from './Widget_Light_OLED_HDR.avif';
+import Widget_Light_OLED from './Widget_Light_OLED.png';
 import Widget_Light from './Widget_Light.png';
+import Widget_OLED_HDR from './Widget_OLED_HDR.avif';
+import Widget_OLED from './Widget_OLED.png';
+import Widget20_OLED_HDR from './Widget-20_OLED_HDR.avif';
+import Widget20_OLED from './Widget-20_OLED.png';
 import Widget20 from './Widget-20.png';
 import Widget from './Widget.png';
 
 export {
 	Album20,
+	Album20_OLED,
+	Album20_OLED_HDR,
 	Album,
 	Album_Light,
+	Album_Light_OLED,
+	Album_Light_OLED_HDR,
+	Album_OLED,
+	Album_OLED_HDR,
 	Alias20,
+	Alias20_OLED,
+	Alias20_OLED_HDR,
 	Alias,
 	Alias_Light,
+	Alias_Light_OLED,
+	Alias_Light_OLED_HDR,
+	Alias_OLED,
+	Alias_OLED_HDR,
 	AmazonS3,
+	AmazonS3_OLED,
+	AmazonS3_OLED_HDR,
 	AndroidPhotos,
+	AndroidPhotos_OLED,
+	AndroidPhotos_OLED_HDR,
 	AppleFiles,
+	AppleFiles_OLED,
+	AppleFiles_OLED_HDR,
 	ApplePhotos,
+	ApplePhotos_OLED,
+	ApplePhotos_OLED_HDR,
 	Application,
 	Application_Light,
+	Application_Light_OLED,
+	Application_Light_OLED_HDR,
+	Application_OLED,
+	Application_OLED_HDR,
 	Archive20,
+	Archive20_OLED,
+	Archive20_OLED_HDR,
 	Archive,
 	Archive_Light,
+	Archive_Light_OLED,
+	Archive_Light_OLED_HDR,
+	Archive_OLED,
+	Archive_OLED_HDR,
 	Audio20,
+	Audio20_OLED,
+	Audio20_OLED_HDR,
 	Audio,
 	Audio_Light,
+	Audio_Light_OLED,
+	Audio_Light_OLED_HDR,
+	Audio_OLED,
+	Audio_OLED_HDR,
 	BackBlaze,
+	BackBlaze_OLED,
+	BackBlaze_OLED_HDR,
 	Ball,
+	Ball_OLED,
+	Ball_OLED_HDR,
 	Book20,
+	Book20_OLED,
+	Book20_OLED_HDR,
 	Book,
 	BookBlue,
+	BookBlue_OLED,
+	BookBlue_OLED_HDR,
 	Book_Light,
+	Book_Light_OLED,
+	Book_Light_OLED_HDR,
+	Book_OLED,
+	Book_OLED_HDR,
 	Box,
+	Box_OLED,
+	Box_OLED_HDR,
 	CloudSync,
 	CloudSync_Light,
+	CloudSync_Light_OLED,
+	CloudSync_Light_OLED_HDR,
+	CloudSync_OLED,
+	CloudSync_OLED_HDR,
 	Code20,
+	Code20_OLED,
+	Code20_OLED_HDR,
 	Collection20,
+	Collection20_OLED,
+	Collection20_OLED_HDR,
 	Collection,
 	CollectionSparkle,
 	CollectionSparkle_Light,
+	CollectionSparkle_Light_OLED,
+	CollectionSparkle_Light_OLED_HDR,
+	CollectionSparkle_OLED,
+	CollectionSparkle_OLED_HDR,
 	Collection_Light,
+	Collection_Light_OLED,
+	Collection_Light_OLED_HDR,
+	Collection_OLED,
+	Collection_OLED_HDR,
 	Compute,
+	Compute_OLED,
+	Compute_OLED_HDR,
 	Config20,
+	Config20_OLED,
+	Config20_OLED_HDR,
 	DAV,
+	DAV_OLED,
+	DAV_OLED_HDR,
 	Database20,
+	Database20_OLED,
+	Database20_OLED_HDR,
 	Database,
 	Database_Light,
+	Database_Light_OLED,
+	Database_Light_OLED_HDR,
+	Database_OLED,
+	Database_OLED_HDR,
 	DeleteLocation,
+	DeleteLocation_OLED,
+	DeleteLocation_OLED_HDR,
 	Devices,
+	Devices_OLED,
+	Devices_OLED_HDR,
 	Document20,
+	Document20_OLED,
+	Document20_OLED_HDR,
 	Document,
 	Document_Light,
+	Document_Light_OLED,
+	Document_Light_OLED_HDR,
+	Document_OLED,
+	Document_OLED_HDR,
 	Document_doc,
 	Document_doc_Light,
+	Document_doc_Light_OLED,
+	Document_doc_Light_OLED_HDR,
+	Document_doc_OLED,
+	Document_doc_OLED_HDR,
 	Document_memory,
+	Document_memory_OLED,
+	Document_memory_OLED_HDR,
 	Document_pdf,
 	Document_pdf_Light,
+	Document_pdf_Light_OLED,
+	Document_pdf_Light_OLED_HDR,
+	Document_pdf_OLED,
+	Document_pdf_OLED_HDR,
 	Document_srt,
+	Document_srt_OLED,
+	Document_srt_OLED_HDR,
 	Document_xls,
 	Document_xls_Light,
+	Document_xls_Light_OLED,
+	Document_xls_Light_OLED_HDR,
+	Document_xls_OLED,
+	Document_xls_OLED_HDR,
 	Document_xmp,
+	Document_xmp_OLED,
+	Document_xmp_OLED_HDR,
 	Dotfile20,
+	Dotfile20_OLED,
+	Dotfile20_OLED_HDR,
 	DriveAmazonS3,
 	DriveAmazonS3_Light,
+	DriveAmazonS3_Light_OLED,
+	DriveAmazonS3_Light_OLED_HDR,
+	DriveAmazonS3_OLED,
+	DriveAmazonS3_OLED_HDR,
 	DriveBackBlaze,
 	DriveBackBlaze_Light,
+	DriveBackBlaze_Light_OLED,
+	DriveBackBlaze_Light_OLED_HDR,
+	DriveBackBlaze_OLED,
+	DriveBackBlaze_OLED_HDR,
 	DriveBox,
+	DriveBox_OLED,
+	DriveBox_OLED_HDR,
 	DriveDAV,
 	DriveDAV_Light,
+	DriveDAV_Light_OLED,
+	DriveDAV_Light_OLED_HDR,
+	DriveDAV_OLED,
+	DriveDAV_OLED_HDR,
 	DriveDarker,
+	DriveDarker_OLED,
+	DriveDarker_OLED_HDR,
 	DriveDropbox,
 	DriveDropbox_Light,
+	DriveDropbox_Light_OLED,
+	DriveDropbox_Light_OLED_HDR,
+	DriveDropbox_OLED,
+	DriveDropbox_OLED_HDR,
 	DriveGoogleDrive,
 	DriveGoogleDrive_Light,
+	DriveGoogleDrive_Light_OLED,
+	DriveGoogleDrive_Light_OLED_HDR,
+	DriveGoogleDrive_OLED,
+	DriveGoogleDrive_OLED_HDR,
 	DriveMega,
 	DriveMega_Light,
+	DriveMega_Light_OLED,
+	DriveMega_Light_OLED_HDR,
+	DriveMega_OLED,
+	DriveMega_OLED_HDR,
 	DriveOneDrive,
 	DriveOneDrive_Light,
+	DriveOneDrive_Light_OLED,
+	DriveOneDrive_Light_OLED_HDR,
+	DriveOneDrive_OLED,
+	DriveOneDrive_OLED_HDR,
 	DriveOpenStack,
 	DriveOpenStack_Light,
+	DriveOpenStack_Light_OLED,
+	DriveOpenStack_Light_OLED_HDR,
+	DriveOpenStack_OLED,
+	DriveOpenStack_OLED_HDR,
 	DrivePCloud,
 	DrivePCloud_Light,
+	DrivePCloud_Light_OLED,
+	DrivePCloud_Light_OLED_HDR,
+	DrivePCloud_OLED,
+	DrivePCloud_OLED_HDR,
 	Drivebox_Light,
+	Drivebox_Light_OLED,
+	Drivebox_Light_OLED_HDR,
 	Drive,
 	Drive_Light,
+	Drive_Light_OLED,
+	Drive_Light_OLED_HDR,
+	Drive_OLED,
+	Drive_OLED_HDR,
 	Dropbox,
+	Dropbox_OLED,
+	Dropbox_OLED_HDR,
 	Encrypted20,
+	Encrypted20_OLED,
+	Encrypted20_OLED_HDR,
 	Encrypted,
 	Encrypted_Light,
+	Encrypted_Light_OLED,
+	Encrypted_Light_OLED_HDR,
+	Encrypted_OLED,
+	Encrypted_OLED_HDR,
 	Entity,
 	Entity_Light,
+	Entity_Light_OLED,
+	Entity_Light_OLED_HDR,
+	Entity_OLED,
+	Entity_OLED_HDR,
 	Executable20,
+	Executable20_OLED,
+	Executable20_OLED_HDR,
 	Executable,
 	Executable_Light,
+	Executable_Light_OLED,
+	Executable_Light_OLED_HDR,
 	Executable_Light_old,
+	Executable_Light_old_OLED,
+	Executable_Light_old_OLED_HDR,
+	Executable_OLED,
+	Executable_OLED_HDR,
 	Executable_old,
+	Executable_old_OLED,
+	Executable_old_OLED_HDR,
 	Face_Light,
+	Face_Light_OLED,
+	Face_Light_OLED_HDR,
 	Folder20,
+	Folder20_OLED,
+	Folder20_OLED_HDR,
 	Foldertagxmp,
+	Foldertagxmp_OLED,
+	Foldertagxmp_OLED_HDR,
 	Folder,
 	FolderGrey,
 	FolderGrey_Light,
+	FolderGrey_Light_OLED,
+	FolderGrey_Light_OLED_HDR,
+	FolderGrey_OLED,
+	FolderGrey_OLED_HDR,
 	FolderNoSpace,
 	FolderNoSpace_Light,
+	FolderNoSpace_Light_OLED,
+	FolderNoSpace_Light_OLED_HDR,
+	FolderNoSpace_OLED,
+	FolderNoSpace_OLED_HDR,
 	Folder_Light,
+	Folder_Light_OLED,
+	Folder_Light_OLED_HDR,
+	Folder_OLED,
+	Folder_OLED_HDR,
 	Font20,
+	Font20_OLED,
+	Font20_OLED_HDR,
 	Game,
 	Game_Light,
+	Game_Light_OLED,
+	Game_Light_OLED_HDR,
+	Game_OLED,
+	Game_OLED_HDR,
 	Globe,
 	GlobeAlt,
+	GlobeAlt_OLED,
+	GlobeAlt_OLED_HDR,
 	Globe_Light,
+	Globe_Light_OLED,
+	Globe_Light_OLED_HDR,
+	Globe_OLED,
+	Globe_OLED_HDR,
 	GoogleDrive,
+	GoogleDrive_OLED,
+	GoogleDrive_OLED_HDR,
 	HDD,
 	HDD_Light,
+	HDD_Light_OLED,
+	HDD_Light_OLED_HDR,
+	HDD_OLED,
+	HDD_OLED_HDR,
 	Heart,
 	Heart_Light,
+	Heart_Light_OLED,
+	Heart_Light_OLED_HDR,
+	Heart_OLED,
+	Heart_OLED_HDR,
 	Home,
 	Home_Light,
+	Home_Light_OLED,
+	Home_Light_OLED_HDR,
+	Home_OLED,
+	Home_OLED_HDR,
 	Image20,
+	Image20_OLED,
+	Image20_OLED_HDR,
 	Image,
 	Image_Light,
+	Image_Light_OLED,
+	Image_Light_OLED_HDR,
+	Image_OLED,
+	Image_OLED_HDR,
 	Indexed,
+	Indexed_OLED,
+	Indexed_OLED_HDR,
 	Key20,
+	Key20_OLED,
+	Key20_OLED_HDR,
 	Key,
 	Key_Light,
+	Key_Light_OLED,
+	Key_Light_OLED_HDR,
+	Key_OLED,
+	Key_OLED_HDR,
 	Keys,
 	Keys_Light,
+	Keys_Light_OLED,
+	Keys_Light_OLED_HDR,
+	Keys_OLED,
+	Keys_OLED_HDR,
 	Laptop,
 	Laptop_Light,
+	Laptop_Light_OLED,
+	Laptop_Light_OLED_HDR,
+	Laptop_OLED,
+	Laptop_OLED_HDR,
 	Link20,
+	Link20_OLED,
+	Link20_OLED_HDR,
 	Link,
 	Link_Light,
+	Link_Light_OLED,
+	Link_Light_OLED_HDR,
+	Link_OLED,
+	Link_OLED_HDR,
 	Location,
 	LocationManaged,
+	LocationManaged_OLED,
+	LocationManaged_OLED_HDR,
 	LocationReplica,
+	LocationReplica_OLED,
+	LocationReplica_OLED_HDR,
+	Location_OLED,
+	Location_OLED_HDR,
 	Lock,
 	Lock_Light,
+	Lock_Light_OLED,
+	Lock_Light_OLED_HDR,
+	Lock_OLED,
+	Lock_OLED_HDR,
 	Mega,
+	Mega_OLED,
+	Mega_OLED_HDR,
 	Mesh20,
+	Mesh20_OLED,
+	Mesh20_OLED_HDR,
 	Mesh,
 	Mesh_Light,
+	Mesh_Light_OLED,
+	Mesh_Light_OLED_HDR,
+	Mesh_OLED,
+	Mesh_OLED_HDR,
 	MiniSilverBox,
+	MiniSilverBox_OLED,
+	MiniSilverBox_OLED_HDR,
 	MobileAndroid,
+	MobileAndroid_OLED,
+	MobileAndroid_OLED_HDR,
 	Mobile,
 	Mobile_Light,
+	Mobile_Light_OLED,
+	Mobile_Light_OLED_HDR,
+	Mobile_OLED,
+	Mobile_OLED_HDR,
 	MoveLocation,
 	MoveLocation_Light,
+	MoveLocation_Light_OLED,
+	MoveLocation_Light_OLED_HDR,
+	MoveLocation_OLED,
+	MoveLocation_OLED_HDR,
 	Movie,
 	Movie_Light,
+	Movie_Light_OLED,
+	Movie_Light_OLED_HDR,
+	Movie_OLED,
+	Movie_OLED_HDR,
 	NewLocation,
+	NewLocation_OLED,
+	NewLocation_OLED_HDR,
 	Node,
 	Node_Light,
+	Node_Light_OLED,
+	Node_Light_OLED_HDR,
+	Node_OLED,
+	Node_OLED_HDR,
 	OneDrive,
+	OneDrive_OLED,
+	OneDrive_OLED_HDR,
 	OpenStack,
+	OpenStack_OLED,
+	OpenStack_OLED_HDR,
 	PC,
+	PC_OLED,
+	PC_OLED_HDR,
 	PCloud,
+	PCloud_OLED,
+	PCloud_OLED_HDR,
 	Package20,
+	Package20_OLED,
+	Package20_OLED_HDR,
 	Package,
 	Package_Light,
+	Package_Light_OLED,
+	Package_Light_OLED_HDR,
+	Package_OLED,
+	Package_OLED_HDR,
 	SD,
 	SD_Light,
+	SD_Light_OLED,
+	SD_Light_OLED_HDR,
+	SD_OLED,
+	SD_OLED_HDR,
 	Scrapbook,
 	Scrapbook_Light,
+	Scrapbook_Light_OLED,
+	Scrapbook_Light_OLED_HDR,
+	Scrapbook_OLED,
+	Scrapbook_OLED_HDR,
 	Screenshot20,
+	Screenshot20_OLED,
+	Screenshot20_OLED_HDR,
 	Screenshot,
 	ScreenshotAlt,
+	ScreenshotAlt_OLED,
+	ScreenshotAlt_OLED_HDR,
 	Screenshot_Light,
+	Screenshot_Light_OLED,
+	Screenshot_Light_OLED_HDR,
+	Screenshot_OLED,
+	Screenshot_OLED_HDR,
 	Search,
 	SearchAlt,
+	SearchAlt_OLED,
+	SearchAlt_OLED_HDR,
 	Search_Light,
+	Search_Light_OLED,
+	Search_Light_OLED_HDR,
+	Search_OLED,
+	Search_OLED_HDR,
 	Server,
 	Server_Light,
+	Server_Light_OLED,
+	Server_Light_OLED_HDR,
+	Server_OLED,
+	Server_OLED_HDR,
 	SilverBox,
+	SilverBox_OLED,
+	SilverBox_OLED_HDR,
 	Spacedrop1,
+	Spacedrop1_OLED,
+	Spacedrop1_OLED_HDR,
 	Spacedrop,
 	Spacedrop_Light,
+	Spacedrop_Light_OLED,
+	Spacedrop_Light_OLED_HDR,
+	Spacedrop_OLED,
+	Spacedrop_OLED_HDR,
 	Storage,
+	Storage_OLED,
+	Storage_OLED_HDR,
 	Sync,
 	Sync_Light,
+	Sync_Light_OLED,
+	Sync_Light_OLED_HDR,
+	Sync_OLED,
+	Sync_OLED_HDR,
 	Tablet,
 	Tablet_Light,
+	Tablet_Light_OLED,
+	Tablet_Light_OLED_HDR,
+	Tablet_OLED,
+	Tablet_OLED_HDR,
 	Tags,
 	Tags_Light,
+	Tags_Light_OLED,
+	Tags_Light_OLED_HDR,
+	Tags_OLED,
+	Tags_OLED_HDR,
 	Terminal,
 	Terminal_Light,
+	Terminal_Light_OLED,
+	Terminal_Light_OLED_HDR,
+	Terminal_OLED,
+	Terminal_OLED_HDR,
 	Text20,
+	Text20_OLED,
+	Text20_OLED_HDR,
 	Text,
 	TextAlt,
 	TextAlt_Light,
+	TextAlt_Light_OLED,
+	TextAlt_Light_OLED_HDR,
+	TextAlt_OLED,
+	TextAlt_OLED_HDR,
 	Text_Light,
+	Text_Light_OLED,
+	Text_Light_OLED_HDR,
+	Text_OLED,
+	Text_OLED_HDR,
 	Text_txt,
+	Text_txt_OLED,
+	Text_txt_OLED_HDR,
 	TexturedMesh,
 	TexturedMesh_Light,
+	TexturedMesh_Light_OLED,
+	TexturedMesh_Light_OLED_HDR,
+	TexturedMesh_OLED,
+	TexturedMesh_OLED_HDR,
 	Trash,
 	Trash_Light,
+	Trash_Light_OLED,
+	Trash_Light_OLED_HDR,
+	Trash_OLED,
+	Trash_OLED_HDR,
 	Undefined,
 	Undefined_Light,
+	Undefined_Light_OLED,
+	Undefined_Light_OLED_HDR,
+	Undefined_OLED,
+	Undefined_OLED_HDR,
 	Unknown20,
+	Unknown20_OLED,
+	Unknown20_OLED_HDR,
 	Video20,
+	Video20_OLED,
+	Video20_OLED_HDR,
 	Video,
 	Video_Light,
+	Video_Light_OLED,
+	Video_Light_OLED_HDR,
+	Video_OLED,
+	Video_OLED_HDR,
 	WebPageArchive20,
+	WebPageArchive20_OLED,
+	WebPageArchive20_OLED_HDR,
 	Widget20,
+	Widget20_OLED,
+	Widget20_OLED_HDR,
 	Widget,
-	Widget_Light
+	Widget_Light,
+	Widget_Light_OLED,
+	Widget_Light_OLED_HDR,
+	Widget_OLED,
+	Widget_OLED_HDR
 };

@@ -3,34 +3,90 @@
  * To regenerate this file, run: pnpm assets gen
  */
 
+import AlphaBg_Light_OLED_HDR from './AlphaBg_Light_OLED_HDR.avif';
+import AlphaBg_Light_OLED from './AlphaBg_Light_OLED.png';
 import AlphaBg_Light from './AlphaBg_Light.png';
+import AlphaBg_OLED_HDR from './AlphaBg_OLED_HDR.avif';
+import AlphaBg_OLED from './AlphaBg_OLED.png';
 import AlphaBg from './AlphaBg.png';
+import AppLogo_OLED_HDR from './AppLogo_OLED_HDR.avif';
+import AppLogo_OLED from './AppLogo_OLED.png';
 import AppLogo from './AppLogo.png';
+import AppLogoV2_OLED_HDR from './AppLogoV2_OLED_HDR.avif';
+import AppLogoV2_OLED from './AppLogoV2_OLED.png';
 import AppLogoV2 from './AppLogoV2.png';
+import Ball_OLED_HDR from './Ball_OLED_HDR.avif';
+import Ball_OLED from './Ball_OLED.png';
 import Ball from './Ball.png';
+import BallBlue_OLED_HDR from './BallBlue_OLED_HDR.avif';
+import BallBlue_OLED from './BallBlue_OLED.png';
 import BallBlue from './BallBlue.png';
+import BloomOne_OLED_HDR from './BloomOne_OLED_HDR.avif';
+import BloomOne_OLED from './BloomOne_OLED.png';
 import BloomOne from './BloomOne.png';
+import BloomThree_OLED_HDR from './BloomThree_OLED_HDR.avif';
+import BloomThree_OLED from './BloomThree_OLED.png';
 import BloomThree from './BloomThree.png';
+import BloomTwo_OLED_HDR from './BloomTwo_OLED_HDR.avif';
+import BloomTwo_OLED from './BloomTwo_OLED.png';
 import BloomTwo from './BloomTwo.png';
+import Dropbox_OLED_HDR from './Dropbox_OLED_HDR.avif';
+import Dropbox_OLED from './Dropbox_OLED.png';
 import Dropbox from './Dropbox.png';
+import GoogleDrive_OLED_HDR from './GoogleDrive_OLED_HDR.avif';
+import GoogleDrive_OLED from './GoogleDrive_OLED.png';
 import GoogleDrive from './GoogleDrive.png';
+import iCloud_OLED_HDR from './iCloud_OLED_HDR.avif';
+import iCloud_OLED from './iCloud_OLED.png';
 import iCloud from './iCloud.png';
+import Mega_OLED_HDR from './Mega_OLED_HDR.avif';
+import Mega_OLED from './Mega_OLED.png';
 import Mega from './Mega.png';
+import Transparent_OLED_HDR from './Transparent_OLED_HDR.avif';
+import Transparent_OLED from './Transparent_OLED.png';
 import Transparent from './Transparent.png';
 
 export {
 	AlphaBg,
 	AlphaBg_Light,
+	AlphaBg_Light_OLED,
+	AlphaBg_Light_OLED_HDR,
+	AlphaBg_OLED,
+	AlphaBg_OLED_HDR,
 	AppLogo,
 	AppLogoV2,
+	AppLogoV2_OLED,
+	AppLogoV2_OLED_HDR,
+	AppLogo_OLED,
+	AppLogo_OLED_HDR,
 	Ball,
 	BallBlue,
+	BallBlue_OLED,
+	BallBlue_OLED_HDR,
+	Ball_OLED,
+	Ball_OLED_HDR,
 	BloomOne,
+	BloomOne_OLED,
+	BloomOne_OLED_HDR,
 	BloomThree,
+	BloomThree_OLED,
+	BloomThree_OLED_HDR,
 	BloomTwo,
+	BloomTwo_OLED,
+	BloomTwo_OLED_HDR,
 	Dropbox,
+	Dropbox_OLED,
+	Dropbox_OLED_HDR,
 	GoogleDrive,
+	GoogleDrive_OLED,
+	GoogleDrive_OLED_HDR,
 	Mega,
+	Mega_OLED,
+	Mega_OLED_HDR,
 	Transparent,
-	iCloud
+	Transparent_OLED,
+	Transparent_OLED_HDR,
+	iCloud,
+	iCloud_OLED,
+	iCloud_OLED_HDR
 };

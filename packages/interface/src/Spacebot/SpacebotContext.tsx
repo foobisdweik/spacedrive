@@ -5,7 +5,14 @@ import {
 	Checks,
 	MoonStars
 } from '@phosphor-icons/react';
-import {Ball, BallBlue} from '@sd/assets/images';
+import {
+	Ball,
+	Ball_OLED,
+	Ball_OLED_HDR,
+	BallBlue,
+	BallBlue_OLED,
+	BallBlue_OLED_HDR
+} from '@sd/assets/images';
 import {
 	apiClient,
 	getEventsUrl,
@@ -41,9 +48,33 @@ export const primaryItems = [
 ];
 
 export const projects = [
-	{name: 'Spacedrive', detail: 'Main workspace', ball: BallBlue},
-	{name: 'Spacebot Runtime', detail: 'Remote control plane', ball: Ball},
-	{name: 'Hosted Platform', detail: 'Deploy and observe', ball: Ball}
+	{
+		name: 'Spacedrive',
+		detail: 'Main workspace',
+		ball: {
+			defaultAsset: BallBlue,
+			oledAsset: BallBlue_OLED,
+			oledHdrAsset: BallBlue_OLED_HDR
+		}
+	},
+	{
+		name: 'Spacebot Runtime',
+		detail: 'Remote control plane',
+		ball: {
+			defaultAsset: Ball,
+			oledAsset: Ball_OLED,
+			oledHdrAsset: Ball_OLED_HDR
+		}
+	},
+	{
+		name: 'Hosted Platform',
+		detail: 'Deploy and observe',
+		ball: {
+			defaultAsset: Ball,
+			oledAsset: Ball_OLED,
+			oledHdrAsset: Ball_OLED_HDR
+		}
+	}
 ];
 
 export const agents = [
@@ -351,7 +382,9 @@ export function SpacebotProvider({children}: SpacebotProviderProps) {
 				// Push the assistant message directly into the timeline cache.
 				queryClient.setQueryData(
 					['spacebot', 'channel-timeline', conversationId],
-					(old: { items: unknown[]; has_more: boolean } | undefined) => {
+					(
+						old: {items: unknown[]; has_more: boolean} | undefined
+					) => {
 						if (!old) return old;
 						return {
 							...old,
@@ -386,7 +419,9 @@ export function SpacebotProvider({children}: SpacebotProviderProps) {
 				// so it appears instantly (like the portal SSE-driven approach).
 				queryClient.setQueryData(
 					['spacebot', 'channel-timeline', conversationId],
-					(old: { items: unknown[]; has_more: boolean } | undefined) => {
+					(
+						old: {items: unknown[]; has_more: boolean} | undefined
+					) => {
 						if (!old) return old;
 						return {
 							...old,
