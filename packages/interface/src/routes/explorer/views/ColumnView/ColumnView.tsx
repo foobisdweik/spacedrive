@@ -91,10 +91,13 @@ export function ColumnView() {
 		// No path = nothing to do
 		if (!currentPath) return;
 
-		// Empty columns = initialize with current path
+		// Empty columns = initialize with current path.
+		// Seed the stack for the path we're already viewing, but DON'T clear the
+		// selection: entering Column view for the current folder must preserve the
+		// file the user had selected in the previous view. Clearing here wiped the
+		// per-path stored selection, so it stayed lost after switching back.
 		if (columnStack.length === 0) {
 			setColumnStackRef.current([currentPath]);
-			clearSelectionRef.current();
 			return;
 		}
 

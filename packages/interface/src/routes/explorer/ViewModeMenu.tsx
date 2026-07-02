@@ -30,42 +30,42 @@ const viewOptions: ViewOption[] = [
 		label: 'Grid',
 		icon: GridFour,
 		color: 'bg-accent',
-		keybind: '⌘1'
+		keybind: '⌥⌘1'
 	},
 	{
 		id: 'list',
 		label: 'List',
 		icon: Rows,
 		color: 'bg-purple-500',
-		keybind: '⌘2'
+		keybind: '⌥⌘2'
 	},
 	{
 		id: 'media',
 		label: 'Media',
 		icon: Camera,
 		color: 'bg-pink-500',
-		keybind: '⌘3'
+		keybind: '⌥⌘3'
 	},
 	{
 		id: 'column',
 		label: 'Column',
 		icon: Columns,
 		color: 'bg-orange-500',
-		keybind: '⌘4'
+		keybind: '⌥⌘4'
 	},
 	{
 		id: 'size',
 		label: 'Size',
 		icon: ChartPieSlice,
 		color: 'bg-green-500',
-		keybind: '⌘5'
+		keybind: '⌥⌘5'
 	},
 	{
 		id: 'knowledge',
 		label: 'Knowledge',
 		icon: Sparkle,
 		color: 'bg-purple-500',
-		keybind: '⌘6'
+		keybind: '⌥⌘6'
 	}
 	// {
 	// 	id: "timeline",
