@@ -272,10 +272,11 @@ impl EphemeralIndexCache {
 
 	/// Perform background UUID reconciliation with the persistent index.
 	/// This prevents ephemeral views from showing new UUIDs for known persistent files.
+	/// Returns the reconciliations that changed the index.
 	pub async fn reconcile_persistent_uuids(
 		&self,
 		persistent_uuids: &HashMap<PathBuf, Uuid>,
-	) -> usize {
+	) -> Vec<crate::ops::indexing::reconciliation::ReconciledUuid> {
 		let mut index = self.index.write().await;
 		index.reconcile_persistent_uuids(persistent_uuids)
 	}

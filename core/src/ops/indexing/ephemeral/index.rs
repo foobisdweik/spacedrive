@@ -367,19 +367,26 @@ impl EphemeralIndex {
 	/// Reconcile ephemeral UUIDs with persistent entries.
 	/// For each path in the provided map, if a matching ephemeral entry exists,
 	/// replace its UUID with the persistent one.
-	/// Returns count of UUIDs reconciled.
+	/// Returns the reconciliations that changed the index (new UUID assigned or
+	/// an existing ephemeral UUID replaced), so callers can emit change events.
 	pub fn reconcile_persistent_uuids(
 		&mut self,
 		persistent_uuids: &HashMap<PathBuf, Uuid>,
-	) -> usize {
-		let mut count = 0;
+	) -> Vec<crate::ops::indexing::reconciliation::ReconciledUuid> {
+		let mut reconciled = Vec::new();
 		for (path, persistent_uuid) in persistent_uuids {
 			if let Some(entry_id) = self.resolve_entry_id(path) {
-				self.entry_uuids.insert(entry_id, *persistent_uuid);
-				count += 1;
+				let previous = self.entry_uuids.insert(entry_id, *persistent_uuid);
+				if previous != Some(*persistent_uuid) {
+					reconciled.push(crate::ops::indexing::reconciliation::ReconciledUuid {
+						path: path.clone(),
+						previous,
+						uuid: *persistent_uuid,
+					});
+				}
 			}
 		}
-		count
+		reconciled
 	}
 
 	/// Get UUID for a path, checking persistent index as fallback.
@@ -896,11 +903,19 @@ mod tests {
 			.add_entry(path.clone(), ephemeral_uuid, file_metadata())
 			.expect("failed to add entry");
 
-		let count =
+		let reconciled =
 			index.reconcile_persistent_uuids(&HashMap::from([(path.clone(), persistent_uuid)]));
 
-		assert_eq!(count, 1);
+		assert_eq!(reconciled.len(), 1);
+		assert_eq!(reconciled[0].path, path);
+		assert_eq!(reconciled[0].previous, Some(ephemeral_uuid));
+		assert_eq!(reconciled[0].uuid, persistent_uuid);
 		assert_eq!(index.get_entry_uuid(&path), Some(persistent_uuid));
+
+		// Re-reconciling with the same UUID is a no-op.
+		let reconciled =
+			index.reconcile_persistent_uuids(&HashMap::from([(path.clone(), persistent_uuid)]));
+		assert!(reconciled.is_empty());
 	}
 
 	struct TestPersistentLookup {

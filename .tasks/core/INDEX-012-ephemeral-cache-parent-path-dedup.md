@@ -1,12 +1,12 @@
 ---
 id: INDEX-012
 title: Ephemeral Cache Parent Path Deduplication
-status: In Progress
+status: Done
 assignee: jamiepine
 parent: INDEX-000
 priority: High
 tags: [indexing, ephemeral, cache, deduplication, bug, macos]
-last_updated: 2026-06-18
+last_updated: 2026-07-08
 related_tasks: [INDEX-001, INDEX-010]
 ---
 
@@ -255,16 +255,38 @@ pub fn mark_indexing_complete(&self, path: &Path, scope: IndexScope) {
 
 ## Acceptance Criteria
 
-- [ ] `list_directory("/Users/jamespine")` returns children when arena has `/System/Volumes/Data/Users/jamespine`
-- [ ] `is_indexed()` returns true for symlink paths under a recursively-indexed volume
-- [ ] `get_for_path()` returns the index for symlink paths under a recursively-indexed volume
-- [ ] `create_for_indexing()` is a no-op when the path is covered by a recursive parent (including symlinks)
-- [ ] `mark_indexing_complete()` with Recursive scope subsumes child paths
-- [ ] Only recursive scans provide parent coverage (shallow browses don't)
-- [ ] `indexed_paths` stores scope per path
-- [ ] No redundant ephemeral scan triggered when browsing under a volume-indexed path on macOS
-- [ ] Volume index + browse child shows single entry in `sd index ephemeral-cache`
-- [ ] Existing tests updated, new tests for symlink resolution and parent coverage
+- [x] `list_directory("/Users/jamespine")` returns children when arena has `/System/Volumes/Data/Users/jamespine`
+- [x] `is_indexed()` returns true for symlink paths under a recursively-indexed volume
+- [x] `get_for_path()` returns the index for symlink paths under a recursively-indexed volume
+- [x] `create_for_indexing()` is a no-op when the path is covered by a recursive parent (including symlinks)
+- [x] `mark_indexing_complete()` with Recursive scope subsumes child paths
+- [x] Only recursive scans provide parent coverage (shallow browses don't)
+- [x] `indexed_paths` stores scope per path
+- [x] No redundant ephemeral scan triggered when browsing under a volume-indexed path on macOS
+- [x] Volume index + browse child shows single entry in `sd index ephemeral-cache`
+- [x] Existing tests updated, new tests for symlink resolution and parent coverage
+
+## Audit (2026-07-08)
+
+Verified fully implemented; the task file was stale. Current state:
+
+- `EphemeralIndex::resolve_entry_id` does the symlink-aware lookup (fast exact
+  path, then `canonicalize()` retry); `list_directory`, `get_entry_ref`,
+  `get_entry_uuid`, `get_or_assign_uuid`, and `get_content_kind` all route
+  through it.
+- `EphemeralIndexCache::indexed_paths` is `HashMap<PathBuf, IndexScope>`;
+  `indexed_scope_for_path` / `path_is_under_indexed_root` implement
+  exact + canonical + recursive-parent coverage (component-boundary safe).
+- `create_for_indexing(path, scope)` skips shallow (Current) requests covered
+  by a recursive parent. Deliberate divergence from the original plan: a
+  *recursive* child scan is NOT skipped, so explicit deep re-scans still run
+  (`test_recursive_child_scan_is_not_skipped_by_parent_coverage`).
+- `mark_indexing_complete_with_scope` subsumes child registrations on
+  recursive completion; callsites pass scope (`job.rs`,
+  `ops/volumes/index/action.rs` passes Recursive, `directory_listing.rs`
+  passes Current).
+- All five tests from this spec exist in `cache.rs` (plus edge-case extras);
+  16/16 pass.
 
 ## Tests
 

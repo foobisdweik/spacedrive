@@ -1,11 +1,11 @@
 ---
 id: INDEX-008
 title: Nested Locations Support
-status: To Do
+status: In Progress
 assignee: jamiepine
 priority: Medium
 tags: [indexing, locations, architecture, sync]
-last_updated: 2025-12-16
+last_updated: 2026-07-08
 parent: INDEX-000
 related_tasks: [CORE-001, LSYNC-010, LOC-000]
 ---
@@ -764,18 +764,49 @@ The flexibility is already built in!
 
 ## Acceptance Criteria
 
-- [ ] Can create nested location pointing to existing entry
-- [ ] No entry duplication when nesting locations
-- [ ] Entry tree maintains correct parent/child relationships
-- [ ] Nested location inherits entry tree from parent location
-- [ ] Innermost watcher handles events (or both handle idempotently)
-- [ ] Deleting parent location preserves entries used by nested location
-- [ ] Moving nested location's root entry updates location reference
+- [x] Can create nested location pointing to existing entry
+- [x] No entry duplication when nesting locations
+- [x] Entry tree maintains correct parent/child relationships
+- [x] Nested location inherits entry tree from parent location
+- [x] Innermost watcher handles events (or both handle idempotently)
+- [x] Deleting parent location preserves entries used by nested location
+- [x] Moving nested location's root entry updates location reference
 - [ ] Nested locations sync correctly (defer if entry not yet synced)
 - [ ] Cannot create nested location across devices
 - [ ] Index mode of innermost location applies
-- [ ] All tests pass
+- [x] All tests pass
 - [ ] Documentation updated
+
+## Audit (2026-07-08, post LOC-005 / PR #16)
+
+Most of this task's structural goals landed with LOC-005 (virtual locations via
+pure hierarchical model):
+
+- **Entry reuse (Phase 1)**: `LocationManager::add_location` looks up
+  `directory_paths` by exact path and reuses the existing directory entry as the
+  location root instead of inserting a duplicate orphan root.
+- **Deletion safety (Phase 4)**: `remove_location` is coverage-aware — entries
+  covered by a remaining location are never deleted; nested roots are detached
+  via `DatabaseStorage::delete_subtree_excluding_in_txn`. Covered by
+  `core/tests/nested_location_test.rs`.
+- **Watcher precedence (Phase 3)**: already satisfied — the persistent handler
+  routes each event to the location with the longest matching root path
+  (`core/src/ops/indexing/handlers/persistent.rs`), i.e. innermost wins.
+- **Moving a nested location's root (Edge Case 2)**: moot under the pure
+  hierarchical model — locations store only `entry_id` (no path column); paths
+  are derived via `PathResolver`/`directory_paths`, which
+  `update_descendant_paths` keeps consistent on moves.
+- **Sync (Phase 5)**: send side orders entry-before-location in `add_location`;
+  the FK mapper (`map_sync_json_to_local`) resolves `entry_id` by UUID on
+  receive. Explicit deferral for out-of-order arrival remains unverified.
+
+Remaining (small, non-structural):
+
+1. Skip redundant indexing when the reused root is already indexed (Phase 2 —
+   currently a wasteful but idempotent re-index).
+2. Cross-device nesting validation (`CannotNestAcrossDevices`).
+3. Innermost index-mode semantics for overlapping locations (Edge Case 3).
+4. Receiving-side sync deferral test for nested locations (Edge Case 4).
 
 ## Migration Strategy
 
