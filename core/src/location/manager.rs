@@ -625,11 +625,59 @@ impl LocationManager {
 			.await?
 			.ok_or_else(|| LocationError::LocationNotFound { id: location_id })?;
 
-		// Delete the root entry tree first if it exists (within the same transaction to avoid lock contention)
+		// Delete the root entry tree first if it exists (within the same transaction
+		// to avoid lock contention). Entry trees can be shared between locations
+		// (LOC-005: a location is a virtual pointer to a directory entry), so only
+		// delete entries that no remaining location covers.
 		if let Some(entry_id) = location.entry_id {
-			crate::ops::indexing::DatabaseStorage::delete_subtree_in_txn(entry_id, &txn)
+			let other_location_roots: Vec<i32> = entities::location::Entity::find()
+				.filter(entities::location::Column::Id.ne(location.id))
+				.all(&txn)
+				.await?
+				.into_iter()
+				.filter_map(|l| l.entry_id)
+				.collect();
+
+			// If another location is rooted at this entry or an ancestor of it,
+			// that location still indexes this tree — keep all entries.
+			let covered_by_other = !other_location_roots.is_empty()
+				&& entities::entry_closure::Entity::find()
+					.filter(entities::entry_closure::Column::DescendantId.eq(entry_id))
+					.filter(
+						entities::entry_closure::Column::AncestorId
+							.is_in(other_location_roots.clone()),
+					)
+					.count(&txn)
+					.await? > 0;
+
+			if !covered_by_other {
+				// Locations nested inside this subtree keep their entry trees;
+				// their roots are detached and become standalone roots.
+				let nested_roots: Vec<i32> = if other_location_roots.is_empty() {
+					Vec::new()
+				} else {
+					entities::entry_closure::Entity::find()
+						.filter(entities::entry_closure::Column::AncestorId.eq(entry_id))
+						.filter(
+							entities::entry_closure::Column::DescendantId
+								.is_in(other_location_roots),
+						)
+						.filter(entities::entry_closure::Column::Depth.gt(0))
+						.all(&txn)
+						.await?
+						.into_iter()
+						.map(|r| r.descendant_id)
+						.collect()
+				};
+
+				crate::ops::indexing::DatabaseStorage::delete_subtree_excluding_in_txn(
+					entry_id,
+					&nested_roots,
+					&txn,
+				)
 				.await
 				.map_err(|e| LocationError::Other(format!("Failed to delete entry tree: {}", e)))?;
+			}
 		}
 
 		// Delete the location record
