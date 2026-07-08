@@ -1191,39 +1191,90 @@ impl DatabaseStorage {
 	where
 		C: sea_orm::ConnectionTrait,
 	{
-		use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+		Self::delete_subtree_excluding_in_txn(entry_id, &[], db).await
+	}
+
+	/// Deletes a subtree while preserving the subtrees rooted at `excluded_subtree_roots`.
+	///
+	/// Entry trees can be shared between locations (a location is a virtual
+	/// pointer to a directory entry), so deleting one location's tree must not
+	/// take entries still referenced by another location with it. Preserved
+	/// roots whose parent entry is deleted are detached (parent_id = NULL) so
+	/// they become standalone roots; their directory_paths rows store absolute
+	/// paths and remain valid.
+	///
+	/// All failures propagate so the caller's transaction rolls back instead of
+	/// committing a partially deleted tree.
+	pub async fn delete_subtree_excluding_in_txn<C>(
+		entry_id: i32,
+		excluded_subtree_roots: &[i32],
+		db: &C,
+	) -> Result<(), sea_orm::DbErr>
+	where
+		C: sea_orm::ConnectionTrait,
+	{
+		use sea_orm::{sea_query::Expr, ColumnTrait, EntityTrait, QueryFilter};
+		use std::collections::HashSet;
 
 		let mut to_delete_ids: Vec<i32> = vec![entry_id];
-		if let Ok(rows) = entities::entry_closure::Entity::find()
+		let descendant_rows = entities::entry_closure::Entity::find()
 			.filter(entities::entry_closure::Column::AncestorId.eq(entry_id))
 			.all(db)
-			.await
-		{
-			to_delete_ids.extend(rows.into_iter().map(|r| r.descendant_id));
+			.await?;
+		to_delete_ids.extend(descendant_rows.into_iter().map(|r| r.descendant_id));
+
+		if !excluded_subtree_roots.is_empty() {
+			let mut protected: HashSet<i32> = excluded_subtree_roots.iter().copied().collect();
+			let rows = entities::entry_closure::Entity::find()
+				.filter(
+					entities::entry_closure::Column::AncestorId
+						.is_in(excluded_subtree_roots.to_vec()),
+				)
+				.all(db)
+				.await?;
+			protected.extend(rows.into_iter().map(|r| r.descendant_id));
+			to_delete_ids.retain(|id| !protected.contains(id));
 		}
+
 		to_delete_ids.sort_unstable();
 		to_delete_ids.dedup();
 
-		if !to_delete_ids.is_empty() {
-			let _ = entities::entry_closure::Entity::delete_many()
-				.filter(entities::entry_closure::Column::DescendantId.is_in(to_delete_ids.clone()))
-				.exec(db)
-				.await;
-			let _ = entities::entry_closure::Entity::delete_many()
-				.filter(entities::entry_closure::Column::AncestorId.is_in(to_delete_ids.clone()))
-				.exec(db)
-				.await;
-
-			let _ = entities::directory_paths::Entity::delete_many()
-				.filter(entities::directory_paths::Column::EntryId.is_in(to_delete_ids.clone()))
-				.exec(db)
-				.await;
-
-			let _ = entities::entry::Entity::delete_many()
-				.filter(entities::entry::Column::Id.is_in(to_delete_ids))
-				.exec(db)
-				.await;
+		if to_delete_ids.is_empty() {
+			return Ok(());
 		}
+
+		// Detach preserved roots whose parent entry is being deleted, before the
+		// delete runs, so the tree is never left pointing at a missing parent.
+		if !excluded_subtree_roots.is_empty() {
+			entities::entry::Entity::update_many()
+				.col_expr(
+					entities::entry::Column::ParentId,
+					Expr::value(Option::<i32>::None),
+				)
+				.filter(entities::entry::Column::Id.is_in(excluded_subtree_roots.to_vec()))
+				.filter(entities::entry::Column::ParentId.is_in(to_delete_ids.clone()))
+				.exec(db)
+				.await?;
+		}
+
+		entities::entry_closure::Entity::delete_many()
+			.filter(entities::entry_closure::Column::DescendantId.is_in(to_delete_ids.clone()))
+			.exec(db)
+			.await?;
+		entities::entry_closure::Entity::delete_many()
+			.filter(entities::entry_closure::Column::AncestorId.is_in(to_delete_ids.clone()))
+			.exec(db)
+			.await?;
+
+		entities::directory_paths::Entity::delete_many()
+			.filter(entities::directory_paths::Column::EntryId.is_in(to_delete_ids.clone()))
+			.exec(db)
+			.await?;
+
+		entities::entry::Entity::delete_many()
+			.filter(entities::entry::Column::Id.is_in(to_delete_ids))
+			.exec(db)
+			.await?;
 
 		Ok(())
 	}

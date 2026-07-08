@@ -188,48 +188,77 @@ impl LocationManager {
 			}
 		};
 
-		let now = chrono::Utc::now();
-		let entry_model = entities::entry::ActiveModel {
-			uuid: Set(Some(Uuid::new_v4())),
-			name: Set(directory_name.clone()),
-			kind: Set(EntryKind::Directory as i32),
-			extension: Set(None),
-			metadata_id: Set(None),
-			content_id: Set(None),
-			size: Set(0),
-			aggregate_size: Set(0),
-			child_count: Set(0),
-			file_count: Set(0),
-			created_at: Set(now),
-			modified_at: Set(now),
-			accessed_at: Set(None),
-			indexed_at: Set(Some(now)), // Record when location root was created
-			permissions: Set(None),
-			inode: Set(inode.map(|i| i as i64)), // Use extracted inode
-			parent_id: Set(None),                // Location root has no parent
-			volume_id: Set(Some(volume_id)),     // Volume is required for all locations
-			..Default::default()
-		};
+		// A location is a virtual pointer to a directory entry (LOC-005). If this
+		// path is already indexed (e.g. a subdirectory of another location), reuse
+		// the existing entry instead of inserting a duplicate root entry — the
+		// unique index on entries (parent_id, name, extension) cannot catch this
+		// because location roots historically used parent_id NULL.
+		let existing_entry_id = entities::directory_paths::Entity::find()
+			.filter(entities::directory_paths::Column::Path.eq(path_str.clone()))
+			.one(&txn)
+			.await?
+			.map(|dp| dp.entry_id);
 
-		let entry_record = entry_model.insert(&txn).await?;
+		let (entry_record, entry_created) = if let Some(existing_id) = existing_entry_id {
+			let entry = entities::entry::Entity::find_by_id(existing_id)
+				.one(&txn)
+				.await?
+				.ok_or_else(|| {
+					LocationError::Other(format!(
+						"directory_paths references missing entry {existing_id}"
+					))
+				})?;
+			info!(
+				"Reusing existing entry {} as root for new location at {}",
+				existing_id, path_str
+			);
+			(entry, false)
+		} else {
+			let now = chrono::Utc::now();
+			let entry_model = entities::entry::ActiveModel {
+				uuid: Set(Some(Uuid::new_v4())),
+				name: Set(directory_name.clone()),
+				kind: Set(EntryKind::Directory as i32),
+				extension: Set(None),
+				metadata_id: Set(None),
+				content_id: Set(None),
+				size: Set(0),
+				aggregate_size: Set(0),
+				child_count: Set(0),
+				file_count: Set(0),
+				created_at: Set(now),
+				modified_at: Set(now),
+				accessed_at: Set(None),
+				indexed_at: Set(Some(now)), // Record when location root was created
+				permissions: Set(None),
+				inode: Set(inode.map(|i| i as i64)), // Use extracted inode
+				parent_id: Set(None),                // Location root has no parent
+				volume_id: Set(Some(volume_id)),     // Volume is required for all locations
+				..Default::default()
+			};
+
+			let entry_record = entry_model.insert(&txn).await?;
+
+			// Add self-reference to closure table
+			let self_closure = entities::entry_closure::ActiveModel {
+				ancestor_id: Set(entry_record.id),
+				descendant_id: Set(entry_record.id),
+				depth: Set(0),
+				..Default::default()
+			};
+			self_closure.insert(&txn).await?;
+
+			// Add to directory_paths table
+			let dir_path_entry = entities::directory_paths::ActiveModel {
+				entry_id: Set(entry_record.id),
+				path: Set(path_str.clone()),
+				..Default::default()
+			};
+			dir_path_entry.insert(&txn).await?;
+
+			(entry_record, true)
+		};
 		let entry_id = entry_record.id;
-
-		// Add self-reference to closure table
-		let self_closure = entities::entry_closure::ActiveModel {
-			ancestor_id: Set(entry_id),
-			descendant_id: Set(entry_id),
-			depth: Set(0),
-			..Default::default()
-		};
-		self_closure.insert(&txn).await?;
-
-		// Add to directory_paths table
-		let dir_path_entry = entities::directory_paths::ActiveModel {
-			entry_id: Set(entry_id),
-			path: Set(path_str.clone()),
-			..Default::default()
-		};
-		dir_path_entry.insert(&txn).await?;
 
 		// Create the location record
 		let location_id = Uuid::new_v4();
@@ -260,16 +289,19 @@ impl LocationManager {
 		info!("Created location record with ID: {}", location_record.id);
 
 		// Sync location root entry FIRST (before location) to ensure FK dependency exists
-		// Location references entry_id, so entry must exist in sync system before location is synced
+		// Location references entry_id, so entry must exist in sync system before location is synced.
+		// A reused entry was already synced when it was first indexed.
 		use crate::infra::sync::ChangeType;
-		library
-			.sync_model_with_db(&entry_record, ChangeType::Insert, library.db().conn())
-			.await
-			.map_err(|e| {
-				warn!("Failed to sync location root entry: {}", e);
-				e
-			})
-			.ok();
+		if entry_created {
+			library
+				.sync_model_with_db(&entry_record, ChangeType::Insert, library.db().conn())
+				.await
+				.map_err(|e| {
+					warn!("Failed to sync location root entry: {}", e);
+					e
+				})
+				.ok();
+		}
 
 		// Now sync location to other devices (has FK relationships: device_id, entry_id)
 		library
@@ -593,11 +625,59 @@ impl LocationManager {
 			.await?
 			.ok_or_else(|| LocationError::LocationNotFound { id: location_id })?;
 
-		// Delete the root entry tree first if it exists (within the same transaction to avoid lock contention)
+		// Delete the root entry tree first if it exists (within the same transaction
+		// to avoid lock contention). Entry trees can be shared between locations
+		// (LOC-005: a location is a virtual pointer to a directory entry), so only
+		// delete entries that no remaining location covers.
 		if let Some(entry_id) = location.entry_id {
-			crate::ops::indexing::DatabaseStorage::delete_subtree_in_txn(entry_id, &txn)
+			let other_location_roots: Vec<i32> = entities::location::Entity::find()
+				.filter(entities::location::Column::Id.ne(location.id))
+				.all(&txn)
+				.await?
+				.into_iter()
+				.filter_map(|l| l.entry_id)
+				.collect();
+
+			// If another location is rooted at this entry or an ancestor of it,
+			// that location still indexes this tree — keep all entries.
+			let covered_by_other = !other_location_roots.is_empty()
+				&& entities::entry_closure::Entity::find()
+					.filter(entities::entry_closure::Column::DescendantId.eq(entry_id))
+					.filter(
+						entities::entry_closure::Column::AncestorId
+							.is_in(other_location_roots.clone()),
+					)
+					.count(&txn)
+					.await? > 0;
+
+			if !covered_by_other {
+				// Locations nested inside this subtree keep their entry trees;
+				// their roots are detached and become standalone roots.
+				let nested_roots: Vec<i32> = if other_location_roots.is_empty() {
+					Vec::new()
+				} else {
+					entities::entry_closure::Entity::find()
+						.filter(entities::entry_closure::Column::AncestorId.eq(entry_id))
+						.filter(
+							entities::entry_closure::Column::DescendantId
+								.is_in(other_location_roots),
+						)
+						.filter(entities::entry_closure::Column::Depth.gt(0))
+						.all(&txn)
+						.await?
+						.into_iter()
+						.map(|r| r.descendant_id)
+						.collect()
+				};
+
+				crate::ops::indexing::DatabaseStorage::delete_subtree_excluding_in_txn(
+					entry_id,
+					&nested_roots,
+					&txn,
+				)
 				.await
 				.map_err(|e| LocationError::Other(format!("Failed to delete entry tree: {}", e)))?;
+			}
 		}
 
 		// Delete the location record
