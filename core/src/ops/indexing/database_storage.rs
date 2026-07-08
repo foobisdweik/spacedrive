@@ -1202,6 +1202,9 @@ impl DatabaseStorage {
 	/// roots whose parent entry is deleted are detached (parent_id = NULL) so
 	/// they become standalone roots; their directory_paths rows store absolute
 	/// paths and remain valid.
+	///
+	/// All failures propagate so the caller's transaction rolls back instead of
+	/// committing a partially deleted tree.
 	pub async fn delete_subtree_excluding_in_txn<C>(
 		entry_id: i32,
 		excluded_subtree_roots: &[i32],
@@ -1214,13 +1217,11 @@ impl DatabaseStorage {
 		use std::collections::HashSet;
 
 		let mut to_delete_ids: Vec<i32> = vec![entry_id];
-		if let Ok(rows) = entities::entry_closure::Entity::find()
+		let descendant_rows = entities::entry_closure::Entity::find()
 			.filter(entities::entry_closure::Column::AncestorId.eq(entry_id))
 			.all(db)
-			.await
-		{
-			to_delete_ids.extend(rows.into_iter().map(|r| r.descendant_id));
-		}
+			.await?;
+		to_delete_ids.extend(descendant_rows.into_iter().map(|r| r.descendant_id));
 
 		if !excluded_subtree_roots.is_empty() {
 			let mut protected: HashSet<i32> = excluded_subtree_roots.iter().copied().collect();
@@ -1256,24 +1257,24 @@ impl DatabaseStorage {
 				.await?;
 		}
 
-		let _ = entities::entry_closure::Entity::delete_many()
+		entities::entry_closure::Entity::delete_many()
 			.filter(entities::entry_closure::Column::DescendantId.is_in(to_delete_ids.clone()))
 			.exec(db)
-			.await;
-		let _ = entities::entry_closure::Entity::delete_many()
+			.await?;
+		entities::entry_closure::Entity::delete_many()
 			.filter(entities::entry_closure::Column::AncestorId.is_in(to_delete_ids.clone()))
 			.exec(db)
-			.await;
+			.await?;
 
-		let _ = entities::directory_paths::Entity::delete_many()
+		entities::directory_paths::Entity::delete_many()
 			.filter(entities::directory_paths::Column::EntryId.is_in(to_delete_ids.clone()))
 			.exec(db)
-			.await;
+			.await?;
 
-		let _ = entities::entry::Entity::delete_many()
+		entities::entry::Entity::delete_many()
 			.filter(entities::entry::Column::Id.is_in(to_delete_ids))
 			.exec(db)
-			.await;
+			.await?;
 
 		Ok(())
 	}

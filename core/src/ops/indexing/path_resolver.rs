@@ -188,9 +188,14 @@ impl PathResolver {
 
 	/// Bulk-updates descendant directory paths after moving a directory tree.
 	///
-	/// Rewrites the old prefix of every path under the moved directory in a single
-	/// UPDATE. Uses substr() rather than REPLACE()/LIKE so that paths containing
-	/// the old prefix as an interior substring (or SQL wildcards) are untouched.
+	/// Rewrites the old prefix of every path under the moved directory in a
+	/// single UPDATE. The SET clause uses substr() rather than REPLACE() so
+	/// paths containing the old prefix as an interior substring are untouched.
+	/// The WHERE clause matches the `old_path || '/'` prefix with a range
+	/// comparison ('0' is the byte after '/'), which stays index-friendly and
+	/// is immune to SQL LIKE wildcards in the path — SQLite's LIKE prefix
+	/// optimization would be disabled here by both the default case-insensitive
+	/// LIKE on a BINARY-collated column and any ESCAPE clause.
 	/// Should be called after updating the moved directory's entry.parent_id and directory_paths.path.
 	pub async fn update_descendant_paths<C: ConnectionTrait>(
 		db: &C,
@@ -201,7 +206,7 @@ impl PathResolver {
 		let sql = r#"
             UPDATE directory_paths
             SET path = ? || substr(path, length(?) + 1)
-            WHERE substr(path, 1, length(?) + 1) = ? || '/'
+            WHERE path >= ? || '/' AND path < ? || '0'
         "#;
 
 		let result = db
