@@ -188,7 +188,9 @@ impl PathResolver {
 
 	/// Bulk-updates descendant directory paths after moving a directory tree.
 	///
-	/// Uses a single SQL REPLACE to rewrite all paths under the moved directory's old prefix.
+	/// Rewrites the old prefix of every path under the moved directory in a single
+	/// UPDATE. Uses substr() rather than REPLACE()/LIKE so that paths containing
+	/// the old prefix as an interior substring (or SQL wildcards) are untouched.
 	/// Should be called after updating the moved directory's entry.parent_id and directory_paths.path.
 	pub async fn update_descendant_paths<C: ConnectionTrait>(
 		db: &C,
@@ -198,15 +200,20 @@ impl PathResolver {
 	) -> Result<u64, DbErr> {
 		let sql = r#"
             UPDATE directory_paths
-            SET path = REPLACE(path, ?, ?)
-            WHERE path LIKE ? || '/%'
+            SET path = ? || substr(path, length(?) + 1)
+            WHERE substr(path, 1, length(?) + 1) = ? || '/'
         "#;
 
 		let result = db
 			.execute(Statement::from_sql_and_values(
 				db.get_database_backend(),
 				sql,
-				vec![old_path.into(), new_path.into(), old_path.into()],
+				vec![
+					new_path.into(),
+					old_path.into(),
+					old_path.into(),
+					old_path.into(),
+				],
 			))
 			.await?;
 
