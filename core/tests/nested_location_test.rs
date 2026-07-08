@@ -26,7 +26,9 @@ async fn test_parent_location_removal_preserves_nested_location() -> anyhow::Res
 
 	let test_location = harness.create_test_location("parent_root").await?;
 	test_location.write_file("root_file.txt", "root").await?;
-	test_location.write_file("sub/nested_file.txt", "nested").await?;
+	test_location
+		.write_file("sub/nested_file.txt", "nested")
+		.await?;
 	test_location
 		.write_file("sub/deep/deep_file.txt", "deep")
 		.await?;
@@ -144,7 +146,9 @@ async fn test_nested_location_removal_preserves_parent_entries() -> anyhow::Resu
 
 	let test_location = harness.create_test_location("parent_root").await?;
 	test_location.write_file("root_file.txt", "root").await?;
-	test_location.write_file("sub/nested_file.txt", "nested").await?;
+	test_location
+		.write_file("sub/nested_file.txt", "nested")
+		.await?;
 
 	let parent = test_location.index("Parent", IndexMode::Shallow).await?;
 
