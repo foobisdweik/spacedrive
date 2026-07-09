@@ -1,5 +1,4 @@
 use crate::infra::db::entities::{directory_paths, entry, entry_closure, location};
-use crate::ops::indexing::path_resolver::PathResolver;
 use anyhow::Result;
 use async_trait::async_trait;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, QueryTrait};
@@ -34,7 +33,13 @@ pub async fn extract_persistent_uuids_for_path(
 	db: &DatabaseConnection,
 	root_path: &Path,
 ) -> Result<HashMap<PathBuf, Uuid>> {
-	let root_str = root_path.to_string_lossy().to_string();
+	// `directory_paths` stores canonicalized paths; canonicalize the query
+	// path so symlinked or non-normalized roots (e.g. /tmp on macOS) match.
+	let root_str = root_path
+		.canonicalize()
+		.unwrap_or_else(|_| root_path.to_path_buf())
+		.to_string_lossy()
+		.to_string();
 
 	// Direction 1: the scanned path is itself a persistent directory. Its
 	// subtree covers any nested location roots, so no further lookup needed.
@@ -93,27 +98,48 @@ async fn collect_subtree_uuids(
 ) -> Result<()> {
 	// Keep the closure-table lookup inside SQLite to avoid parameter limits on
 	// large directories.
+	let subtree_ids = || {
+		entry_closure::Entity::find()
+			.select_only()
+			.column(entry_closure::Column::DescendantId)
+			.filter(entry_closure::Column::AncestorId.eq(root_entry_id))
+			.into_query()
+	};
+
 	let descendants = entry::Entity::find()
-		.filter(
-			entry::Column::Id.in_subquery(
-				entry_closure::Entity::find()
-					.select_only()
-					.column(entry_closure::Column::DescendantId)
-					.filter(entry_closure::Column::AncestorId.eq(root_entry_id))
-					.into_query(),
-			),
-		)
+		.filter(entry::Column::Id.in_subquery(subtree_ids()))
 		.filter(entry::Column::Uuid.is_not_null())
 		.all(db)
 		.await?;
 
-	// Resolve full paths using directory_paths cache + filename
+	// Batch-fetch every directory path in the subtree so path resolution
+	// needs no per-entry queries. The closure table's depth-0 self-rows
+	// include the root, so a file's parent directory is always covered.
+	let dir_paths: HashMap<i32, String> = directory_paths::Entity::find()
+		.filter(directory_paths::Column::EntryId.in_subquery(subtree_ids()))
+		.all(db)
+		.await?
+		.into_iter()
+		.map(|dp| (dp.entry_id, dp.path))
+		.collect();
+
 	out.reserve(descendants.len());
 	for entry in descendants {
-		if let Ok(full_path) = PathResolver::get_full_path(db, entry.id).await {
-			if let Some(uuid) = entry.uuid {
-				out.insert(full_path, uuid);
-			}
+		let full_path = match entry.entry_kind() {
+			entry::EntryKind::Directory => dir_paths.get(&entry.id).map(PathBuf::from),
+			_ => entry.parent_id.and_then(|parent_id| {
+				dir_paths.get(&parent_id).map(|parent| {
+					let filename = match &entry.extension {
+						Some(ext) => format!("{}.{}", entry.name, ext),
+						None => entry.name.clone(),
+					};
+					Path::new(parent).join(filename)
+				})
+			}),
+		};
+
+		if let (Some(path), Some(uuid)) = (full_path, entry.uuid) {
+			out.insert(path, uuid);
 		}
 	}
 
