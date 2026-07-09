@@ -35,8 +35,8 @@ pub async fn extract_persistent_uuids_for_path(
 ) -> Result<HashMap<PathBuf, Uuid>> {
 	// `directory_paths` stores canonicalized paths; canonicalize the query
 	// path so symlinked or non-normalized roots (e.g. /tmp on macOS) match.
-	let root_str = root_path
-		.canonicalize()
+	let root_str = tokio::fs::canonicalize(root_path)
+		.await
 		.unwrap_or_else(|_| root_path.to_path_buf())
 		.to_string_lossy()
 		.to_string();
