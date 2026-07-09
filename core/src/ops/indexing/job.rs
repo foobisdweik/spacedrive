@@ -482,31 +482,25 @@ impl IndexerJob {
 						ctx.log("Skipping aggregation and content phases for ephemeral job (content kind identified by extension)");
 						state.phase = Phase::Complete;
 
-						// Spawn background UUID reconciliation
+						// Spawn background UUID reconciliation (INDEX-010).
+						// Checks every open library so overlapping persistent
+						// paths from all of them are adopted.
 						if let Some(local_path) = self.config.path.as_local_path() {
-							let db = ctx.library_db().clone();
-							let cache = ctx.library().core_context().ephemeral_cache().clone();
+							let core_context = ctx.library().core_context().clone();
+							let cache = core_context.ephemeral_cache().clone();
+							let event_bus = ctx.library().event_bus().clone();
+							let fallback_db = ctx.library_db().clone();
 							let root_path = local_path.to_path_buf();
 
 							tokio::spawn(async move {
-								match crate::ops::indexing::reconciliation::extract_persistent_uuids_for_path(&db, &root_path).await {
-									Ok(uuids) if !uuids.is_empty() => {
-										let count = cache.reconcile_persistent_uuids(&uuids).await;
-										tracing::debug!(
-											count,
-											path = %root_path.display(),
-											"reconciled UUIDs for ephemeral path"
-										);
-									}
-									Ok(_) => {}
-									Err(e) => {
-										tracing::warn!(
-											error = %e,
-											path = %root_path.display(),
-											"UUID reconciliation failed"
-										);
-									}
-								}
+								reconcile_ephemeral_uuids_with_libraries(
+									core_context,
+									cache,
+									event_bus,
+									fallback_db,
+									root_path,
+								)
+								.await;
 							});
 						}
 
@@ -1264,6 +1258,104 @@ impl From<IndexerOutput> for JobOutput {
 			metrics: output.metrics.unwrap_or_default(),
 		}
 	}
+}
+
+/// Background task (INDEX-010): reconcile ephemeral UUIDs with the persistent
+/// index of every open library, then emit change events so frontend caches
+/// replace temporary v4 UUIDs with persistent ones.
+async fn reconcile_ephemeral_uuids_with_libraries(
+	core_context: std::sync::Arc<crate::context::CoreContext>,
+	cache: std::sync::Arc<crate::ops::indexing::ephemeral::EphemeralIndexCache>,
+	event_bus: std::sync::Arc<crate::infra::event::EventBus>,
+	fallback_db: sea_orm::DatabaseConnection,
+	root_path: PathBuf,
+) {
+	use crate::ops::indexing::reconciliation::extract_persistent_uuids_for_path;
+
+	// Prefer all open libraries; fall back to the indexing job's own library
+	// if the library manager isn't initialized (e.g. minimal test setups).
+	let dbs: Vec<sea_orm::DatabaseConnection> = {
+		let manager = core_context.library_manager.read().await.clone();
+		match manager {
+			Some(manager) => manager
+				.get_open_libraries()
+				.await
+				.iter()
+				.map(|l| l.db().conn().clone())
+				.collect(),
+			None => vec![fallback_db],
+		}
+	};
+
+	for db in dbs {
+		match extract_persistent_uuids_for_path(&db, &root_path).await {
+			Ok(uuids) if !uuids.is_empty() => {
+				let changes = cache.reconcile_persistent_uuids(&uuids).await;
+				tracing::debug!(
+					count = changes.len(),
+					path = %root_path.display(),
+					"reconciled UUIDs for ephemeral path"
+				);
+				emit_uuid_reconciliation_events(&cache, &event_bus, &changes).await;
+			}
+			Ok(_) => {}
+			Err(e) => {
+				tracing::warn!(
+					error = %e,
+					path = %root_path.display(),
+					"UUID reconciliation failed"
+				);
+			}
+		}
+	}
+}
+
+/// Emit a ResourceChangedBatch event for entries whose UUID changed during
+/// reconciliation, so frontend caches drop stale ephemeral UUIDs (INDEX-010).
+async fn emit_uuid_reconciliation_events(
+	cache: &crate::ops::indexing::ephemeral::EphemeralIndexCache,
+	event_bus: &crate::infra::event::EventBus,
+	changes: &[crate::ops::indexing::reconciliation::ReconciledUuid],
+) {
+	// Only entries that previously had a different UUID can be cached by the
+	// frontend under a stale id; fresh assignments need no correction.
+	let stale: Vec<_> = changes.iter().filter(|c| c.previous.is_some()).collect();
+	if stale.is_empty() {
+		return;
+	}
+
+	let index = cache.get_global_index();
+	let index = index.read().await;
+
+	let mut files = Vec::with_capacity(stale.len());
+	let mut alternate_ids = Vec::with_capacity(stale.len());
+	for change in stale {
+		let Some(metadata) = index.get_entry_ref(&change.path) else {
+			continue;
+		};
+		let sd_path = crate::domain::addressing::SdPath::local(change.path.clone());
+		let mut file = crate::domain::File::from_ephemeral(change.uuid, &metadata, sd_path);
+		file.content_kind = index.get_content_kind(&change.path);
+		files.push(file);
+		if let Some(previous) = change.previous {
+			alternate_ids.push(previous);
+		}
+	}
+	drop(index);
+
+	if files.is_empty() {
+		return;
+	}
+
+	event_bus.emit(crate::infra::event::Event::ResourceChangedBatch {
+		resource_type: "file".to_string(),
+		resources: serde_json::to_value(&files).unwrap_or_default(),
+		metadata: Some(crate::infra::event::ResourceMetadata {
+			no_merge_fields: vec![],
+			alternate_ids,
+			affected_paths: files.iter().map(|f| f.sd_path.clone()).collect(),
+		}),
+	});
 }
 
 #[cfg(test)]

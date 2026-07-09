@@ -1,12 +1,12 @@
 ---
 id: INDEX-011
 title: Rules-Free Ephemeral Scan Mode
-status: In Progress
+status: Done
 assignee: jamiepine
 parent: INDEX-000
 priority: High
 tags: [indexing, ephemeral, rules, file-sync, completeness]
-last_updated: 2026-06-18
+last_updated: 2026-07-08
 related_tasks: [INDEX-005, INDEX-010, FSYNC-003, FILE-006]
 ---
 
@@ -162,15 +162,32 @@ Confirm that running a complete scan on an already-indexed path adds new entries
 
 ## Acceptance Criteria
 
-- [ ] `RuleToggles::complete()` disables all filtering rules
-- [ ] `IndexerJobConfig::complete_scan()` creates ephemeral config with no rules
-- [ ] Complete scan indexes files that would be filtered by default rules (node_modules, .git, etc.)
-- [ ] Complete scan after a filtered scan adds missing entries without duplicating existing ones
-- [ ] Existing ephemeral UUIDs are preserved when a complete scan fills gaps
-- [ ] `sync_conduit.use_index_rules = false` triggers complete scan in resolver
-- [ ] Integration test: complete scan includes node_modules directory
-- [ ] Integration test: complete scan includes hidden files and .git
-- [ ] Integration test: complete scan after filtered scan preserves original UUIDs
+- [x] `RuleToggles::complete()` disables all filtering rules
+- [x] `IndexerJobConfig::complete_scan()` creates ephemeral config with no rules
+- [x] Complete scan indexes files that would be filtered by default rules (node_modules, .git, etc.)
+- [x] Complete scan after a filtered scan adds missing entries without duplicating existing ones
+- [x] Existing ephemeral UUIDs are preserved when a complete scan fills gaps
+- [x] `sync_conduit.use_index_rules = false` triggers complete scan in resolver
+- [x] Integration test: complete scan includes node_modules directory
+- [x] Integration test: complete scan includes hidden files and .git
+- [x] Integration test: complete scan after filtered scan preserves original UUIDs
+
+## Implementation (completed 2026-07-08)
+
+Steps 1–3 had already landed: `RuleToggles::complete()`
+(`core/src/ops/indexing/rules.rs`), `IndexerJobConfig::complete_scan()`
+(`core/src/ops/indexing/job.rs`), and the resolver wiring — when
+`sync_conduit.use_index_rules` is false, `SyncResolver::ensure_complete_scan`
+dispatches a complete ephemeral scan of both conduit roots
+(`core/src/service/file_sync/resolver.rs`). `ops/files/diff` wires the same
+flag through `ensure_indexed`.
+
+This task added the missing verification:
+`core/tests/complete_scan_test.rs` runs a default-rules ephemeral scan
+(asserting node_modules/.git are excluded), then a complete scan of the same
+root, asserting the previously filtered files appear, existing entries keep
+their UUIDs, and no duplicates are created (additive behavior of
+`EphemeralIndex::add_entry`).
 
 ## Technical Notes
 
