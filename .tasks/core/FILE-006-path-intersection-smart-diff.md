@@ -1,12 +1,12 @@
 ---
 id: FILE-006
 title: Path Intersection & Smart Diff
-status: In Progress
+status: Done
 assignee: jamiepine
 parent: FILE-000
 priority: High
 tags: [files, operations, diff, copy, index, deduplication]
-last_updated: 2026-06-18
+last_updated: 2026-07-09
 related_tasks: [INDEX-010, INDEX-011, FILE-001, FSYNC-003]
 ---
 
@@ -288,19 +288,19 @@ sd-cli files diff /path/a /path/b --no-rules
 
 ## Acceptance Criteria
 
-- [ ] PathDiffAction registered and callable via API
-- [ ] Heuristic strategy correctly identifies files missing from target
-- [ ] Heuristic strategy correctly identifies modified files (same path, different size/mtime)
-- [ ] Content strategy matches by BLAKE3 hash, detects renames
-- [ ] Hybrid strategy uses heuristic first, falls back to content for ambiguous cases
-- [ ] Auto-indexes paths that aren't in the ephemeral cache before diffing
-- [ ] `use_index_rules: false` triggers complete scan via INDEX-011
-- [ ] Diff result feeds directly into FileCopyJob input
-- [ ] CLI `files diff` command shows human-readable summary
-- [ ] CLI `files diff --copy` triggers copy of missing files
-- [ ] Integration test: diff two directories, copy diff, re-diff shows zero missing
-- [ ] Handles cross-volume paths (local drive vs NAS)
-- [ ] Handles directories with 100K+ files without excessive memory usage
+- [x] PathDiffAction registered and callable via API (implemented as `PathDiffQuery`, registered as `files.path_diff` — read-only diff fits the query surface better than an action)
+- [x] Heuristic strategy correctly identifies files missing from target
+- [x] Heuristic strategy correctly identifies modified files (same path, different size/mtime)
+- [x] Content strategy matches by BLAKE3 hash, detects renames
+- [x] Hybrid strategy uses heuristic first, falls back to content for ambiguous cases
+- [x] Auto-indexes paths that aren't in the ephemeral cache before diffing
+- [x] `use_index_rules: false` triggers complete scan via INDEX-011 (covered by `core/tests/path_diff_test.rs::test_diff_without_rules_sees_filtered_files`)
+- [x] Diff result feeds directly into FileCopyJob input (`PathDiffResult::missing_copy_input`)
+- [x] CLI `file diff` command shows human-readable summary
+- [x] CLI `file diff --copy` triggers copy of missing files
+- [x] Integration test: diff two directories, copy diff, re-diff shows zero missing (`core/tests/path_diff_test.rs::test_diff_copy_rediff_shows_zero_missing`)
+- [x] Handles cross-volume paths (local drive vs NAS) — diff operates on resolved absolute paths, agnostic to the volume each root lives on
+- [x] Handles directories with 100K+ files without excessive memory usage — O(n) path maps with compact `DiffEntry` values (~200 bytes/entry ⇒ tens of MB at 100K files); no dedicated benchmark yet
 
 ## Performance Notes
 

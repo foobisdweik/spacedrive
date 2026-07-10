@@ -26,7 +26,7 @@ use chrono::Utc;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use once_cell::sync::OnceCell;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,6 +71,10 @@ pub struct LibraryManager {
 
 	/// Core context (needed for opening libraries on filesystem events)
 	context: Arc<RwLock<Option<Arc<CoreContext>>>>,
+
+	/// Library paths currently mid-creation; the directory watcher must not
+	/// auto-open these until creation finishes (lock/DB races otherwise)
+	creating: Arc<RwLock<HashSet<PathBuf>>>,
 }
 
 impl LibraryManager {
@@ -97,6 +101,7 @@ impl LibraryManager {
 			watcher: Arc::new(RwLock::new(None)),
 			is_watching: Arc::new(RwLock::new(false)),
 			context: Arc::new(RwLock::new(None)),
+			creating: Arc::new(RwLock::new(HashSet::new())),
 		}
 	}
 
@@ -118,6 +123,7 @@ impl LibraryManager {
 			watcher: Arc::new(RwLock::new(None)),
 			is_watching: Arc::new(RwLock::new(false)),
 			context: Arc::new(RwLock::new(None)),
+			creating: Arc::new(RwLock::new(HashSet::new())),
 		}
 	}
 
@@ -188,6 +194,13 @@ impl LibraryManager {
 				format!("Failed to create libraries directory: {}", e),
 			))
 		})?;
+
+		// Canonicalize so the path matches what the directory watcher reports
+		// (e.g. /var vs /private/var on macOS); auto-open guards compare
+		// paths verbatim.
+		let base_path = tokio::fs::canonicalize(&base_path)
+			.await
+			.unwrap_or(base_path);
 
 		// Find unique library path
 		let library_path = find_unique_library_path(&base_path, &safe_name).await?;
@@ -274,6 +287,13 @@ impl LibraryManager {
 				format!("Failed to create libraries directory: {}", e),
 			))
 		})?;
+
+		// Canonicalize so the path matches what the directory watcher reports
+		// (e.g. /var vs /private/var on macOS); auto-open guards compare
+		// paths verbatim.
+		let base_path = tokio::fs::canonicalize(&base_path)
+			.await
+			.unwrap_or(base_path);
 
 		// Find unique library path
 		let library_path = find_unique_library_path(&base_path, &safe_name).await?;
@@ -404,18 +424,36 @@ impl LibraryManager {
 			))
 		})?;
 
+		// Canonicalize so the path matches what the directory watcher reports
+		// (e.g. /var vs /private/var on macOS); auto-open guards compare
+		// paths verbatim.
+		let base_path = tokio::fs::canonicalize(&base_path)
+			.await
+			.unwrap_or(base_path);
+
 		// Find unique library path
 		let library_path = find_unique_library_path(&base_path, &safe_name).await?;
 
-		// Create library directory
-		tokio::fs::create_dir_all(&library_path).await?;
+		// Shield the new directory from the library watcher's auto-open until
+		// creation completes; racing opens fight over the lock and the
+		// still-initializing database.
+		self.creating.write().await.insert(library_path.clone());
 
-		// Initialize library
-		self.initialize_library(&library_path, name.to_string(), context.clone())
-			.await?;
+		let create_result = async {
+			// Create library directory
+			tokio::fs::create_dir_all(&library_path).await?;
 
-		// Open the newly created library
-		let library = self.open_library(&library_path, context.clone()).await?;
+			// Initialize library
+			self.initialize_library(&library_path, name.to_string(), context.clone())
+				.await?;
+
+			// Open the newly created library
+			self.open_library(&library_path, context.clone()).await
+		}
+		.await;
+
+		self.creating.write().await.remove(&library_path);
+		let library = create_result?;
 
 		// Create default space with Quick Access group
 		self.create_default_space(&library).await?;
@@ -1683,6 +1721,7 @@ impl LibraryManager {
 		let tx_clone = tx.clone();
 
 		let libraries = self.libraries.clone();
+		let creating = self.creating.clone();
 		let event_bus = self.event_bus.clone();
 		let is_watching = self.is_watching.clone();
 		let context = self.context.clone();
@@ -1765,6 +1804,13 @@ impl LibraryManager {
 						});
 
 						for path in to_create {
+							// Skip libraries that are mid-creation; create_library
+							// opens them itself once initialization finishes.
+							if creating.read().await.contains(&path) {
+								debug!("Library at {:?} is being created, skipping auto-open", path);
+								continue;
+							}
+
 							// Check if the library exists and is valid
 							if path.exists() && is_library_directory(&path) {
 								debug!("Processing library create: {:?}", path);
@@ -1798,6 +1844,7 @@ impl LibraryManager {
 											watcher: Arc::new(RwLock::new(None)),
 											is_watching: Arc::new(RwLock::new(false)),
 											context: Arc::new(RwLock::new(None)),
+											creating: creating.clone(),
 										};
 
 										match temp_manager.open_library(&path, ctx).await {
@@ -1862,6 +1909,7 @@ impl LibraryManager {
 										watcher: Arc::new(RwLock::new(None)),
 										is_watching: Arc::new(RwLock::new(false)),
 										context: Arc::new(RwLock::new(None)),
+										creating: creating.clone(),
 									};
 
 									match temp_manager.close_library(id).await {

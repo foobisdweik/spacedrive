@@ -278,6 +278,7 @@ enum SyncGeneration {
 
 #[derive(DeriveIden)]
 enum Entry {
+	#[sea_orm(iden = "entries")]
 	Table,
 	Id,
 }
