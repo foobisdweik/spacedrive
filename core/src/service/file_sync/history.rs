@@ -1,6 +1,8 @@
 use crate::infra::db::entities::sync_generation;
 use anyhow::Result;
-use sea_orm::{prelude::*, DatabaseConnection, QueryOrder, QuerySelect};
+use sea_orm::{
+	prelude::*, sea_query::Expr, DatabaseConnection, FromQueryResult, QueryOrder, QuerySelect,
+};
 use std::sync::Arc;
 
 /// Read-only queries over a conduit's generation history.
@@ -92,30 +94,75 @@ impl SyncHistory {
 	}
 
 	/// Compute aggregate statistics across every generation of a conduit.
+	///
+	/// The aggregation runs entirely in the database (COUNT/SUM over a single
+	/// scan) rather than loading every generation row into memory, so it stays
+	/// O(1) in memory no matter how long a conduit's history grows.
 	pub async fn stats(&self, conduit_id: i32) -> Result<SyncHistoryStats> {
-		let generations = sync_generation::Entity::find()
-			.filter(sync_generation::Column::ConduitId.eq(conduit_id))
-			.all(&*self.db)
-			.await?;
-
-		let mut stats = SyncHistoryStats::default();
-		for generation in &generations {
-			stats.total_generations += 1;
-			if generation.completed_at.is_some() {
-				stats.completed_generations += 1;
-			}
-			if generation.verification_status == "verified" {
-				stats.verified_generations += 1;
-			}
-			if generation.verification_status.starts_with("failed:") {
-				stats.failed_generations += 1;
-			}
-			stats.files_copied += generation.files_copied as i64;
-			stats.files_deleted += generation.files_deleted as i64;
-			stats.conflicts_resolved += generation.conflicts_resolved as i64;
-			stats.bytes_transferred += generation.bytes_transferred;
+		#[derive(Debug, FromQueryResult)]
+		struct StatsRow {
+			total_generations: Option<i64>,
+			completed_generations: Option<i64>,
+			verified_generations: Option<i64>,
+			failed_generations: Option<i64>,
+			files_copied: Option<i64>,
+			files_deleted: Option<i64>,
+			conflicts_resolved: Option<i64>,
+			bytes_transferred: Option<i64>,
 		}
 
-		Ok(stats)
+		let row = sync_generation::Entity::find()
+			.filter(sync_generation::Column::ConduitId.eq(conduit_id))
+			.select_only()
+			.column_as(sync_generation::Column::Id.count(), "total_generations")
+			.column_as(
+				Expr::cust("COUNT(CASE WHEN completed_at IS NOT NULL THEN 1 END)"),
+				"completed_generations",
+			)
+			.column_as(
+				Expr::cust("COUNT(CASE WHEN verification_status = 'verified' THEN 1 END)"),
+				"verified_generations",
+			)
+			.column_as(
+				Expr::cust("COUNT(CASE WHEN verification_status LIKE 'failed:%' THEN 1 END)"),
+				"failed_generations",
+			)
+			.column_as(sync_generation::Column::FilesCopied.sum(), "files_copied")
+			.column_as(sync_generation::Column::FilesDeleted.sum(), "files_deleted")
+			.column_as(
+				sync_generation::Column::ConflictsResolved.sum(),
+				"conflicts_resolved",
+			)
+			.column_as(
+				sync_generation::Column::BytesTransferred.sum(),
+				"bytes_transferred",
+			)
+			.into_model::<StatsRow>()
+			.one(&*self.db)
+			.await?;
+
+		// A bare aggregate query always yields one row, but guard against None
+		// so an empty result set maps to zeroed stats rather than an error.
+		let row = row.unwrap_or(StatsRow {
+			total_generations: None,
+			completed_generations: None,
+			verified_generations: None,
+			failed_generations: None,
+			files_copied: None,
+			files_deleted: None,
+			conflicts_resolved: None,
+			bytes_transferred: None,
+		});
+
+		Ok(SyncHistoryStats {
+			total_generations: row.total_generations.unwrap_or(0) as u64,
+			completed_generations: row.completed_generations.unwrap_or(0) as u64,
+			verified_generations: row.verified_generations.unwrap_or(0) as u64,
+			failed_generations: row.failed_generations.unwrap_or(0) as u64,
+			files_copied: row.files_copied.unwrap_or(0),
+			files_deleted: row.files_deleted.unwrap_or(0),
+			conflicts_resolved: row.conflicts_resolved.unwrap_or(0),
+			bytes_transferred: row.bytes_transferred.unwrap_or(0),
+		})
 	}
 }
