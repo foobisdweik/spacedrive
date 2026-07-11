@@ -21,9 +21,11 @@ use uuid::Uuid;
 
 pub mod conduit;
 pub mod conflict;
+pub mod history;
 pub mod resolver;
 
 use conduit::ConduitManager;
+use history::SyncHistory;
 use resolver::{DirectionalOps, SyncResolver};
 
 /// File sync orchestration service
@@ -31,9 +33,14 @@ pub struct FileSyncService {
 	library: Arc<Library>,
 	conduit_manager: Arc<ConduitManager>,
 	resolver: Arc<SyncResolver>,
+	history: Arc<SyncHistory>,
 
 	/// Active sync operations (conduit_id -> sync operation)
 	active_syncs: Arc<RwLock<HashMap<i32, SyncOperation>>>,
+
+	/// Test override for library-sync readiness. `None` defers to the real
+	/// distributed sync state; `Some(ready)` forces the gate open or closed.
+	library_sync_ready_override: Arc<RwLock<Option<bool>>>,
 }
 
 /// Tracks jobs for a single sync direction
@@ -65,12 +72,15 @@ impl FileSyncService {
 		let db = Arc::new(library.db().conn().clone());
 		let conduit_manager = Arc::new(ConduitManager::new(db.clone()));
 		let resolver = Arc::new(SyncResolver::new(db.clone(), library.clone()));
+		let history = Arc::new(SyncHistory::new(db));
 
 		Self {
 			library,
 			conduit_manager,
 			resolver,
+			history,
 			active_syncs: Arc::new(RwLock::new(HashMap::new())),
+			library_sync_ready_override: Arc::new(RwLock::new(None)),
 		}
 	}
 
@@ -102,6 +112,15 @@ impl FileSyncService {
 
 		if !conduit.enabled {
 			return Err(anyhow::anyhow!("Conduit is disabled"));
+		}
+
+		// Library Sync First: refuse to operate while the metadata index may be
+		// stale relative to peers. Operating on a stale index risks copying or
+		// deleting the wrong files.
+		if !self.is_library_sync_complete().await {
+			return Err(anyhow::anyhow!(
+				"Library sync is not complete; refusing to start file sync until the index is up to date"
+			));
 		}
 
 		// Check if already syncing
@@ -504,6 +523,26 @@ impl FileSyncService {
 
 		// Phase 3: Mark sync as complete
 		self.emit_file_sync_progress(conduit_id, generation, "finalizing");
+		let files_copied = source_to_target_delete_ops.to_copy.len()
+			+ target_to_source_delete_ops
+				.as_ref()
+				.map(|ops| ops.to_copy.len())
+				.unwrap_or(0);
+		let files_deleted = source_to_target_delete_ops.to_delete.len()
+			+ target_to_source_delete_ops
+				.as_ref()
+				.map(|ops| ops.to_delete.len())
+				.unwrap_or(0);
+		if let Err(err) = self
+			.conduit_manager
+			.record_generation_counts(generation_id, files_copied as i32, files_deleted as i32)
+			.await
+		{
+			warn!(
+				"Failed to record generation counts for conduit {}: {}",
+				conduit_id, err
+			);
+		}
 		if let Err(err) = self
 			.conduit_manager
 			.complete_generation(generation_id)
@@ -530,31 +569,158 @@ impl FileSyncService {
 			conduit_id
 		);
 
-		// Phase 4: Verification (simplified for MVP)
+		// Phase 4: Trust Watcher verification
 		self.emit_file_sync_progress(conduit_id, generation, "verifying");
-		if let Err(err) = self
-			.conduit_manager
-			.update_verification_status(generation_id, "verified")
-			.await
-		{
-			self.record_sync_failure(
-				conduit_id,
-				format!("Failed to update verification status: {}", err),
-			)
+		let verification = self
+			.complete_sync_with_verification(conduit_id, generation_id)
+			.await;
+
+		// Phase 5: Remove from active syncs regardless of the verification
+		// outcome; the copy/delete jobs themselves have already finished.
+		self.active_syncs.write().await.remove(&conduit_id);
+
+		match verification {
+			Ok(()) => {
+				self.emit_file_sync_completed(conduit_id, generation);
+				info!(
+					"Sync fully completed and verified for conduit {}",
+					conduit_id
+				);
+				Ok(())
+			}
+			Err(err) => {
+				// The copy/delete jobs succeeded but the post-sync convergence
+				// check did not pass. Surface this as a distinct failure so
+				// callers and telemetry never mistake an unverified run for a
+				// verified one; the generation row is already marked
+				// `failed:<reason>` by complete_sync_with_verification.
+				warn!(
+					"Verification failed for conduit {} generation {}: {}",
+					conduit_id, generation, err
+				);
+				self.emit_file_sync_failed(
+					conduit_id,
+					Some(generation),
+					format!("sync verification failed: {}", err),
+				);
+				Err(err)
+			}
+		}
+	}
+
+	/// Trust Watcher verification flow.
+	///
+	/// After the sync jobs complete: wait for a library sync round so remote
+	/// metadata is current (`waiting_library_sync`), then re-index both
+	/// endpoints and re-run sync resolution against a complete re-scan — the
+	/// same convergence the filesystem watcher provides (`waiting_watcher`). If
+	/// no operations remain the generation is `verified`; otherwise it is marked
+	/// `failed:<reason>` so a later sync round can converge.
+	async fn complete_sync_with_verification(
+		&self,
+		conduit_id: i32,
+		generation_id: i32,
+	) -> Result<()> {
+		let conduit = self.conduit_manager.get_conduit(conduit_id).await?;
+
+		// Wait for a library sync round so remote metadata is current before we
+		// re-read the index. This is a real blocking step (`wait_for_library_sync`
+		// polls until the peer sync state settles), so the status reflects work
+		// actually in progress.
+		self.conduit_manager
+			.update_verification_status(generation_id, "waiting_library_sync")
 			.await?;
-			return Err(err);
+		if !self.wait_for_library_sync().await {
+			let status = sync_generation::VerificationStatus::failed("library_sync_timeout");
+			self.conduit_manager
+				.update_verification_status(generation_id, &status)
+				.await?;
+			return Err(anyhow::anyhow!(
+				"Library sync did not complete within the verification window"
+			));
 		}
 
-		// Remove from active syncs
-		self.active_syncs.write().await.remove(&conduit_id);
-		self.emit_file_sync_completed(conduit_id, generation);
+		// Re-index both endpoints and re-resolve. The complete re-scan inside
+		// verify_conduit is the index refresh the filesystem watcher would
+		// perform, so the generation stays in `waiting_watcher` for the whole
+		// duration of that re-scan rather than passing through the status
+		// instantly. A dedicated on-demand watcher-scan API is deferred
+		// (FSYNC-004/005); until it exists, verification drives the re-scan.
+		self.conduit_manager
+			.update_verification_status(generation_id, "waiting_watcher")
+			.await?;
+		match self.resolver.verify_conduit(&conduit).await {
+			Ok(operations) if operations.is_converged() => {
+				self.conduit_manager
+					.update_verification_status(generation_id, "verified")
+					.await?;
+				Ok(())
+			}
+			Ok(operations) => {
+				let remaining = operations.source_to_target.to_copy.len()
+					+ operations.source_to_target.to_delete.len()
+					+ operations
+						.target_to_source
+						.as_ref()
+						.map(|ops| ops.to_copy.len() + ops.to_delete.len())
+						.unwrap_or(0) + operations.conflicts.len();
+				let status = sync_generation::VerificationStatus::failed(&format!(
+					"{}_operations_remaining",
+					remaining
+				));
+				self.conduit_manager
+					.update_verification_status(generation_id, &status)
+					.await?;
+				Err(anyhow::anyhow!(
+					"Verification found {} remaining operations",
+					remaining
+				))
+			}
+			Err(err) => {
+				let status = sync_generation::VerificationStatus::failed("resolution_error");
+				self.conduit_manager
+					.update_verification_status(generation_id, &status)
+					.await?;
+				Err(err)
+			}
+		}
+	}
 
-		info!(
-			"Sync fully completed and verified for conduit {}",
-			conduit_id
-		);
+	/// Poll until library sync is complete, up to a bounded window.
+	async fn wait_for_library_sync(&self) -> bool {
+		const MAX_ATTEMPTS: u32 = 60;
+		const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
-		Ok(())
+		for _ in 0..MAX_ATTEMPTS {
+			if self.is_library_sync_complete().await {
+				return true;
+			}
+			tokio::time::sleep(POLL_INTERVAL).await;
+		}
+		false
+	}
+
+	/// Whether the library's metadata sync is complete enough to trust the
+	/// index. Standalone libraries (no sync service) are always complete;
+	/// libraries mid-backfill or catching up on buffered updates are not.
+	pub async fn is_library_sync_complete(&self) -> bool {
+		if let Some(ready) = *self.library_sync_ready_override.read().await {
+			return ready;
+		}
+
+		match self.library.sync_service() {
+			Some(sync_service) => {
+				let state = sync_service.peer_sync().state().await;
+				!state.should_buffer()
+			}
+			None => true,
+		}
+	}
+
+	/// Force the library-sync readiness gate open (`Some(true)`), closed
+	/// (`Some(false)`), or defer to the real sync state (`None`).
+	pub async fn set_library_sync_ready_override(&self, ready: Option<bool>) {
+		*self.library_sync_ready_override.write().await = ready;
 	}
 
 	/// Check if a conduit is currently syncing
@@ -565,6 +731,11 @@ impl FileSyncService {
 	/// Get the conduit manager
 	pub fn conduit_manager(&self) -> &Arc<ConduitManager> {
 		&self.conduit_manager
+	}
+
+	/// Get the generation history queries
+	pub fn history(&self) -> &Arc<SyncHistory> {
+		&self.history
 	}
 
 	fn emit_file_sync_started(&self, conduit_id: i32, generation: i64) {
@@ -608,7 +779,9 @@ impl Clone for FileSyncService {
 			library: self.library.clone(),
 			conduit_manager: self.conduit_manager.clone(),
 			resolver: self.resolver.clone(),
+			history: self.history.clone(),
 			active_syncs: self.active_syncs.clone(),
+			library_sync_ready_override: self.library_sync_ready_override.clone(),
 		}
 	}
 }

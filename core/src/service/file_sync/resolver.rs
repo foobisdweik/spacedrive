@@ -55,6 +55,20 @@ pub struct SyncOperations {
 	pub conflicts: Vec<SyncConflict>,
 }
 
+impl SyncOperations {
+	/// True when no copy/delete operations or conflicts remain.
+	pub fn is_converged(&self) -> bool {
+		self.source_to_target.to_copy.is_empty()
+			&& self.source_to_target.to_delete.is_empty()
+			&& self
+				.target_to_source
+				.as_ref()
+				.map(|ops| ops.to_copy.is_empty() && ops.to_delete.is_empty())
+				.unwrap_or(true)
+			&& self.conflicts.is_empty()
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct SyncConflict {
 	pub relative_path: PathBuf,
@@ -157,6 +171,43 @@ impl SyncResolver {
 			sync_conduit::SyncMode::Selective => {
 				Ok(self.resolve_mirror(&source_map, &target_map, target_root_path))
 			}
+		}
+	}
+
+	/// Re-resolve a conduit against a fresh complete filesystem scan.
+	///
+	/// Used by the Trust Watcher verification flow: after the sync jobs finish
+	/// and the index has settled, both endpoints are re-scanned and the sync is
+	/// re-resolved. A converged sync produces no remaining operations.
+	pub async fn verify_conduit(&self, conduit: &sync_conduit::Model) -> Result<SyncOperations> {
+		let source_root_path = self
+			.path_for_directory_entry(conduit.source_entry_id)
+			.await?;
+		let target_root_path = self
+			.path_for_directory_entry(conduit.target_entry_id)
+			.await?;
+
+		self.ensure_complete_scan(&source_root_path).await?;
+		self.ensure_complete_scan(&target_root_path).await?;
+
+		let source_map = self.build_ephemeral_path_map(&source_root_path).await?;
+		let target_map = self.build_ephemeral_path_map(&target_root_path).await?;
+
+		let mode = sync_conduit::SyncMode::from_str(&conduit.sync_mode)
+			.ok_or_else(|| anyhow::anyhow!("Invalid sync mode"))?;
+
+		match mode {
+			sync_conduit::SyncMode::Bidirectional => {
+				self.resolve_bidirectional(
+					&source_map,
+					&target_map,
+					conduit,
+					source_root_path,
+					target_root_path,
+				)
+				.await
+			}
+			_ => Ok(self.resolve_mirror(&source_map, &target_map, target_root_path)),
 		}
 	}
 

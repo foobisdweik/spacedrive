@@ -1,13 +1,13 @@
 ---
 id: FSYNC-003
 title: FileSyncService Core Implementation
-status: In Progress
+status: Done
 assignee: jamiepine
 parent: FSYNC-000
 priority: High
 tags: [service, core, orchestration, resolver]
 design_doc: workbench/FILE_SYNC_IMPLEMENTATION_PLAN.md
-last_updated: 2026-06-18
+last_updated: 2026-07-09
 related_tasks: [FSYNC-001, FSYNC-002, INDEX-010, INDEX-011, FILE-006]
 ---
 
@@ -201,19 +201,29 @@ pub enum ConflictStrategy {
 
 ## Acceptance Criteria
 
-- [ ] FileSyncService struct with ConduitManager and SyncResolver
-- [ ] ConduitManager implements full CRUD for conduits
-- [ ] SyncResolver calculates operations from index queries
-- [ ] Mirror mode sync works end-to-end (MVP)
-- [ ] sync_now() creates generation and dispatches jobs
-- [ ] Job ordering enforced: copies complete before deletes
-- [ ] Active sync tracking prevents duplicate syncs
-- [ ] Monitor task waits for jobs and updates state
-- [ ] Library sync verification prevents operation when index stale
-- [ ] Trust Watcher verification flow implemented
-- [ ] Integration test: Mirror sync copies files source → target
-- [ ] Integration test: Mirror sync deletes extraneous files from target
-- [ ] Integration test: Cannot start sync when library sync incomplete
+- [x] FileSyncService struct with ConduitManager and SyncResolver
+- [x] ConduitManager implements full CRUD for conduits
+- [x] SyncResolver calculates operations from index queries
+- [x] Mirror mode sync works end-to-end (MVP)
+- [x] sync_now() creates generation and dispatches jobs
+- [x] Job ordering enforced: copies complete before deletes
+- [x] Active sync tracking prevents duplicate syncs
+- [x] Monitor task waits for jobs and updates state
+- [x] Library sync verification prevents operation when index stale
+- [x] Trust Watcher verification flow implemented
+- [x] Integration test: Mirror sync copies files source → target
+- [x] Integration test: Mirror sync deletes extraneous files from target
+- [x] Integration test: Cannot start sync when library sync incomplete
+
+## Implementation Notes (2026-07-09)
+
+- `history.rs` added: `SyncHistory` with generation listing, latest/last-completed/last-verified lookups, and aggregate `SyncHistoryStats`; exposed via `FileSyncService::history()`.
+- Library-sync gate: `sync_now()` refuses to start while `is_library_sync_complete()` is false (peer sync state Backfilling/CatchingUp). Standalone libraries (no sync service) are always complete. A test override (`set_library_sync_ready_override`) exists for integration tests.
+- Trust Watcher verification: `complete_sync_with_verification()` walks `waiting_watcher` -> `waiting_library_sync` -> re-runs resolution via `SyncResolver::verify_conduit()` (fresh complete scan of both endpoints through the ephemeral index layer) -> `verified` or `failed:<reason>`. Generation counts (files copied/deleted) are recorded at completion.
+- Unified index layer: resolver uses the ephemeral cache with rules-free complete scans (INDEX-011) both for `use_index_rules = false` conduits and for all verification passes.
+- Fixed `m20251015_000002_create_sync_tables` FK target (`entry` -> `entries`); the wrong identifier made every `sync_conduit` insert fail with "no such table: main.entry".
+- Integration coverage: `core/tests/file_sync_test.rs` (real directories/files on disk, end-to-end mirror copy + extraneous-delete), `core/tests/file_sync_verification_test.rs` (library-sync gate, verified generation status, history queries).
+- Deferred: conflict-copy strategy still blocked on FileCopyJob rename support; verification currently triggers the re-scan itself rather than subscribing to watcher completion events (watcher service has no on-demand scan API yet) - revisit in FSYNC-004/005.
 
 ## Verification Flow (Trust Watcher)
 

@@ -9,7 +9,7 @@ tags: [sync, service, epic, index-driven]
 whitepaper: Section 5.2
 design_doc: workbench/FILE_SYNC_IMPLEMENTATION_PLAN.md
 documentation: docs/core/file-sync.mdx
-last_updated: 2026-02-07
+last_updated: 2026-07-09
 ---
 
 ## Description
@@ -56,19 +56,13 @@ Intelligent local storage management with access pattern tracking.
 
 - **FSYNC-001**: DeleteJob Strategy Pattern & Remote Deletion (Phase 1) - Done
 - **FSYNC-002**: Database Schema & Entities (Phase 2) - Done
-- **FSYNC-003**: FileSyncService Core Implementation (Phase 3) - Blocked on INDEX-010, INDEX-011
-- **FSYNC-004**: Service Integration & API (Phase 4)
-- **FSYNC-005**: Advanced Features (Phase 5)
+- **FSYNC-003**: FileSyncService Core Implementation (Phase 3) - Done
+- **FSYNC-004**: Service Integration & API (Phase 4) - To Do
+- **FSYNC-005**: Advanced Features (Phase 5) - To Do
 
-## New Dependencies (2026-02-07)
+## Status Notes (2026-07-09)
 
-FSYNC-003 depends on foundational index work that was identified during architecture review:
-
-- **INDEX-010**: Bidirectional UUID reconciliation — ephemeral index must reuse persistent UUIDs so file sync has unified identity across layers
-- **INDEX-011**: Rules-free scan mode — file sync needs complete filesystem visibility, not filtered index views
-- **FILE-006**: Path intersection & smart diff — extracts the diffing logic from FSYNC-003 into a standalone operation that also serves the "smart copy" use case
-
-Execution order: INDEX-010 → INDEX-011 → FILE-006 → FSYNC-003
+INDEX-010 (bidirectional UUID reconciliation), INDEX-011 (rules-free scan mode) and FILE-006 (path intersection & smart diff) are complete and merged, unblocking FSYNC-003, which is now Done: FileSyncService orchestrates mirror/bidirectional syncs via index queries, enforces copies-before-deletes job ordering, gates on library sync completeness, and verifies generations through the Trust Watcher flow. Remaining work is FSYNC-004 (CoreContext wiring, API routes, events for UI) and FSYNC-005 (scheduling, progress aggregation, conflict UX).
 
 ## Key Benefits
 

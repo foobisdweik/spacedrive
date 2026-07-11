@@ -15,10 +15,11 @@
 //! ```
 
 use sd_core::{
-	infra::db::entities::{entry, sync_conduit},
+	infra::db::entities::{directory_paths, entry, sync_conduit},
 	Core,
 };
 use sea_orm::{ActiveModelTrait, Set};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::fs;
@@ -38,6 +39,7 @@ struct FileSyncTestSetup {
 	_temp_dir: TempDir,
 	core: Core,
 	library: Arc<sd_core::library::Library>,
+	data_root: PathBuf,
 }
 
 impl FileSyncTestSetup {
@@ -81,10 +83,14 @@ impl FileSyncTestSetup {
 		// Initialize file sync service
 		library.init_file_sync_service()?;
 
+		let data_root = temp_dir.path().join("sync_data");
+		fs::create_dir_all(&data_root).await?;
+
 		Ok(Self {
 			_temp_dir: temp_dir,
 			core,
 			library,
+			data_root,
 		})
 	}
 
@@ -120,6 +126,55 @@ impl FileSyncTestSetup {
 		};
 
 		Ok(entry.insert(self.library.db().conn()).await?)
+	}
+
+	/// Create a real directory on disk plus its entry and directory_paths row
+	async fn create_dir_entry(&self, name: &str) -> anyhow::Result<(entry::Model, PathBuf)> {
+		let dir_path = self.data_root.join(name);
+		fs::create_dir_all(&dir_path).await?;
+		let dir_path = fs::canonicalize(&dir_path).await?;
+
+		let entry = self.create_entry(name, 1, None, 0).await?;
+
+		directory_paths::ActiveModel {
+			entry_id: Set(entry.id),
+			path: Set(dir_path.to_string_lossy().to_string()),
+		}
+		.insert(self.library.db().conn())
+		.await?;
+
+		Ok((entry, dir_path))
+	}
+
+	/// Create a real file on disk plus its entry under a parent directory
+	async fn create_file_entry(
+		&self,
+		parent: &entry::Model,
+		parent_path: &Path,
+		name: &str,
+		content: &str,
+	) -> anyhow::Result<entry::Model> {
+		let file_path = parent_path.join(name);
+		create_test_file(&file_path, content).await?;
+		self.create_entry(name, 0, Some(parent.id), content.len() as i64)
+			.await
+	}
+
+	/// Wait until the sync for a conduit finishes (or time out)
+	async fn wait_for_sync(&self, conduit_id: i32) -> anyhow::Result<()> {
+		let file_sync = self
+			.library
+			.file_sync_service()
+			.ok_or_else(|| anyhow::anyhow!("File sync service not initialized"))?;
+
+		for _ in 0..600 {
+			if !file_sync.is_syncing(conduit_id).await {
+				return Ok(());
+			}
+			tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+		}
+
+		Err(anyhow::anyhow!("Sync did not complete within timeout"))
 	}
 }
 
@@ -271,14 +326,8 @@ async fn test_mirror_sync_empty_to_empty() {
 	let setup = FileSyncTestSetup::new().await.unwrap();
 
 	// Create empty source and target directories
-	let source = setup
-		.create_entry("source_empty", 1, None, 0)
-		.await
-		.unwrap();
-	let target = setup
-		.create_entry("target_empty", 1, None, 0)
-		.await
-		.unwrap();
+	let (source, _source_path) = setup.create_dir_entry("source_empty").await.unwrap();
+	let (target, _target_path) = setup.create_dir_entry("target_empty").await.unwrap();
 
 	let file_sync = setup.library.file_sync_service().unwrap();
 	let conduit_manager = file_sync.conduit_manager();
@@ -318,18 +367,18 @@ async fn test_mirror_sync_with_files() {
 	let setup = FileSyncTestSetup::new().await.unwrap();
 
 	// Create source directory with files
-	let source = setup.create_entry("source_dir", 1, None, 0).await.unwrap();
-	let file1 = setup
-		.create_entry("file1.txt", 0, Some(source.id), 100)
+	let (source, source_path) = setup.create_dir_entry("source_dir").await.unwrap();
+	let _file1 = setup
+		.create_file_entry(&source, &source_path, "file1.txt", "file one contents")
 		.await
 		.unwrap();
-	let file2 = setup
-		.create_entry("file2.txt", 0, Some(source.id), 200)
+	let _file2 = setup
+		.create_file_entry(&source, &source_path, "file2.txt", "file two contents!")
 		.await
 		.unwrap();
 
 	// Create empty target directory
-	let target = setup.create_entry("target_dir", 1, None, 0).await.unwrap();
+	let (target, target_path) = setup.create_dir_entry("target_dir").await.unwrap();
 
 	let file_sync = setup.library.file_sync_service().unwrap();
 	let conduit_manager = file_sync.conduit_manager();
@@ -360,8 +409,12 @@ async fn test_mirror_sync_with_files() {
 	// Verify copy job was created
 	assert!(handle.source_to_target.copy_job_id.is_some());
 
-	// Wait a bit for sync to process (in real scenario, would monitor jobs)
-	tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+	// Wait for the monitor to finish copies, deletes and verification
+	setup.wait_for_sync(conduit.id).await.unwrap();
+
+	// Verify files were copied to the target
+	assert!(target_path.join("file1.txt").exists());
+	assert!(target_path.join("file2.txt").exists());
 
 	// Verify conduit state was updated
 	let updated_conduit = conduit_manager.get_conduit(conduit.id).await.unwrap();
@@ -377,20 +430,20 @@ async fn test_sync_resolver_calculates_operations() {
 	let setup = FileSyncTestSetup::new().await.unwrap();
 
 	// Create source with files
-	let source = setup.create_entry("source", 1, None, 0).await.unwrap();
+	let (source, source_path) = setup.create_dir_entry("source").await.unwrap();
 	let _file1 = setup
-		.create_entry("common.txt", 0, Some(source.id), 100)
+		.create_file_entry(&source, &source_path, "common.txt", "common contents")
 		.await
 		.unwrap();
 	let _file2 = setup
-		.create_entry("source_only.txt", 0, Some(source.id), 200)
+		.create_file_entry(&source, &source_path, "source_only.txt", "source only")
 		.await
 		.unwrap();
 
-	// Create target with one file
-	let target = setup.create_entry("target", 1, None, 0).await.unwrap();
+	// Create target with one extraneous file
+	let (target, target_path) = setup.create_dir_entry("target").await.unwrap();
 	let _file3 = setup
-		.create_entry("target_only.txt", 0, Some(target.id), 150)
+		.create_file_entry(&target, &target_path, "target_only.txt", "target only")
 		.await
 		.unwrap();
 
@@ -407,7 +460,7 @@ async fn test_sync_resolver_calculates_operations() {
 		.await
 		.unwrap();
 
-	// Calculate operations
+	// Calculate operations and dispatch jobs
 	let handle = file_sync.sync_now(conduit.id).await.unwrap();
 
 	println!("✓ Sync resolver calculated operations");
@@ -418,14 +471,20 @@ async fn test_sync_resolver_calculates_operations() {
 		"  Copy job created: {}",
 		handle.source_to_target.copy_job_id.is_some()
 	);
-	println!(
-		"  Delete job created: {}",
-		handle.source_to_target.delete_job_id.is_some()
-	);
 
-	// Both copy and delete jobs should be created
+	// Copy job dispatched immediately; deletes are deferred until copies finish
 	assert!(handle.source_to_target.copy_job_id.is_some());
-	assert!(handle.source_to_target.delete_job_id.is_some());
+
+	setup.wait_for_sync(conduit.id).await.unwrap();
+
+	// Source files mirrored to target
+	assert!(target_path.join("common.txt").exists());
+	assert!(target_path.join("source_only.txt").exists());
+
+	// Extraneous target file deleted
+	assert!(!target_path.join("target_only.txt").exists());
+
+	println!("  Mirror sync copied source files and deleted extraneous target file");
 }
 
 #[tokio::test]
@@ -466,12 +525,19 @@ async fn test_cannot_sync_disabled_conduit() {
 async fn test_cannot_sync_same_conduit_twice() {
 	let setup = FileSyncTestSetup::new().await.unwrap();
 
-	let source = setup.create_entry("source", 1, None, 0).await.unwrap();
-	let _file = setup
-		.create_entry("file.txt", 0, Some(source.id), 100)
-		.await
-		.unwrap();
-	let target = setup.create_entry("target", 1, None, 0).await.unwrap();
+	let (source, source_path) = setup.create_dir_entry("source").await.unwrap();
+	for i in 0..5 {
+		setup
+			.create_file_entry(
+				&source,
+				&source_path,
+				&format!("file{}.txt", i),
+				&format!("contents of file {}", i),
+			)
+			.await
+			.unwrap();
+	}
+	let (target, _target_path) = setup.create_dir_entry("target").await.unwrap();
 
 	let file_sync = setup.library.file_sync_service().unwrap();
 	let conduit_manager = file_sync.conduit_manager();
@@ -494,6 +560,8 @@ async fn test_cannot_sync_same_conduit_twice() {
 	assert!(result.is_err());
 	assert!(result.unwrap_err().to_string().contains("in progress"));
 
+	setup.wait_for_sync(conduit.id).await.unwrap();
+
 	println!("✓ Cannot start concurrent syncs for same conduit (as expected)");
 }
 
@@ -501,8 +569,8 @@ async fn test_cannot_sync_same_conduit_twice() {
 async fn test_generation_tracking() {
 	let setup = FileSyncTestSetup::new().await.unwrap();
 
-	let source = setup.create_entry("source", 1, None, 0).await.unwrap();
-	let target = setup.create_entry("target", 1, None, 0).await.unwrap();
+	let (source, _source_path) = setup.create_dir_entry("source").await.unwrap();
+	let (target, _target_path) = setup.create_dir_entry("target").await.unwrap();
 
 	let file_sync = setup.library.file_sync_service().unwrap();
 	let conduit_manager = file_sync.conduit_manager();

@@ -236,6 +236,27 @@ impl ConduitManager {
 		Ok(())
 	}
 
+	/// Record operation counts for a generation
+	pub async fn record_generation_counts(
+		&self,
+		generation_id: i32,
+		files_copied: i32,
+		files_deleted: i32,
+	) -> Result<()> {
+		let gen = sync_generation::Entity::find_by_id(generation_id)
+			.one(&*self.db)
+			.await?
+			.ok_or_else(|| anyhow::anyhow!("Generation not found"))?;
+
+		let mut active: sync_generation::ActiveModel = gen.into();
+		active.files_copied = Set(files_copied);
+		active.files_deleted = Set(files_deleted);
+
+		active.update(&*self.db).await?;
+
+		Ok(())
+	}
+
 	/// Update generation verification status
 	pub async fn update_verification_status(&self, generation_id: i32, status: &str) -> Result<()> {
 		let gen = sync_generation::Entity::find_by_id(generation_id)
