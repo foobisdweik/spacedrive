@@ -571,36 +571,51 @@ impl FileSyncService {
 
 		// Phase 4: Trust Watcher verification
 		self.emit_file_sync_progress(conduit_id, generation, "verifying");
-		if let Err(err) = self
+		let verification = self
 			.complete_sync_with_verification(conduit_id, generation_id)
-			.await
-		{
-			warn!(
-				"Verification failed for conduit {} generation {}: {}",
-				conduit_id, generation, err
-			);
-		}
+			.await;
 
-		// Phase 5: Remove from active syncs
+		// Phase 5: Remove from active syncs regardless of the verification
+		// outcome; the copy/delete jobs themselves have already finished.
 		self.active_syncs.write().await.remove(&conduit_id);
-		self.emit_file_sync_completed(conduit_id, generation);
 
-		info!(
-			"Sync fully completed and verified for conduit {}",
-			conduit_id
-		);
-
-		Ok(())
+		match verification {
+			Ok(()) => {
+				self.emit_file_sync_completed(conduit_id, generation);
+				info!(
+					"Sync fully completed and verified for conduit {}",
+					conduit_id
+				);
+				Ok(())
+			}
+			Err(err) => {
+				// The copy/delete jobs succeeded but the post-sync convergence
+				// check did not pass. Surface this as a distinct failure so
+				// callers and telemetry never mistake an unverified run for a
+				// verified one; the generation row is already marked
+				// `failed:<reason>` by complete_sync_with_verification.
+				warn!(
+					"Verification failed for conduit {} generation {}: {}",
+					conduit_id, generation, err
+				);
+				self.emit_file_sync_failed(
+					conduit_id,
+					Some(generation),
+					format!("sync verification failed: {}", err),
+				);
+				Err(err)
+			}
+		}
 	}
 
 	/// Trust Watcher verification flow.
 	///
-	/// After the sync jobs complete: mark the generation as waiting on the
-	/// watcher, refresh the index for both endpoints (a complete re-scan — the
-	/// same convergence the filesystem watcher provides), wait for a library
-	/// sync round, then re-run sync resolution. If no operations remain the
-	/// generation is `verified`; otherwise it is marked `failed:<reason>` so a
-	/// later sync round can converge.
+	/// After the sync jobs complete: wait for a library sync round so remote
+	/// metadata is current (`waiting_library_sync`), then re-index both
+	/// endpoints and re-run sync resolution against a complete re-scan — the
+	/// same convergence the filesystem watcher provides (`waiting_watcher`). If
+	/// no operations remain the generation is `verified`; otherwise it is marked
+	/// `failed:<reason>` so a later sync round can converge.
 	async fn complete_sync_with_verification(
 		&self,
 		conduit_id: i32,
@@ -608,13 +623,10 @@ impl FileSyncService {
 	) -> Result<()> {
 		let conduit = self.conduit_manager.get_conduit(conduit_id).await?;
 
-		// Wait for the watcher/index to settle. The re-scan inside
-		// verify_conduit below is the index refresh the watcher would perform.
-		self.conduit_manager
-			.update_verification_status(generation_id, "waiting_watcher")
-			.await?;
-
-		// Wait for a library sync round so remote metadata is current.
+		// Wait for a library sync round so remote metadata is current before we
+		// re-read the index. This is a real blocking step (`wait_for_library_sync`
+		// polls until the peer sync state settles), so the status reflects work
+		// actually in progress.
 		self.conduit_manager
 			.update_verification_status(generation_id, "waiting_library_sync")
 			.await?;
@@ -628,7 +640,15 @@ impl FileSyncService {
 			));
 		}
 
-		// Re-run sync resolution against a fresh complete scan.
+		// Re-index both endpoints and re-resolve. The complete re-scan inside
+		// verify_conduit is the index refresh the filesystem watcher would
+		// perform, so the generation stays in `waiting_watcher` for the whole
+		// duration of that re-scan rather than passing through the status
+		// instantly. A dedicated on-demand watcher-scan API is deferred
+		// (FSYNC-004/005); until it exists, verification drives the re-scan.
+		self.conduit_manager
+			.update_verification_status(generation_id, "waiting_watcher")
+			.await?;
 		match self.resolver.verify_conduit(&conduit).await {
 			Ok(operations) if operations.is_converged() => {
 				self.conduit_manager
