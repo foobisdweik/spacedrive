@@ -24,10 +24,53 @@ pub struct PluginEnv {
 	pub job_registry: Arc<super::job_registry::ExtensionJobRegistry>,
 }
 
+/// Route a generic extension `spacedrive_call` to the Wire operation registry.
+///
+/// This performs the same dispatch as `execute_json_operation()`: it tries the
+/// library-query, core-query, library-action, then core-action registries in
+/// order, applying library context to the session for library-scoped
+/// operations, and returns the operation's JSON result (or an error string).
+///
+/// Extracted from [`host_spacedrive_call`] so the bridge routing can be
+/// exercised end-to-end (real `CoreContext` + registered VDFS operation)
+/// without instantiating a WASM guest and threading data through linear memory.
+pub async fn dispatch_extension_call(
+	core_context: Arc<crate::context::CoreContext>,
+	api_dispatcher: Arc<crate::infra::api::ApiDispatcher>,
+	method: &str,
+	library_id: Option<Uuid>,
+	payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+	let base_session = api_dispatcher.create_base_session()?;
+
+	if let Some(handler) = crate::infra::wire::registry::LIBRARY_QUERIES.get(method) {
+		let lib_id = library_id.ok_or_else(|| "Library ID required".to_string())?;
+		let session = base_session.with_library(lib_id);
+		return handler(core_context, session, payload).await;
+	}
+
+	if let Some(handler) = crate::infra::wire::registry::CORE_QUERIES.get(method) {
+		return handler(core_context, base_session, payload).await;
+	}
+
+	if let Some(handler) = crate::infra::wire::registry::LIBRARY_ACTIONS.get(method) {
+		let lib_id = library_id.ok_or_else(|| "Library ID required".to_string())?;
+		let session = base_session.with_library(lib_id);
+		return handler(core_context, session, payload).await;
+	}
+
+	if let Some(handler) = crate::infra::wire::registry::CORE_ACTIONS.get(method) {
+		return handler(core_context, payload).await;
+	}
+
+	Err(format!("Unknown method: {}", method))
+}
+
 /// THE MAIN HOST FUNCTION - Generic Wire RPC
 ///
 /// This is the ONLY function WASM extensions need to call Spacedrive operations.
-/// It routes calls to the existing Wire operation registry.
+/// It reads the call out of WASM linear memory, checks permissions, then routes
+/// through [`dispatch_extension_call`] to the existing Wire operation registry.
 ///
 /// # Arguments
 /// - `method_ptr`, `method_len`: Wire method string (e.g., "query:ai.ocr")
@@ -110,40 +153,15 @@ pub fn host_spacedrive_call(
 		"Extension calling operation"
 	);
 
-	// 5. Call operation handlers directly (same as execute_json_operation does)
-	let result = tokio::runtime::Handle::current().block_on(async {
-		// Create base session
-		let base_session = match plugin_env.api_dispatcher.create_base_session() {
-			Ok(s) => s,
-			Err(e) => return Err(e),
-		};
-
-		// Try library queries
-		if let Some(handler) = crate::infra::wire::registry::LIBRARY_QUERIES.get(method.as_str()) {
-			let lib_id = library_id.ok_or_else(|| "Library ID required".to_string())?;
-			let session = base_session.with_library(lib_id);
-			return handler(plugin_env.core_context.clone(), session, payload_json).await;
-		}
-
-		// Try core queries
-		if let Some(handler) = crate::infra::wire::registry::CORE_QUERIES.get(method.as_str()) {
-			return handler(plugin_env.core_context.clone(), base_session, payload_json).await;
-		}
-
-		// Try library actions
-		if let Some(handler) = crate::infra::wire::registry::LIBRARY_ACTIONS.get(method.as_str()) {
-			let lib_id = library_id.ok_or_else(|| "Library ID required".to_string())?;
-			let session = base_session.with_library(lib_id);
-			return handler(plugin_env.core_context.clone(), session, payload_json).await;
-		}
-
-		// Try core actions
-		if let Some(handler) = crate::infra::wire::registry::CORE_ACTIONS.get(method.as_str()) {
-			return handler(plugin_env.core_context.clone(), payload_json).await;
-		}
-
-		Err(format!("Unknown method: {}", method))
-	});
+	// 5. Route to the Wire operation registry (same dispatch as
+	//    execute_json_operation) via the shared, testable helper.
+	let result = tokio::runtime::Handle::current().block_on(dispatch_extension_call(
+		plugin_env.core_context.clone(),
+		plugin_env.api_dispatcher.clone(),
+		&method,
+		library_id,
+		payload_json,
+	));
 
 	// 6. Write result to WASM memory
 	match result {
@@ -460,5 +478,117 @@ pub fn host_register_job(
 			tracing::error!("Failed to register job: {}", e);
 			1 // Error
 		}
+	}
+}
+
+#[cfg(test)]
+mod bridge_tests {
+	//! PLUG-002 — the plugin API bridge routes a generic `spacedrive_call`
+	//! (method + library_id + JSON payload) through the Wire operation registry
+	//! and returns the operation's result. `dispatch_extension_call` is the
+	//! routing core `host_spacedrive_call` runs after reading those values out
+	//! of WASM linear memory, so exercising it against a real `Core` proves a
+	//! plugin can reach VDFS functionality end-to-end.
+	//!
+	//! Operations are addressed by their Wire method, i.e. the `query:`/`action:`
+	//! prefixed name (`register_core_query!` registers `core.status` under
+	//! `query:core.status`) — the same string the daemon RPC and the SDK use.
+
+	use super::dispatch_extension_call;
+	use crate::infra::api::ApiDispatcher;
+	use crate::Core;
+	use std::sync::Arc;
+	use tempfile::TempDir;
+
+	async fn setup() -> (TempDir, Core, Arc<ApiDispatcher>) {
+		let temp = TempDir::new().unwrap();
+		let core = Core::new(temp.path().to_path_buf()).await.unwrap();
+		let dispatcher = Arc::new(ApiDispatcher::new(core.context.clone()));
+		(temp, core, dispatcher)
+	}
+
+	#[tokio::test]
+	async fn plugin_can_call_core_query_through_bridge() {
+		let (_temp, core, dispatcher) = setup().await;
+
+		// A plugin invoking a VDFS core query by Wire method name + JSON payload.
+		// CoreStatusQuery::Input = (), so the payload is JSON null.
+		let result = dispatch_extension_call(
+			core.context.clone(),
+			dispatcher,
+			"query:core.status",
+			None,
+			serde_json::json!(null),
+		)
+		.await
+		.expect("core.status should route through the bridge and return a result");
+
+		assert!(
+			result.is_object(),
+			"core.status should return a status object, got {result:?}"
+		);
+	}
+
+	#[tokio::test]
+	async fn plugin_can_pass_payload_fields_through_bridge() {
+		let (_temp, core, dispatcher) = setup().await;
+
+		// libraries.list takes a real input struct; this proves payload fields
+		// survive the bridge and reach the operation.
+		let result = dispatch_extension_call(
+			core.context.clone(),
+			dispatcher,
+			"query:libraries.list",
+			None,
+			serde_json::json!({ "include_stats": false }),
+		)
+		.await
+		.expect("libraries.list should route through the bridge and return a result");
+
+		// A freshly-created core has no libraries yet, so this is an empty list.
+		assert!(
+			result.is_array(),
+			"libraries.list should return an array, got {result:?}"
+		);
+	}
+
+	#[tokio::test]
+	async fn unknown_method_is_rejected() {
+		let (_temp, core, dispatcher) = setup().await;
+
+		let err = dispatch_extension_call(
+			core.context.clone(),
+			dispatcher,
+			"does.not.exist",
+			None,
+			serde_json::json!({}),
+		)
+		.await
+		.expect_err("an unknown method must be rejected, not silently ignored");
+
+		assert!(err.contains("Unknown method"), "unexpected error: {err}");
+	}
+
+	#[tokio::test]
+	async fn library_scoped_method_requires_library_id() {
+		let (_temp, core, dispatcher) = setup().await;
+
+		// files.path_diff is a library-scoped query. Calling it without a
+		// library id must be rejected before the operation runs, so a plugin
+		// can't reach into library data without naming the library.
+		let err = dispatch_extension_call(
+			core.context.clone(),
+			dispatcher,
+			"query:files.path_diff",
+			None,
+			serde_json::json!({}),
+		)
+		.await
+		.expect_err("a library query without a library id must be rejected");
+
+		assert!(
+			err.contains("Library ID required"),
+			"unexpected error: {err}"
+		);
 	}
 }

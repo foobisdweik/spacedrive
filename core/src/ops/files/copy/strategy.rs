@@ -802,6 +802,233 @@ impl CopyStrategy for RemoteTransferStrategy {
 	}
 }
 
+/// Strategy for transfers where at least one endpoint is a cloud volume.
+///
+/// Unlike the local and remote strategies, this one goes through the
+/// [`VolumeBackend`](crate::volume::VolumeBackend) abstraction for both
+/// endpoints, so a single implementation covers upload (local → cloud),
+/// download (cloud → local), and cloud → cloud transfers. Object stores have no
+/// real directories, so recursion walks the source via `read_dir()` and mirrors
+/// each entry onto the destination backend.
+pub struct CloudTransferStrategy;
+
+impl CloudTransferStrategy {
+	/// Resolve an endpoint to its I/O backend and the path that backend expects.
+	///
+	/// Cloud paths use their in-bucket object key; local paths use their
+	/// absolute filesystem path (which `LocalBackend` passes through verbatim).
+	async fn resolve_backend(
+		vm: &crate::volume::VolumeManager,
+		library: &crate::library::Library,
+		sdpath: &SdPath,
+	) -> Result<(std::sync::Arc<dyn crate::volume::VolumeBackend>, PathBuf)> {
+		let mut volume = vm
+			.resolve_volume_for_sdpath(sdpath, library)
+			.await
+			.map_err(|e| anyhow::anyhow!("Failed to resolve volume for {}: {}", sdpath, e))?
+			.ok_or_else(|| {
+				anyhow::anyhow!(
+					"No volume found for {}. The cloud volume may not be registered yet.",
+					sdpath
+				)
+			})?;
+
+		let backend = vm.backend_for_volume(&mut volume);
+
+		let backend_path = if let Some((_, _, path)) = sdpath.as_cloud() {
+			PathBuf::from(path)
+		} else {
+			sdpath
+				.as_local_path()
+				.ok_or_else(|| {
+					anyhow::anyhow!("Path is neither a cloud nor a local path: {}", sdpath)
+				})?
+				.to_path_buf()
+		};
+
+		Ok((backend, backend_path))
+	}
+
+	/// Recursively mirror `src_path` on `src_backend` to `dst_path` on
+	/// `dst_backend`, returning the total number of bytes transferred.
+	///
+	/// Boxed because the recursion is async (a directory transfers its children).
+	/// Backend-agnostic, so it works for any local/cloud endpoint combination.
+	fn transfer<'a>(
+		src_backend: &'a dyn crate::volume::VolumeBackend,
+		src_path: &'a Path,
+		dst_backend: &'a dyn crate::volume::VolumeBackend,
+		dst_path: &'a Path,
+		verify_checksum: bool,
+		progress_callback: Option<&'a ProgressCallback<'a>>,
+	) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64>> + Send + 'a>> {
+		Box::pin(async move {
+			use crate::ops::indexing::state::EntryKind;
+
+			let metadata = src_backend
+				.metadata(src_path)
+				.await
+				.map_err(|e| anyhow::anyhow!("Failed to stat {}: {}", src_path.display(), e))?;
+
+			if metadata.kind == EntryKind::Directory {
+				// Object stores fake directories, so create_directory is a no-op
+				// there; on local backends it materializes the folder.
+				dst_backend
+					.create_directory(dst_path, true)
+					.await
+					.map_err(|e| {
+						anyhow::anyhow!("Failed to create directory {}: {}", dst_path.display(), e)
+					})?;
+
+				let entries = src_backend
+					.read_dir(src_path)
+					.await
+					.map_err(|e| anyhow::anyhow!("Failed to list {}: {}", src_path.display(), e))?;
+
+				let mut total = 0u64;
+				for entry in entries {
+					let child_src = src_path.join(&entry.name);
+					let child_dst = dst_path.join(&entry.name);
+					total += Self::transfer(
+						src_backend,
+						&child_src,
+						dst_backend,
+						&child_dst,
+						verify_checksum,
+						progress_callback,
+					)
+					.await?;
+				}
+				Ok(total)
+			} else {
+				Self::transfer_file(
+					src_backend,
+					src_path,
+					dst_backend,
+					dst_path,
+					metadata.size,
+					verify_checksum,
+					progress_callback,
+				)
+				.await
+			}
+		})
+	}
+
+	/// Copy a single object between backends, streaming in chunks so progress is
+	/// reported even for large files. The `VolumeBackend::write` contract takes a
+	/// full buffer, so chunks accumulate before the single write.
+	async fn transfer_file<'a>(
+		src_backend: &dyn crate::volume::VolumeBackend,
+		src_path: &Path,
+		dst_backend: &dyn crate::volume::VolumeBackend,
+		dst_path: &Path,
+		size: u64,
+		verify_checksum: bool,
+		progress_callback: Option<&ProgressCallback<'a>>,
+	) -> Result<u64> {
+		use bytes::Bytes;
+
+		if let Some(cb) = progress_callback {
+			cb(0, size);
+		}
+
+		// Ensure the destination's parent exists (no-op on cloud key-spaces).
+		if let Some(parent) = dst_path.parent() {
+			if !parent.as_os_str().is_empty() {
+				let _ = dst_backend.create_directory(parent, true).await;
+			}
+		}
+
+		const CHUNK: u64 = 8 * 1024 * 1024; // 8 MiB
+		let mut buffer = Vec::with_capacity(size as usize);
+		let mut offset = 0u64;
+		while offset < size {
+			let end = (offset + CHUNK).min(size);
+			let bytes = src_backend
+				.read_range(src_path, offset..end)
+				.await
+				.map_err(|e| {
+					anyhow::anyhow!(
+						"Failed to read {} [{}..{}]: {}",
+						src_path.display(),
+						offset,
+						end,
+						e
+					)
+				})?;
+			buffer.extend_from_slice(&bytes);
+			offset = end;
+			if let Some(cb) = progress_callback {
+				cb(offset, size);
+			}
+		}
+
+		let written = buffer.len() as u64;
+		dst_backend
+			.write(dst_path, Bytes::from(buffer))
+			.await
+			.map_err(|e| anyhow::anyhow!("Failed to write {}: {}", dst_path.display(), e))?;
+
+		if verify_checksum {
+			let readback = dst_backend.read(dst_path).await.map_err(|e| {
+				anyhow::anyhow!(
+					"Failed to read back {} for verification: {}",
+					dst_path.display(),
+					e
+				)
+			})?;
+			if readback.len() as u64 != written {
+				return Err(anyhow::anyhow!(
+					"Verification failed for {}: wrote {} bytes, read back {}",
+					dst_path.display(),
+					written,
+					readback.len()
+				));
+			}
+		}
+
+		Ok(written)
+	}
+}
+
+#[async_trait]
+impl CopyStrategy for CloudTransferStrategy {
+	async fn execute<'a>(
+		&self,
+		ctx: &JobContext<'a>,
+		source: &SdPath,
+		destination: &SdPath,
+		verify_checksum: bool,
+		progress_callback: Option<&ProgressCallback<'a>>,
+	) -> Result<u64> {
+		let vm = ctx
+			.volume_manager()
+			.ok_or_else(|| anyhow::anyhow!("VolumeManager unavailable for cloud transfer"))?;
+		let library = ctx.library();
+
+		let (src_backend, src_path) = Self::resolve_backend(&vm, library, source).await?;
+		let (dst_backend, dst_path) = Self::resolve_backend(&vm, library, destination).await?;
+
+		let bytes = Self::transfer(
+			src_backend.as_ref(),
+			&src_path,
+			dst_backend.as_ref(),
+			&dst_path,
+			verify_checksum,
+			progress_callback,
+		)
+		.await?;
+
+		ctx.log(format!(
+			"Cloud transfer: {} -> {} ({} bytes)",
+			source, destination, bytes
+		));
+
+		Ok(bytes)
+	}
+}
+
 /// Helper function to get size of a path (file or directory)
 async fn get_path_size(path: &Path) -> Result<u64, std::io::Error> {
 	let mut total = 0u64;
@@ -1325,4 +1552,172 @@ async fn stream_file_data<'a>(
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod cloud_transfer_tests {
+	use super::*;
+	use crate::volume::backend::{CloudServiceType, VolumeBackend};
+	use crate::volume::{CloudBackend, LocalBackend};
+	use std::sync::Arc;
+
+	/// Read a file back through a backend as a UTF-8 string (test helper).
+	async fn read_string(backend: &dyn VolumeBackend, path: &Path) -> String {
+		let bytes = backend.read(path).await.expect("read back");
+		String::from_utf8(bytes.to_vec()).expect("utf8")
+	}
+
+	#[tokio::test]
+	async fn upload_local_file_to_cloud() {
+		let src_dir = tempfile::tempdir().unwrap();
+		std::fs::write(src_dir.path().join("hello.txt"), b"hello cloud").unwrap();
+
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(src_dir.path()));
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+
+		let bytes = CloudTransferStrategy::transfer(
+			local.as_ref(),
+			&src_dir.path().join("hello.txt"),
+			cloud.as_ref(),
+			Path::new("backup/hello.txt"),
+			false,
+			None,
+		)
+		.await
+		.expect("upload");
+
+		assert_eq!(bytes, 11);
+		assert_eq!(
+			read_string(cloud.as_ref(), Path::new("backup/hello.txt")).await,
+			"hello cloud"
+		);
+	}
+
+	#[tokio::test]
+	async fn download_cloud_file_to_local() {
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+		cloud
+			.write(
+				Path::new("remote/data.bin"),
+				bytes::Bytes::from_static(b"payload"),
+			)
+			.await
+			.unwrap();
+
+		let dst_dir = tempfile::tempdir().unwrap();
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(dst_dir.path()));
+
+		let bytes = CloudTransferStrategy::transfer(
+			cloud.as_ref(),
+			Path::new("remote/data.bin"),
+			local.as_ref(),
+			&dst_dir.path().join("data.bin"),
+			true, // verify_checksum
+			None,
+		)
+		.await
+		.expect("download");
+
+		assert_eq!(bytes, 7);
+		assert_eq!(
+			std::fs::read(dst_dir.path().join("data.bin")).unwrap(),
+			b"payload"
+		);
+	}
+
+	#[tokio::test]
+	async fn transfer_reports_progress_for_large_file() {
+		// Larger than the 8 MiB chunk so the progress callback fires multiple times.
+		let size = 20 * 1024 * 1024;
+		let src_dir = tempfile::tempdir().unwrap();
+		std::fs::write(src_dir.path().join("big.bin"), vec![7u8; size]).unwrap();
+
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(src_dir.path()));
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+
+		let updates = std::sync::Mutex::new(Vec::<(u64, u64)>::new());
+		let cb: ProgressCallback = Box::new(|copied, total| {
+			updates.lock().unwrap().push((copied, total));
+		});
+
+		let bytes = CloudTransferStrategy::transfer(
+			local.as_ref(),
+			&src_dir.path().join("big.bin"),
+			cloud.as_ref(),
+			Path::new("big.bin"),
+			false,
+			Some(&cb),
+		)
+		.await
+		.expect("transfer");
+
+		assert_eq!(bytes, size as u64);
+		let updates = updates.lock().unwrap();
+		assert!(
+			updates.len() >= 3,
+			"expected chunked progress, got {:?}",
+			*updates
+		);
+		assert_eq!(updates.last().unwrap().0, size as u64);
+	}
+
+	#[tokio::test]
+	async fn transfer_directory_recursively() {
+		let src_dir = tempfile::tempdir().unwrap();
+		std::fs::create_dir_all(src_dir.path().join("photos/2026")).unwrap();
+		std::fs::write(src_dir.path().join("photos/a.txt"), b"a").unwrap();
+		std::fs::write(src_dir.path().join("photos/2026/b.txt"), b"bb").unwrap();
+
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(src_dir.path()));
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+
+		let bytes = CloudTransferStrategy::transfer(
+			local.as_ref(),
+			&src_dir.path().join("photos"),
+			cloud.as_ref(),
+			Path::new("uploaded"),
+			false,
+			None,
+		)
+		.await
+		.expect("dir upload");
+
+		assert_eq!(bytes, 3); // "a" + "bb"
+		assert_eq!(
+			read_string(cloud.as_ref(), Path::new("uploaded/a.txt")).await,
+			"a"
+		);
+		assert_eq!(
+			read_string(cloud.as_ref(), Path::new("uploaded/2026/b.txt")).await,
+			"bb"
+		);
+	}
+
+	#[tokio::test]
+	async fn transfer_zero_byte_file() {
+		let src_dir = tempfile::tempdir().unwrap();
+		std::fs::write(src_dir.path().join("empty"), b"").unwrap();
+
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(src_dir.path()));
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+
+		let bytes = CloudTransferStrategy::transfer(
+			local.as_ref(),
+			&src_dir.path().join("empty"),
+			cloud.as_ref(),
+			Path::new("empty"),
+			true,
+			None,
+		)
+		.await
+		.expect("zero-byte transfer");
+
+		assert_eq!(bytes, 0);
+		assert!(cloud.exists(Path::new("empty")).await.unwrap());
+	}
 }
