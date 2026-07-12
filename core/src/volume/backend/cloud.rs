@@ -73,6 +73,26 @@ impl CloudBackend {
 		})
 	}
 
+	/// Create an in-memory cloud backend.
+	///
+	/// Backed by OpenDAL's in-memory service, this behaves like a real cloud
+	/// backend (non-local, object-key path space) without any network or
+	/// credentials. Intended for tests and local demos of cloud code paths such
+	/// as the smart-copy cloud transfer strategy.
+	pub fn new_in_memory(service_type: CloudServiceType) -> Result<Self, VolumeError> {
+		let operator = opendal::Operator::new(opendal::services::Memory::default())
+			.map_err(|e| {
+				VolumeError::Platform(format!("Failed to create in-memory operator: {}", e))
+			})?
+			.finish();
+
+		Ok(Self {
+			operator,
+			service_type,
+			root: PathBuf::from("/"),
+		})
+	}
+
 	/// Create a new cloud backend for Google Drive
 	pub async fn new_google_drive(
 		access_token: impl AsRef<str>,

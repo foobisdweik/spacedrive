@@ -6,8 +6,8 @@
 use super::{
 	input::CopyMethod,
 	strategy::{
-		CopyStrategy, FastCopyStrategy, LocalMoveStrategy, LocalStreamCopyStrategy,
-		RemoteTransferStrategy,
+		CloudTransferStrategy, CopyStrategy, FastCopyStrategy, LocalMoveStrategy,
+		LocalStreamCopyStrategy, RemoteTransferStrategy,
 	},
 };
 use crate::{domain::addressing::SdPath, volume::VolumeManager};
@@ -49,6 +49,14 @@ impl CopyStrategyRouter {
 			source.device_slug(),
 			destination.device_slug()
 		);
+
+		// Cloud endpoint on either side - go through the VolumeBackend layer.
+		// Cloud paths have no device slug and no local path, so they must be
+		// routed before the device/local checks below (which assume local paths).
+		if source.is_cloud() || destination.is_cloud() {
+			info!("[ROUTING] Cloud endpoint detected - selecting CloudTransferStrategy");
+			return Box::new(CloudTransferStrategy);
+		}
 
 		// Cross-device transfer - always use network strategy
 		// Compare device slugs to detect if paths are on different devices
@@ -141,6 +149,26 @@ impl CopyStrategyRouter {
 		copy_method: &CopyMethod,
 		volume_manager: Option<&VolumeManager>,
 	) -> (Box<dyn CopyStrategy>, CopyStrategyMetadata) {
+		// Cloud endpoint on either side - route through the VolumeBackend layer.
+		if source.is_cloud() || destination.is_cloud() {
+			let description = if source.is_cloud() && destination.is_cloud() {
+				"Cloud-to-cloud transfer".to_string()
+			} else if destination.is_cloud() {
+				"Upload to cloud storage".to_string()
+			} else {
+				"Download from cloud storage".to_string()
+			};
+			let metadata = CopyStrategyMetadata {
+				strategy_name: "CloudTransfer".to_string(),
+				strategy_description: description,
+				is_cross_device: true,
+				is_cross_volume: true,
+				is_fast_operation: false,
+				copy_method: copy_method.clone(),
+			};
+			return (Box::new(CloudTransferStrategy), metadata);
+		}
+
 		let is_cross_device = match (source.device_slug(), destination.device_slug()) {
 			(Some(src_slug), Some(dst_slug)) => src_slug != dst_slug,
 			_ => false,
@@ -332,6 +360,17 @@ impl CopyStrategyRouter {
 		copy_method: &CopyMethod,
 		volume_manager: Option<&VolumeManager>,
 	) -> String {
+		// Cloud endpoints first - they have no device slug or local path.
+		if source.is_cloud() || destination.is_cloud() {
+			return if source.is_cloud() && destination.is_cloud() {
+				"Cloud-to-cloud transfer".to_string()
+			} else if destination.is_cloud() {
+				"Upload to cloud storage".to_string()
+			} else {
+				"Download from cloud storage".to_string()
+			};
+		}
+
 		// Check if cross-device using device slugs
 		let is_cross_device = match (source.device_slug(), destination.device_slug()) {
 			(Some(src_slug), Some(dst_slug)) => src_slug != dst_slug,

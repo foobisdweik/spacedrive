@@ -31,6 +31,8 @@ mod types;
 mod wasm_job;
 
 #[cfg(feature = "wasm")]
+pub use host_functions::dispatch_extension_call;
+#[cfg(feature = "wasm")]
 pub use job_registry::{ExtensionJobRegistration, ExtensionJobRegistry};
 #[cfg(feature = "wasm")]
 pub use manager::PluginManager;
