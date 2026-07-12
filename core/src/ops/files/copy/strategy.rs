@@ -941,7 +941,23 @@ impl CloudTransferStrategy {
 		}
 
 		const CHUNK: u64 = 8 * 1024 * 1024; // 8 MiB
-		let mut buffer = Vec::with_capacity(size as usize);
+									  // Reserve up front, but fallibly: `with_capacity` panics on OOM and a
+									  // `u64 -> usize` cast truncates on 32-bit targets. Guard the address
+									  // space and use `try_reserve` so an over-large file fails gracefully.
+		if size > usize::MAX as u64 {
+			return Err(anyhow::anyhow!(
+				"File size {} exceeds this platform's address space",
+				size
+			));
+		}
+		let mut buffer = Vec::new();
+		buffer.try_reserve(size as usize).map_err(|e| {
+			anyhow::anyhow!(
+				"Failed to allocate {} bytes for transfer buffer: {}",
+				size,
+				e
+			)
+		})?;
 		let mut offset = 0u64;
 		while offset < size {
 			let end = (offset + CHUNK).min(size);
@@ -971,19 +987,22 @@ impl CloudTransferStrategy {
 			.map_err(|e| anyhow::anyhow!("Failed to write {}: {}", dst_path.display(), e))?;
 
 		if verify_checksum {
-			let readback = dst_backend.read(dst_path).await.map_err(|e| {
+			// Compare the destination's reported size rather than reading the
+			// whole object back — the latter doubles memory use and, for cloud
+			// backends, re-downloads every byte just to check a length.
+			let metadata = dst_backend.metadata(dst_path).await.map_err(|e| {
 				anyhow::anyhow!(
-					"Failed to read back {} for verification: {}",
+					"Failed to stat {} for verification: {}",
 					dst_path.display(),
 					e
 				)
 			})?;
-			if readback.len() as u64 != written {
+			if metadata.size != written {
 				return Err(anyhow::anyhow!(
-					"Verification failed for {}: wrote {} bytes, read back {}",
+					"Verification failed for {}: wrote {} bytes, destination reports {}",
 					dst_path.display(),
 					written,
-					readback.len()
+					metadata.size
 				));
 			}
 		}
