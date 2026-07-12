@@ -934,9 +934,20 @@ impl CloudTransferStrategy {
 		}
 
 		// Ensure the destination's parent exists (no-op on cloud key-spaces).
+		// Propagate failures: on local backends a missing/denied parent is the
+		// real cause of a copy failure and must not be swallowed.
 		if let Some(parent) = dst_path.parent() {
 			if !parent.as_os_str().is_empty() {
-				let _ = dst_backend.create_directory(parent, true).await;
+				dst_backend
+					.create_directory(parent, true)
+					.await
+					.map_err(|e| {
+						anyhow::anyhow!(
+							"Failed to create destination directory {}: {}",
+							parent.display(),
+							e
+						)
+					})?;
 			}
 		}
 
@@ -981,15 +992,21 @@ impl CloudTransferStrategy {
 		}
 
 		let written = buffer.len() as u64;
+
+		// Hash the source bytes we already hold in memory before handing the
+		// buffer to `write`. Elsewhere `verify_checksum` means a real blake3
+		// content check, so a size-only comparison here would be misleading and
+		// miss same-length corruption. Source hashing is free (no extra I/O).
+		let source_checksum = verify_checksum.then(|| blake3::hash(&buffer));
+
 		dst_backend
 			.write(dst_path, Bytes::from(buffer))
 			.await
 			.map_err(|e| anyhow::anyhow!("Failed to write {}: {}", dst_path.display(), e))?;
 
-		if verify_checksum {
-			// Compare the destination's reported size rather than reading the
-			// whole object back — the latter doubles memory use and, for cloud
-			// backends, re-downloads every byte just to check a length.
+		if let Some(source_checksum) = source_checksum {
+			// Fast size pre-check: a cheap early-out and a guard against a
+			// truncated object before the streaming hash below.
 			let metadata = dst_backend.metadata(dst_path).await.map_err(|e| {
 				anyhow::anyhow!(
 					"Failed to stat {} for verification: {}",
@@ -1003,6 +1020,35 @@ impl CloudTransferStrategy {
 					dst_path.display(),
 					written,
 					metadata.size
+				));
+			}
+
+			// Re-hash the destination by streaming it back in CHUNK-sized reads
+			// so cloud backends never re-download the whole object into memory
+			// at once, then compare against the source hash.
+			let mut hasher = blake3::Hasher::new();
+			let mut voff = 0u64;
+			while voff < written {
+				let vend = (voff + CHUNK).min(written);
+				let bytes = dst_backend
+					.read_range(dst_path, voff..vend)
+					.await
+					.map_err(|e| {
+						anyhow::anyhow!(
+							"Failed to read back {} [{}..{}] for verification: {}",
+							dst_path.display(),
+							voff,
+							vend,
+							e
+						)
+					})?;
+				hasher.update(&bytes);
+				voff = vend;
+			}
+			if hasher.finalize() != source_checksum {
+				return Err(anyhow::anyhow!(
+					"Checksum verification failed for {}: source and destination content differ",
+					dst_path.display()
 				));
 			}
 		}
