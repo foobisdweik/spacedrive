@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tracing::debug;
 
-use super::{BackendType, CloudServiceType, RawDirEntry, RawMetadata, VolumeBackend};
+use super::{BackendType, CloudServiceType, RawDirEntry, RawMetadata, VolumeBackend, VolumeWriter};
 use crate::ops::indexing::state::EntryKind;
 use crate::volume::error::VolumeError;
 
@@ -312,6 +312,31 @@ impl VolumeBackend for CloudBackend {
 		Ok(())
 	}
 
+	async fn open_writer(
+		&self,
+		path: &Path,
+		_size_hint: u64,
+	) -> Result<Box<dyn VolumeWriter>, VolumeError> {
+		let cloud_path = self.to_cloud_path(path);
+		debug!("CloudBackend::open_writer: {}", cloud_path);
+
+		// An 8 MiB chunk makes OpenDAL buffer to that size before flushing a part,
+		// so services with native multipart upload (S3, GCS, Azure) stream the
+		// object in parts instead of holding it whole. Backends without multipart
+		// fall back to a single commit at close — either way the copy strategy
+		// never buffers the whole file itself.
+		const CHUNK: usize = 8 * 1024 * 1024;
+
+		let writer = self
+			.operator
+			.writer_with(&cloud_path)
+			.chunk(CHUNK)
+			.await
+			.map_err(|e| VolumeError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+		Ok(Box::new(CloudVolumeWriter { writer }))
+	}
+
 	async fn read_dir(&self, path: &Path) -> Result<Vec<RawDirEntry>, VolumeError> {
 		let cloud_path = self.to_cloud_path(path);
 		debug!("CloudBackend::read_dir: {}", cloud_path);
@@ -457,6 +482,32 @@ impl VolumeBackend for CloudBackend {
 
 	fn backend_type(&self) -> BackendType {
 		BackendType::Cloud(self.service_type)
+	}
+}
+
+/// Streaming writer for [`CloudBackend`], backed by an OpenDAL chunked writer.
+/// Each `write_chunk` appends to the current part; `close` flushes the final
+/// part and commits the (possibly multipart) upload.
+struct CloudVolumeWriter {
+	writer: opendal::Writer,
+}
+
+#[async_trait]
+impl VolumeWriter for CloudVolumeWriter {
+	async fn write_chunk(&mut self, chunk: Bytes) -> Result<(), VolumeError> {
+		self.writer
+			.write(chunk)
+			.await
+			.map_err(|e| VolumeError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+		Ok(())
+	}
+
+	async fn close(mut self: Box<Self>) -> Result<(), VolumeError> {
+		self.writer
+			.close()
+			.await
+			.map_err(|e| VolumeError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+		Ok(())
 	}
 }
 

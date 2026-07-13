@@ -915,9 +915,11 @@ impl CloudTransferStrategy {
 		})
 	}
 
-	/// Copy a single object between backends, streaming in chunks so progress is
-	/// reported even for large files. The `VolumeBackend::write` contract takes a
-	/// full buffer, so chunks accumulate before the single write.
+	/// Copy a single object between backends, streaming 8 MiB chunks straight
+	/// from the source into a destination [`VolumeWriter`](crate::volume::VolumeWriter).
+	/// Neither the whole file nor a growing buffer is held in memory, so object
+	/// size is bounded by the destination, not by RAM. The blake3 source hash is
+	/// updated per-chunk for optional verification.
 	async fn transfer_file<'a>(
 		src_backend: &dyn crate::volume::VolumeBackend,
 		src_path: &Path,
@@ -927,8 +929,6 @@ impl CloudTransferStrategy {
 		verify_checksum: bool,
 		progress_callback: Option<&ProgressCallback<'a>>,
 	) -> Result<u64> {
-		use bytes::Bytes;
-
 		if let Some(cb) = progress_callback {
 			cb(0, size);
 		}
@@ -952,23 +952,24 @@ impl CloudTransferStrategy {
 		}
 
 		const CHUNK: u64 = 8 * 1024 * 1024; // 8 MiB
-									  // Reserve up front, but fallibly: `with_capacity` panics on OOM and a
-									  // `u64 -> usize` cast truncates on 32-bit targets. Guard the address
-									  // space and use `try_reserve` so an over-large file fails gracefully.
-		if size > usize::MAX as u64 {
-			return Err(anyhow::anyhow!(
-				"File size {} exceeds this platform's address space",
-				size
-			));
-		}
-		let mut buffer = Vec::new();
-		buffer.try_reserve(size as usize).map_err(|e| {
-			anyhow::anyhow!(
-				"Failed to allocate {} bytes for transfer buffer: {}",
-				size,
-				e
-			)
-		})?;
+
+		// Open a streaming destination writer. Cloud backends multipart-upload
+		// under the hood; local backends buffer through a file handle. Either
+		// way we stream chunk-by-chunk rather than materializing the whole file.
+		let mut writer = dst_backend
+			.open_writer(dst_path, size)
+			.await
+			.map_err(|e| {
+				anyhow::anyhow!("Failed to open writer for {}: {}", dst_path.display(), e)
+			})?;
+
+		// Elsewhere `verify_checksum` means a real blake3 content check, so a
+		// size-only comparison would be misleading and miss same-length
+		// corruption. Hash the source incrementally as we stream — free, no extra
+		// I/O and no full-file buffer.
+		let mut hasher = verify_checksum.then(blake3::Hasher::new);
+
+		let mut written = 0u64;
 		let mut offset = 0u64;
 		while offset < size {
 			let end = (offset + CHUNK).min(size);
@@ -984,27 +985,28 @@ impl CloudTransferStrategy {
 						e
 					)
 				})?;
-			buffer.extend_from_slice(&bytes);
+			if let Some(hasher) = hasher.as_mut() {
+				hasher.update(&bytes);
+			}
+			written += bytes.len() as u64;
+			writer
+				.write_chunk(bytes)
+				.await
+				.map_err(|e| anyhow::anyhow!("Failed to write {}: {}", dst_path.display(), e))?;
 			offset = end;
 			if let Some(cb) = progress_callback {
 				cb(offset, size);
 			}
 		}
 
-		let written = buffer.len() as u64;
-
-		// Hash the source bytes we already hold in memory before handing the
-		// buffer to `write`. Elsewhere `verify_checksum` means a real blake3
-		// content check, so a size-only comparison here would be misleading and
-		// miss same-length corruption. Source hashing is free (no extra I/O).
-		let source_checksum = verify_checksum.then(|| blake3::hash(&buffer));
-
-		dst_backend
-			.write(dst_path, Bytes::from(buffer))
+		// Commit the write before verifying; a cloud multipart upload only becomes
+		// readable after close.
+		writer
+			.close()
 			.await
-			.map_err(|e| anyhow::anyhow!("Failed to write {}: {}", dst_path.display(), e))?;
+			.map_err(|e| anyhow::anyhow!("Failed to finalize {}: {}", dst_path.display(), e))?;
 
-		if let Some(source_checksum) = source_checksum {
+		if let Some(source_checksum) = hasher.map(|h| h.finalize()) {
 			// Fast size pre-check: a cheap early-out and a guard against a
 			// truncated object before the streaming hash below.
 			let metadata = dst_backend.metadata(dst_path).await.map_err(|e| {
@@ -1622,8 +1624,13 @@ async fn stream_file_data<'a>(
 #[cfg(test)]
 mod cloud_transfer_tests {
 	use super::*;
-	use crate::volume::backend::{CloudServiceType, VolumeBackend};
+	use crate::volume::backend::{
+		BackendType, CloudServiceType, RawDirEntry, RawMetadata, VolumeBackend, VolumeWriter,
+	};
+	use crate::volume::error::VolumeError;
 	use crate::volume::{CloudBackend, LocalBackend};
+	use bytes::Bytes;
+	use std::ops::Range;
 	use std::sync::Arc;
 
 	/// Read a file back through a backend as a UTF-8 string (test helper).
@@ -1784,5 +1791,151 @@ mod cloud_transfer_tests {
 
 		assert_eq!(bytes, 0);
 		assert!(cloud.exists(Path::new("empty")).await.unwrap());
+	}
+
+	#[tokio::test]
+	async fn streams_large_file_with_checksum_verification() {
+		// 20 MiB + a non-chunk-aligned tail spans several 8 MiB chunks. Under the
+		// old whole-file buffering this held 20 MiB in a `Vec`; the streaming path
+		// never buffers more than one chunk. `verify_checksum` exercises the
+		// per-chunk source hash plus the streamed destination read-back compare.
+		let size = 20 * 1024 * 1024 + 123;
+		let mut data = vec![0u8; size];
+		for (i, b) in data.iter_mut().enumerate() {
+			*b = (i % 251) as u8;
+		}
+		let src_dir = tempfile::tempdir().unwrap();
+		std::fs::write(src_dir.path().join("big.bin"), &data).unwrap();
+
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(src_dir.path()));
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+
+		let bytes = CloudTransferStrategy::transfer(
+			local.as_ref(),
+			&src_dir.path().join("big.bin"),
+			cloud.as_ref(),
+			Path::new("big.bin"),
+			true, // verify_checksum
+			None,
+		)
+		.await
+		.expect("large verified transfer");
+
+		assert_eq!(bytes, size as u64);
+		assert_eq!(
+			cloud.read(Path::new("big.bin")).await.unwrap().to_vec(),
+			data,
+			"streamed content must match the source byte-for-byte"
+		);
+	}
+
+	#[tokio::test]
+	async fn checksum_mismatch_is_detected_through_streaming_path() {
+		// A destination that corrupts one byte (same length, so the size
+		// pre-check passes) must be caught by the blake3 read-back comparison.
+		let data = vec![9u8; 12 * 1024 * 1024]; // spans two 8 MiB chunks
+		let src_dir = tempfile::tempdir().unwrap();
+		std::fs::write(src_dir.path().join("data.bin"), &data).unwrap();
+
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(src_dir.path()));
+		let corrupting: Arc<dyn VolumeBackend> = Arc::new(CorruptingBackend {
+			inner: CloudBackend::new_in_memory(CloudServiceType::S3).unwrap(),
+		});
+
+		let err = CloudTransferStrategy::transfer(
+			local.as_ref(),
+			&src_dir.path().join("data.bin"),
+			corrupting.as_ref(),
+			Path::new("data.bin"),
+			true, // verify_checksum
+			None,
+		)
+		.await
+		.expect_err("a corrupted destination must fail checksum verification");
+
+		let msg = err.to_string();
+		assert!(
+			msg.contains("Checksum verification failed") || msg.contains("content differ"),
+			"expected a checksum failure, got: {msg}"
+		);
+	}
+
+	/// Test double that delegates every operation to an inner backend but flips
+	/// the first byte of the first chunk written through `open_writer`. The object
+	/// keeps its length (so the size pre-check passes) while its content differs,
+	/// isolating the streaming checksum comparison.
+	#[derive(Debug)]
+	struct CorruptingBackend {
+		inner: CloudBackend,
+	}
+
+	#[async_trait]
+	impl VolumeBackend for CorruptingBackend {
+		async fn read(&self, path: &Path) -> Result<Bytes, VolumeError> {
+			self.inner.read(path).await
+		}
+		async fn read_range(&self, path: &Path, range: Range<u64>) -> Result<Bytes, VolumeError> {
+			self.inner.read_range(path, range).await
+		}
+		async fn write(&self, path: &Path, data: Bytes) -> Result<(), VolumeError> {
+			self.inner.write(path, data).await
+		}
+		async fn open_writer(
+			&self,
+			path: &Path,
+			size_hint: u64,
+		) -> Result<Box<dyn VolumeWriter>, VolumeError> {
+			let inner = self.inner.open_writer(path, size_hint).await?;
+			Ok(Box::new(CorruptingWriter {
+				inner,
+				corrupted: false,
+			}))
+		}
+		async fn read_dir(&self, path: &Path) -> Result<Vec<RawDirEntry>, VolumeError> {
+			self.inner.read_dir(path).await
+		}
+		async fn metadata(&self, path: &Path) -> Result<RawMetadata, VolumeError> {
+			self.inner.metadata(path).await
+		}
+		async fn exists(&self, path: &Path) -> Result<bool, VolumeError> {
+			self.inner.exists(path).await
+		}
+		async fn delete(&self, path: &Path) -> Result<(), VolumeError> {
+			self.inner.delete(path).await
+		}
+		async fn create_directory(
+			&self,
+			path: &Path,
+			recursive: bool,
+		) -> Result<(), VolumeError> {
+			self.inner.create_directory(path, recursive).await
+		}
+		fn is_local(&self) -> bool {
+			self.inner.is_local()
+		}
+		fn backend_type(&self) -> BackendType {
+			self.inner.backend_type()
+		}
+	}
+
+	struct CorruptingWriter {
+		inner: Box<dyn VolumeWriter>,
+		corrupted: bool,
+	}
+
+	#[async_trait]
+	impl VolumeWriter for CorruptingWriter {
+		async fn write_chunk(&mut self, chunk: Bytes) -> Result<(), VolumeError> {
+			let mut bytes = chunk.to_vec();
+			if !self.corrupted && !bytes.is_empty() {
+				bytes[0] ^= 0xFF; // same length, different content
+				self.corrupted = true;
+			}
+			self.inner.write_chunk(Bytes::from(bytes)).await
+		}
+		async fn close(self: Box<Self>) -> Result<(), VolumeError> {
+			self.inner.close().await
+		}
 	}
 }

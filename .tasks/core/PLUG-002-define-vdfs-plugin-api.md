@@ -7,7 +7,7 @@ parent: PLUG-000
 priority: High
 tags: [plugins, wasm, api, vdfs, wire]
 whitepaper: Section 6.8
-last_updated: 2026-07-11
+last_updated: 2026-07-12
 ---
 
 ## Description
@@ -36,8 +36,8 @@ The key architectural insight: expose ONE generic `spacedrive_call()` function t
 - [x] Complete host_spacedrive_call() implementation
 - [x] Add WASM memory read/write helpers
 - [x] Connect to the Wire registry (same dispatch as RpcServer::execute_json_operation())
-- [ ] Add extension-specific operations (ai.ocr, credentials.store, vdfs.write_sidecar)
-- [x] End-to-end integration testing (bridge dispatch against a real Core; guest-load test exists)
+- [x] Add extension-specific operations (ai.ocr, credentials.store, vdfs.write_sidecar)
+- [x] End-to-end integration testing (bridge dispatch against a real Core; host-drives-wasm memory round-trip test added)
 
 ## Acceptance Criteria
 
@@ -51,10 +51,31 @@ The key architectural insight: expose ONE generic `spacedrive_call()` function t
 - Tests: `core/src/infra/extension/host_functions.rs::bridge_tests` (4, `--features wasm`) — a core query returns a result, payload fields reach the operation (`libraries.list`), unknown methods are rejected, and a library-scoped method without a library id is rejected. Operations are addressed by their Wire method (`query:<name>` / `action:<name>`), the same strings daemon RPC and the SDK use.
 - Confirmed the existing `wasm_extension_test` still loads a real guest with the `spacedrive_call` host import bound.
 
+## Implementation Notes (2026-07-12) — follow-ups closed
+
+- Registered the three extension-specific Wire operations on top of the generic bridge:
+  - `ai.ocr` (`core/src/ops/media/ocr/action.rs`, `AiOcrAction`) — a thin alias that
+    forwards to the existing `ExtractTextAction`/`OcrJob` pipeline, giving plugins a
+    stable `ai.*` namespace without a second job implementation. Uses a dedicated
+    `AiOcrInput` because `register_library_action!` implements `Wire` on the Input type,
+    so two actions cannot share one Input.
+  - `credentials.store` (`core/src/ops/credentials/mod.rs`, `StoreCredentialAction`) —
+    builds a `CloudCredential` from a primitive plugin-facing DTO and persists it via
+    `CloudCredentialManager::store_credential`.
+  - `vdfs.write_sidecar` (`core/src/ops/vdfs/mod.rs`, `WriteSidecarAction`) — base64-decodes
+    a payload, writes it to the library sidecar store, and records it through `SidecarManager`.
+  - All three are library-scoped; the test-extension manifest already authorizes them via its
+    `query:`/`action:` permission prefixes. Registration proven by `bridge_tests::extension_specific_ops_are_registered`.
+- Added an automated **host-drives-wasm** round trip
+  (`bridge_tests::plugin_calls_core_query_over_wasm_memory`): a minimal WAT guest imports
+  `spacedrive_call`, the host writes method + payload into the guest's linear memory, invokes
+  the bridge, and reads the JSON result pointer back out — covering the memory-marshalling path
+  the `dispatch_extension_call` unit tests skip. No SDK/wasm32 rebuild required.
+
 ## Remaining (follow-up)
 
-- Extension-specific operations (`ai.ocr`, `credentials.store`, `vdfs.write_sidecar`) are not yet registered — they are additional Wire operations on top of the now-working generic bridge.
-- Full in-guest round trip (guest `.wasm` invoking `spacedrive_call` and reading the result back out of memory) is exercised manually; an automated guest-side test needs the test-extension rebuilt against the SDK with a call site.
+- None for the bridge. A guest-side SDK round trip (test-extension rebuilt against the SDK with a
+  real call site) remains optional polish; the host-side memory path is now covered automatically.
 
 ## Implementation Files
 

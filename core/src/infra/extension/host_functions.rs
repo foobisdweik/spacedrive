@@ -591,4 +591,173 @@ mod bridge_tests {
 			"unexpected error: {err}"
 		);
 	}
+
+
+	#[tokio::test]
+	async fn extension_specific_ops_are_registered() {
+		let (_temp, core, dispatcher) = setup().await;
+
+		// PLUG-002 follow-up: ai.ocr / credentials.store / vdfs.write_sidecar are
+		// library-scoped actions. Reaching them proves they are registered on the
+		// Wire registry (and therefore reachable through the bridge): dispatch gets
+		// past the registry lookup to the library-id guard, so the error is
+		// "Library ID required" — NOT "Unknown method", which is what an
+		// unregistered op returns. Action Wire methods carry the `.input` suffix
+		// (see the `action_method!` macro), matching how a real caller addresses them.
+		for method in [
+			"action:ai.ocr.input",
+			"action:credentials.store.input",
+			"action:vdfs.write_sidecar.input",
+		] {
+			let err = dispatch_extension_call(
+				core.context.clone(),
+				dispatcher.clone(),
+				method,
+				None,
+				serde_json::json!({}),
+			)
+			.await
+			.expect_err("a library action without a library id must be rejected");
+
+			assert!(
+				err.contains("Library ID required"),
+				"{method} should be registered and require a library id, got: {err}"
+			);
+			assert!(
+				!err.contains("Unknown method"),
+				"{method} is not registered on the Wire registry: {err}"
+			);
+		}
+	}
+
+	/// End-to-end proof that a guest's `spacedrive_call` reaches the Wire registry
+	/// through `host_spacedrive_call` — the memory-marshalling path the
+	/// `dispatch_extension_call` unit tests skip. A minimal wasm guest forwards its
+	/// arguments to the host import; the host reads the method + payload out of the
+	/// guest's linear memory, dispatches, and writes the JSON result back into that
+	/// same memory. We drive the guest and read the result pointer back out.
+	#[tokio::test(flavor = "multi_thread")]
+	async fn plugin_calls_core_query_over_wasm_memory() {
+		use super::super::{
+			job_registry::ExtensionJobRegistry, permissions::ExtensionPermissions,
+			types::ManifestPermissions,
+		};
+		use super::{host_spacedrive_call, PluginEnv};
+		use std::sync::Arc;
+		use wasmer::{
+			imports, Function, FunctionEnv, Instance, Memory, Module, Store, Value, WasmPtr,
+		};
+
+		let (_temp, core, dispatcher) = setup().await;
+		let core_context = core.context.clone();
+
+		// `host_spacedrive_call` uses `Handle::current().block_on(...)` internally,
+		// which panics inside an async task but is valid on a `spawn_blocking` thread
+		// that still holds the runtime handle — the same context the plugin manager
+		// invokes plugins in.
+		let result = tokio::task::spawn_blocking(move || {
+			// Minimal guest: imports `spacedrive_call`, exports `memory` (2 pages so
+			// the host's 64 KiB result offset is in-bounds) and a `call` trampoline
+			// that forwards its args straight to the host import.
+			const WAT: &str = r#"
+				(module
+				  (import "env" "spacedrive_call"
+				    (func $spacedrive_call (param i32 i32 i32 i32 i32) (result i32)))
+				  (memory (export "memory") 2)
+				  (func (export "call") (param i32 i32 i32 i32 i32) (result i32)
+				    local.get 0 local.get 1 local.get 2 local.get 3 local.get 4
+				    call $spacedrive_call))
+			"#;
+
+			let mut store = Store::default();
+			let module = Module::new(&store, WAT).expect("minimal guest module compiles");
+
+			let manifest_perms = ManifestPermissions {
+				methods: vec!["query:".to_string(), "action:".to_string()],
+				..Default::default()
+			};
+			let permissions =
+				ExtensionPermissions::from_manifest("roundtrip-test".to_string(), &manifest_perms);
+
+			let temp_memory =
+				Memory::new(&mut store, wasmer::MemoryType::new(1, None, false)).unwrap();
+			let env = FunctionEnv::new(
+				&mut store,
+				PluginEnv {
+					extension_id: "roundtrip-test".to_string(),
+					core_context,
+					api_dispatcher: dispatcher,
+					permissions,
+					memory: temp_memory,
+					job_registry: Arc::new(ExtensionJobRegistry::new()),
+				},
+			);
+
+			let import_object = imports! {
+				"env" => {
+					"spacedrive_call" =>
+						Function::new_typed_with_env(&mut store, &env, host_spacedrive_call),
+				}
+			};
+
+			let instance = Instance::new(&mut store, &module, &import_object)
+				.expect("guest instantiates with the spacedrive_call import bound");
+
+			// Point the env at the instance's real memory (the manager does the same).
+			let memory = instance.exports.get_memory("memory").unwrap().clone();
+			env.as_mut(&mut store).memory = memory.clone();
+
+			// Marshal the call into linear memory as a guest would: method then
+			// payload at known offsets, library id pointer 0 (None).
+			let method = b"query:core.status";
+			let payload = b"null";
+			let method_ptr = 1024u32;
+			let payload_ptr = 2048u32;
+			{
+				let view = memory.view(&store);
+				view.write(method_ptr as u64, method).unwrap();
+				view.write(payload_ptr as u64, payload).unwrap();
+			}
+
+			let call = instance.exports.get_function("call").unwrap();
+			let results = call
+				.call(
+					&mut store,
+					&[
+						Value::I32(method_ptr as i32),
+						Value::I32(method.len() as i32),
+						Value::I32(0), // library_id_ptr == 0 => None
+						Value::I32(payload_ptr as i32),
+						Value::I32(payload.len() as i32),
+					],
+				)
+				.expect("guest -> host bridge call succeeds");
+
+			let result_ptr = match results[0] {
+				Value::I32(p) => p as u32,
+				ref other => panic!("unexpected return value: {other:?}"),
+			};
+			assert_ne!(result_ptr, 0, "host returned NULL, indicating a bridge error");
+
+			// Read the JSON the host wrote back. It has no length prefix and lands
+			// in zero-filled memory, so read a window and cut at the first NUL.
+			let view = memory.view(&store);
+			let raw = WasmPtr::<u8>::new(result_ptr)
+				.slice(&view, 4096)
+				.unwrap()
+				.read_to_vec()
+				.unwrap();
+			let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+			let json_str = String::from_utf8(raw[..end].to_vec()).unwrap();
+			serde_json::from_str::<serde_json::Value>(&json_str)
+				.expect("host wrote valid JSON back into guest memory")
+		})
+		.await
+		.expect("blocking wasm task panicked");
+
+		assert!(
+			result.is_object() && result.get("error").is_none(),
+			"core.status must round-trip through wasm memory as a status object, got {result:?}"
+		);
+	}
 }

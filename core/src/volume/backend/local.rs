@@ -5,10 +5,10 @@ use bytes::Bytes;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tracing::debug;
 
-use super::{BackendType, RawDirEntry, RawMetadata, VolumeBackend};
+use super::{BackendType, RawDirEntry, RawMetadata, VolumeBackend, VolumeWriter};
 use crate::ops::indexing::state::EntryKind;
 use crate::volume::error::VolumeError;
 
@@ -171,6 +171,28 @@ impl VolumeBackend for LocalBackend {
 		Ok(())
 	}
 
+	async fn open_writer(
+		&self,
+		path: &Path,
+		_size_hint: u64,
+	) -> Result<Box<dyn VolumeWriter>, VolumeError> {
+		let full_path = self.resolve_path(path);
+		debug!("LocalBackend::open_writer: {}", full_path.display());
+
+		// Create parent directories if needed (mirrors `write`).
+		if let Some(parent) = full_path.parent() {
+			fs::create_dir_all(parent).await.map_err(VolumeError::Io)?;
+		}
+
+		let file = fs::File::create(&full_path)
+			.await
+			.map_err(VolumeError::Io)?;
+
+		Ok(Box::new(LocalVolumeWriter {
+			file: tokio::io::BufWriter::new(file),
+		}))
+	}
+
 	async fn read_dir(&self, path: &Path) -> Result<Vec<RawDirEntry>, VolumeError> {
 		let full_path = self.resolve_path(path);
 		debug!("LocalBackend::read_dir: {}", full_path.display());
@@ -295,6 +317,32 @@ impl VolumeBackend for LocalBackend {
 
 	fn backend_type(&self) -> BackendType {
 		BackendType::Local
+	}
+}
+
+/// Streaming writer for [`LocalBackend`]: buffers chunks through a
+/// [`tokio::io::BufWriter`] over the destination file so large copies never hold
+/// the whole object in memory.
+struct LocalVolumeWriter {
+	file: tokio::io::BufWriter<fs::File>,
+}
+
+#[async_trait]
+impl VolumeWriter for LocalVolumeWriter {
+	async fn write_chunk(&mut self, chunk: Bytes) -> Result<(), VolumeError> {
+		self.file.write_all(&chunk).await.map_err(VolumeError::Io)
+	}
+
+	async fn close(mut self: Box<Self>) -> Result<(), VolumeError> {
+		// Flush the buffered writer and sync the file handle so the bytes are
+		// durable before we report success.
+		self.file.flush().await.map_err(VolumeError::Io)?;
+		self.file
+			.into_inner()
+			.sync_all()
+			.await
+			.map_err(VolumeError::Io)?;
+		Ok(())
 	}
 }
 

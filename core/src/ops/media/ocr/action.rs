@@ -104,3 +104,69 @@ impl LibraryAction for ExtractTextAction {
 }
 
 crate::register_library_action!(ExtractTextAction, "media.ocr.extract");
+
+// ============================================================================
+// AI OCR Action (extension-facing alias)
+// ============================================================================
+
+/// Extension-facing alias for OCR text extraction.
+///
+/// PLUG-002: the plugin SDK addresses OCR as `ai.ocr` (see `AiContext::ocr_document`
+/// in `crates/sdk`). This registers that method against the existing OCR pipeline by
+/// delegating to [`ExtractTextAction`], so plugins get a stable `ai.*` namespace
+/// without a second implementation of the job dispatch.
+///
+/// Uses a dedicated `AiOcrInput` (structurally identical to [`ExtractTextInput`])
+/// because the `register_library_action!` macro implements `Wire` on the action's
+/// `Input` type — two actions sharing one `Input` would collide on that impl.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct AiOcrInput {
+	/// UUID of the entry to extract text from
+	pub entry_uuid: Uuid,
+	/// Languages to use for OCR (e.g., ["eng", "spa"])
+	#[serde(default)]
+	pub languages: Option<Vec<String>>,
+	/// Force re-extraction even if text exists
+	#[serde(default)]
+	pub force: bool,
+}
+
+impl From<AiOcrInput> for ExtractTextInput {
+	fn from(input: AiOcrInput) -> Self {
+		ExtractTextInput {
+			entry_uuid: input.entry_uuid,
+			languages: input.languages,
+			force: input.force,
+		}
+	}
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiOcrAction {
+	input: AiOcrInput,
+}
+
+impl LibraryAction for AiOcrAction {
+	type Input = AiOcrInput;
+	type Output = ExtractTextOutput;
+
+	fn from_input(input: AiOcrInput) -> Result<Self, String> {
+		Ok(Self { input })
+	}
+
+	async fn execute(
+		self,
+		library: Arc<crate::library::Library>,
+		context: Arc<CoreContext>,
+	) -> Result<Self::Output, ActionError> {
+		ExtractTextAction::new(self.input.into())
+			.execute(library, context)
+			.await
+	}
+
+	fn action_kind(&self) -> &'static str {
+		"ai.ocr"
+	}
+}
+
+crate::register_library_action!(AiOcrAction, "ai.ocr");
