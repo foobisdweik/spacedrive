@@ -8850,6 +8850,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "backoff",
+ "base64 0.22.1",
  "bincode",
  "bip39",
  "blake3",

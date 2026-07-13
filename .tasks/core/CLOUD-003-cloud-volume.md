@@ -7,7 +7,7 @@ parent: CLOUD-000
 priority: High
 tags: [cloud, storage, volume, s3]
 whitepaper: Section 5.2
-last_updated: 2026-07-11
+last_updated: 2026-07-12
 ---
 
 ## Description
@@ -55,6 +55,26 @@ Implement support for a cloud storage provider (e.g., S3-compatible service) as 
 - Tests: `core/src/ops/files/copy/strategy.rs::cloud_transfer_tests` (5) — upload, download+verify, chunked-progress on a 20 MiB file, recursive directory upload, and zero-byte transfer, exercising a real `CloudBackend` ↔ `LocalBackend`.
 - Deferred: resumable/multipart uploads (currently buffers a file before writing, per the `VolumeBackend::write` whole-buffer contract) and content-hash (not size-only) checksum verification — revisit alongside large-object streaming.
 
+## Implementation Notes (2026-07-12) — streaming multipart + checksum
+
+- Added a streaming write primitive to the backend layer: `VolumeBackend::open_writer(path, size_hint)`
+  returns a `VolumeWriter` (`write_chunk` + `close`) (`core/src/volume/backend/mod.rs`).
+  - `CloudBackend` implements it via OpenDAL `writer_with(key).chunk(8 MiB)`, so services with
+    native multipart upload (S3/GCS/Azure) stream the object in parts; backends without multipart
+    commit once at close (`core/src/volume/backend/cloud.rs`).
+  - `LocalBackend` implements it via a buffered `tokio::fs::File`, flushing and `sync_all` on close
+    (`core/src/volume/backend/local.rs`).
+- Rewrote `CloudTransferStrategy::transfer_file` to stream each 8 MiB source chunk straight into the
+  destination writer — no whole-file `Vec` buffer (the previous `try_reserve(size)` allocation is gone),
+  so object size is bounded by the destination, not RAM. The blake3 source hash is updated per-chunk,
+  and the existing size + streamed destination read-back verification is preserved.
+- Content-hash checksum verification (not size-only) had already landed in the 2026-07-11 hardening
+  commit; it now runs over the streaming path.
+- Tests: `cloud_transfer_tests` grew from 5 to 7 — a 20 MiB+tail transfer with `verify_checksum` that
+  would have buffered the whole file before, and a corrupting-destination case proving the streamed
+  checksum comparison catches same-length content corruption.
+- Still deferred: crash-resume multipart (persisted upload id / parts) and OAuth cloud providers.
+
 ## Implementation Files
 
 **Core Backend:**
@@ -85,5 +105,6 @@ Implement support for a cloud storage provider (e.g., S3-compatible service) as 
 ## Next Steps
 
 1. Test end-to-end cloud volume indexing with MinIO or real S3
-2. Implement file copy operations for cloud volumes
+2. ~~Implement file copy operations for cloud volumes~~ — done (`CloudTransferStrategy`, now streaming)
 3. Add OAuth support for Google Drive, Dropbox, OneDrive
+4. Crash-resume multipart uploads (persist upload id / uploaded parts)
