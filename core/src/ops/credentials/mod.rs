@@ -115,9 +115,7 @@ impl LibraryAction for StoreCredentialAction {
 				client_secret,
 				None,
 			),
-			CredentialInput::ApiKey { api_key } => {
-				CloudCredential::new_api_key(service, api_key)
-			}
+			CredentialInput::ApiKey { api_key } => CloudCredential::new_api_key(service, api_key),
 		};
 
 		let library_id = library.id();

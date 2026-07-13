@@ -592,7 +592,6 @@ mod bridge_tests {
 		);
 	}
 
-
 	#[tokio::test]
 	async fn extension_specific_ops_are_registered() {
 		let (_temp, core, dispatcher) = setup().await;
@@ -737,7 +736,10 @@ mod bridge_tests {
 				Value::I32(p) => p as u32,
 				ref other => panic!("unexpected return value: {other:?}"),
 			};
-			assert_ne!(result_ptr, 0, "host returned NULL, indicating a bridge error");
+			assert_ne!(
+				result_ptr, 0,
+				"host returned NULL, indicating a bridge error"
+			);
 
 			// Read the JSON the host wrote back. It has no length prefix and lands
 			// in zero-filled memory, so read a window and cut at the first NUL.

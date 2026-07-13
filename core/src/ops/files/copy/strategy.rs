@@ -956,12 +956,9 @@ impl CloudTransferStrategy {
 		// Open a streaming destination writer. Cloud backends multipart-upload
 		// under the hood; local backends buffer through a file handle. Either
 		// way we stream chunk-by-chunk rather than materializing the whole file.
-		let mut writer = dst_backend
-			.open_writer(dst_path, size)
-			.await
-			.map_err(|e| {
-				anyhow::anyhow!("Failed to open writer for {}: {}", dst_path.display(), e)
-			})?;
+		let mut writer = dst_backend.open_writer(dst_path, size).await.map_err(|e| {
+			anyhow::anyhow!("Failed to open writer for {}: {}", dst_path.display(), e)
+		})?;
 
 		// Elsewhere `verify_checksum` means a real blake3 content check, so a
 		// size-only comparison would be misleading and miss same-length
@@ -1904,11 +1901,7 @@ mod cloud_transfer_tests {
 		async fn delete(&self, path: &Path) -> Result<(), VolumeError> {
 			self.inner.delete(path).await
 		}
-		async fn create_directory(
-			&self,
-			path: &Path,
-			recursive: bool,
-		) -> Result<(), VolumeError> {
+		async fn create_directory(&self, path: &Path, recursive: bool) -> Result<(), VolumeError> {
 			self.inner.create_directory(path, recursive).await
 		}
 		fn is_local(&self) -> bool {
