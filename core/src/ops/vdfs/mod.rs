@@ -16,11 +16,26 @@ use crate::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::path::{Component, Path};
 use std::sync::Arc;
 use uuid::Uuid;
 
 fn default_variant() -> String {
 	"default".to_string()
+}
+
+/// Whether `variant` is a single normal path segment (no separators, no `..`,
+/// not empty, not absolute). Used to reject path-traversal attempts from
+/// untrusted extension input before the variant reaches the sidecar path.
+fn is_safe_variant(variant: &str) -> bool {
+	if variant.is_empty() {
+		return false;
+	}
+	let mut components = Path::new(variant).components();
+	matches!(
+		(components.next(), components.next()),
+		(Some(Component::Normal(_)), None)
+	)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -80,6 +95,20 @@ impl LibraryAction for WriteSidecarAction {
 			data_base64,
 		} = self.input;
 
+		// `variant` is attacker-controlled: it comes straight from a sandboxed
+		// WASM extension and is later formatted into the sidecar filename
+		// (`{variant}.{ext}`) and pushed onto the on-disk path. Reject anything
+		// that isn't a single normal path segment, otherwise separators or `..`
+		// would let a malicious extension escape the sidecar directory (path
+		// traversal). `kind`/`format` are enums parsed below and `content_uuid`
+		// is a UUID, so `variant` is the only free-form path input.
+		if !is_safe_variant(&variant) {
+			return Err(ActionError::InvalidInput(format!(
+				"invalid sidecar variant {variant:?}: must be a single path segment \
+				 with no separators or parent-directory references"
+			)));
+		}
+
 		let kind = SidecarKind::try_from(kind.as_str()).map_err(ActionError::InvalidInput)?;
 		let format = SidecarFormat::try_from(format.as_str()).map_err(ActionError::InvalidInput)?;
 		let variant = SidecarVariant::new(variant);
@@ -137,3 +166,33 @@ impl LibraryAction for WriteSidecarAction {
 }
 
 crate::register_library_action!(WriteSidecarAction, "vdfs.write_sidecar");
+
+#[cfg(test)]
+mod tests {
+	use super::is_safe_variant;
+
+	#[test]
+	fn accepts_ordinary_variants() {
+		for v in ["default", "grid@2x", "v1.2", "thumbnail_512", "a..b", "..."] {
+			assert!(is_safe_variant(v), "{v:?} should be accepted");
+		}
+	}
+
+	#[test]
+	fn rejects_path_traversal_and_separators() {
+		for v in [
+			"",
+			"..",
+			".",
+			"../secret",
+			"../../etc/passwd",
+			"foo/bar",
+			"/abs",
+			"/etc/passwd",
+			"a/..",
+			"./x",
+		] {
+			assert!(!is_safe_variant(v), "{v:?} should be rejected");
+		}
+	}
+}
