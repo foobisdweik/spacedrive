@@ -24,6 +24,20 @@ fn default_variant() -> String {
 	"default".to_string()
 }
 
+/// Upper bound on the decoded sidecar payload accepted from an extension.
+/// `data_base64` is attacker-controlled and decoded into a single `Vec<u8>`, so
+/// without a cap a malicious/buggy plugin could force a huge allocation (OOM).
+/// 64 MiB is comfortably above legitimate sidecars (OCR text, transcripts,
+/// embeddings) while bounding the worst-case host allocation.
+const MAX_SIDECAR_BYTES: usize = 64 * 1024 * 1024;
+
+/// Approximate decoded byte length of a standard-base64 string without
+/// allocating: every 4 encoded chars yield at most 3 decoded bytes. Used to
+/// reject oversized payloads before the decode allocates.
+fn decoded_len_upper_bound(encoded_len: usize) -> usize {
+	encoded_len / 4 * 3 + 3
+}
+
 /// Whether `variant` is a single normal path segment (no separators, no `..`,
 /// not empty, not absolute). Used to reject path-traversal attempts from
 /// untrusted extension input before the variant reaches the sidecar path.
@@ -113,11 +127,29 @@ impl LibraryAction for WriteSidecarAction {
 		let format = SidecarFormat::try_from(format.as_str()).map_err(ActionError::InvalidInput)?;
 		let variant = SidecarVariant::new(variant);
 
+		// `data_base64` is untrusted extension input decoded into a single
+		// `Vec<u8>`. Reject oversized payloads up front (from the cheap encoded
+		// length, before allocating) so a plugin cannot OOM the host.
+		if decoded_len_upper_bound(data_base64.len()) > MAX_SIDECAR_BYTES {
+			return Err(ActionError::InvalidInput(format!(
+				"sidecar payload too large: exceeds {MAX_SIDECAR_BYTES} bytes"
+			)));
+		}
+
 		let data = base64::engine::general_purpose::STANDARD
 			.decode(data_base64.as_bytes())
 			.map_err(|e| {
 				ActionError::InvalidInput(format!("data_base64 is not valid base64: {}", e))
 			})?;
+
+		// Exact guard after decode: the upper-bound pre-check can admit a payload
+		// slightly over the limit, so enforce the true decoded size too.
+		if data.len() > MAX_SIDECAR_BYTES {
+			return Err(ActionError::InvalidInput(format!(
+				"sidecar payload too large: {} bytes exceeds {MAX_SIDECAR_BYTES} bytes",
+				data.len()
+			)));
+		}
 
 		let manager = context.get_sidecar_manager().await.ok_or_else(|| {
 			ActionError::Internal("Sidecar manager is not initialized".to_string())
@@ -169,7 +201,31 @@ crate::register_library_action!(WriteSidecarAction, "vdfs.write_sidecar");
 
 #[cfg(test)]
 mod tests {
-	use super::is_safe_variant;
+	use super::{decoded_len_upper_bound, is_safe_variant, MAX_SIDECAR_BYTES};
+	use base64::Engine;
+
+	#[test]
+	fn decoded_len_upper_bound_never_underestimates() {
+		// The pre-decode guard relies on this bound being >= the real decoded
+		// length; verify that across representative payload sizes.
+		for n in [0usize, 1, 2, 3, 4, 5, 63, 64, 65, 1000, 1024 * 1024] {
+			let encoded = base64::engine::general_purpose::STANDARD.encode(vec![0u8; n]);
+			assert!(
+				decoded_len_upper_bound(encoded.len()) >= n,
+				"bound {} underestimated {n} (encoded len {})",
+				decoded_len_upper_bound(encoded.len()),
+				encoded.len()
+			);
+		}
+	}
+
+	#[test]
+	fn oversized_payload_is_rejected_by_bound() {
+		// An encoded string just past the limit must trip the cheap pre-check.
+		let over =
+			base64::engine::general_purpose::STANDARD.encode(vec![0u8; MAX_SIDECAR_BYTES + 1]);
+		assert!(decoded_len_upper_bound(over.len()) > MAX_SIDECAR_BYTES);
+	}
 
 	#[test]
 	fn accepts_ordinary_variants() {

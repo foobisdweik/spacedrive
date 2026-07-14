@@ -982,6 +982,21 @@ impl CloudTransferStrategy {
 						e
 					)
 				})?;
+			// Guard against a backend returning fewer bytes than requested without
+			// erroring: advancing `offset = end` on a short read would silently
+			// skip the missing bytes (and with `verify_checksum` off nothing later
+			// would catch the truncation).
+			let expected = end - offset;
+			if bytes.len() as u64 != expected {
+				return Err(anyhow::anyhow!(
+					"Short read from {} [{}..{}]: expected {} bytes, got {}",
+					src_path.display(),
+					offset,
+					end,
+					expected,
+					bytes.len()
+				));
+			}
 			if let Some(hasher) = hasher.as_mut() {
 				hasher.update(&bytes);
 			}

@@ -644,7 +644,8 @@ mod bridge_tests {
 		use super::{host_spacedrive_call, PluginEnv};
 		use std::sync::Arc;
 		use wasmer::{
-			imports, Function, FunctionEnv, Instance, Memory, Module, Store, Value, WasmPtr,
+			imports, wat2wasm, Function, FunctionEnv, Instance, Memory, Module, Store, Value,
+			WasmPtr,
 		};
 
 		let (_temp, core, dispatcher) = setup().await;
@@ -669,7 +670,11 @@ mod bridge_tests {
 			"#;
 
 			let mut store = Store::default();
-			let module = Module::new(&store, WAT).expect("minimal guest module compiles");
+			// Compile from an explicit wasm binary rather than relying on
+			// `Module::new` auto-detecting WAT text, so the test doesn't depend on
+			// Wasmer's optional WAT-parsing behaviour.
+			let wasm = wat2wasm(WAT.as_bytes()).expect("WAT parses to wasm");
+			let module = Module::new(&store, wasm).expect("minimal guest module compiles");
 
 			let manifest_perms = ManifestPermissions {
 				methods: vec!["query:".to_string(), "action:".to_string()],
