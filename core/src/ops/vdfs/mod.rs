@@ -142,15 +142,6 @@ impl LibraryAction for WriteSidecarAction {
 				ActionError::InvalidInput(format!("data_base64 is not valid base64: {}", e))
 			})?;
 
-		// Exact guard after decode: the upper-bound pre-check can admit a payload
-		// slightly over the limit, so enforce the true decoded size too.
-		if data.len() > MAX_SIDECAR_BYTES {
-			return Err(ActionError::InvalidInput(format!(
-				"sidecar payload too large: {} bytes exceeds {MAX_SIDECAR_BYTES} bytes",
-				data.len()
-			)));
-		}
-
 		let manager = context.get_sidecar_manager().await.ok_or_else(|| {
 			ActionError::Internal("Sidecar manager is not initialized".to_string())
 		})?;
