@@ -46,11 +46,16 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Progress callback for strategy implementations to report granular progress
 /// Parameters: bytes_copied_for_current_file, total_bytes_for_current_file
 pub type ProgressCallback<'a> = Box<dyn Fn(u64, u64) + Send + Sync + 'a>;
+
+/// Cooperative cancellation probe for long-running transfers.
+/// Returns `true` when the surrounding job has been interrupted (pause or
+/// cancel) and the transfer should stop at the next chunk boundary.
+pub type CancelCheck<'a> = Box<dyn Fn() -> bool + Send + Sync + 'a>;
 
 /// Strategy pattern for file copy operations with different performance characteristics.
 ///
@@ -817,7 +822,10 @@ impl CloudTransferStrategy {
 	///
 	/// Cloud paths use their in-bucket object key; local paths use their
 	/// absolute filesystem path (which `LocalBackend` passes through verbatim).
-	async fn resolve_backend(
+	///
+	/// `pub(crate)` so the action layer can resolve cloud endpoints for
+	/// validation (totals, conflict checks) without duplicating this mapping.
+	pub(crate) async fn resolve_backend(
 		vm: &crate::volume::VolumeManager,
 		library: &crate::library::Library,
 		sdpath: &SdPath,
@@ -854,13 +862,20 @@ impl CloudTransferStrategy {
 	///
 	/// Boxed because the recursion is async (a directory transfers its children).
 	/// Backend-agnostic, so it works for any local/cloud endpoint combination.
+	///
+	/// `same_volume` marks both endpoints as living on the same cloud volume,
+	/// enabling server-side copy where the service supports it. `cancel_check`
+	/// is polled at chunk and directory-entry boundaries for cooperative
+	/// cancellation.
 	fn transfer<'a>(
 		src_backend: &'a dyn crate::volume::VolumeBackend,
 		src_path: &'a Path,
 		dst_backend: &'a dyn crate::volume::VolumeBackend,
 		dst_path: &'a Path,
+		same_volume: bool,
 		verify_checksum: bool,
 		progress_callback: Option<&'a ProgressCallback<'a>>,
+		cancel_check: Option<&'a CancelCheck<'a>>,
 	) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64>> + Send + 'a>> {
 		Box::pin(async move {
 			use crate::ops::indexing::state::EntryKind;
@@ -887,6 +902,12 @@ impl CloudTransferStrategy {
 
 				let mut total = 0u64;
 				for entry in entries {
+					if cancel_check.is_some_and(|cancelled| cancelled()) {
+						return Err(anyhow::anyhow!(
+							"Transfer cancelled while copying directory {}",
+							src_path.display()
+						));
+					}
 					let child_src = src_path.join(&entry.name);
 					let child_dst = dst_path.join(&entry.name);
 					total += Self::transfer(
@@ -894,8 +915,10 @@ impl CloudTransferStrategy {
 						&child_src,
 						dst_backend,
 						&child_dst,
+						same_volume,
 						verify_checksum,
 						progress_callback,
+						cancel_check,
 					)
 					.await?;
 				}
@@ -907,8 +930,10 @@ impl CloudTransferStrategy {
 					dst_backend,
 					dst_path,
 					metadata.size,
+					same_volume,
 					verify_checksum,
 					progress_callback,
+					cancel_check,
 				)
 				.await
 			}
@@ -920,17 +945,45 @@ impl CloudTransferStrategy {
 	/// Neither the whole file nor a growing buffer is held in memory, so object
 	/// size is bounded by the destination, not by RAM. The blake3 source hash is
 	/// updated per-chunk for optional verification.
+	///
+	/// When `same_volume` is set and no checksum verification was requested, a
+	/// server-side copy is attempted first (e.g. S3 CopyObject) and streaming is
+	/// only the fallback. With verification on we always stream: the source hash
+	/// comes for free during upload, whereas verifying a native copy would cost
+	/// two full downloads.
 	async fn transfer_file<'a>(
 		src_backend: &dyn crate::volume::VolumeBackend,
 		src_path: &Path,
 		dst_backend: &dyn crate::volume::VolumeBackend,
 		dst_path: &Path,
 		size: u64,
+		same_volume: bool,
 		verify_checksum: bool,
 		progress_callback: Option<&ProgressCallback<'a>>,
+		cancel_check: Option<&CancelCheck<'a>>,
 	) -> Result<u64> {
 		if let Some(cb) = progress_callback {
 			cb(0, size);
+		}
+
+		if same_volume && !verify_checksum {
+			match dst_backend.copy_native(src_path, dst_path).await {
+				Ok(Some(bytes)) => {
+					if let Some(cb) = progress_callback {
+						cb(bytes, size);
+					}
+					return Ok(bytes);
+				}
+				Ok(None) => {} // No server-side copy on this service - stream below.
+				Err(e) => {
+					warn!(
+						"Native copy failed for {} -> {}, falling back to streaming: {}",
+						src_path.display(),
+						dst_path.display(),
+						e
+					);
+				}
+			}
 		}
 
 		// Ensure the destination's parent exists (no-op on cloud key-spaces).
@@ -969,6 +1022,19 @@ impl CloudTransferStrategy {
 		let mut written = 0u64;
 		let mut offset = 0u64;
 		while offset < size {
+			if cancel_check.is_some_and(|cancelled| cancelled()) {
+				// Drop the writer without closing it: the upload is left
+				// uncommitted (a cloud multipart upload is abandoned, not
+				// finalized). Best-effort delete of any partial object so a
+				// resumed job never sees truncated data.
+				drop(writer);
+				let _ = dst_backend.delete(dst_path).await;
+				return Err(anyhow::anyhow!(
+					"Transfer cancelled: {} -> {}",
+					src_path.display(),
+					dst_path.display()
+				));
+			}
 			let end = (offset + CHUNK).min(size);
 			let bytes = src_backend
 				.read_range(src_path, offset..end)
@@ -1043,6 +1109,15 @@ impl CloudTransferStrategy {
 			let mut hasher = blake3::Hasher::new();
 			let mut voff = 0u64;
 			while voff < written {
+				if cancel_check.is_some_and(|cancelled| cancelled()) {
+					// The object is fully written and committed at this point —
+					// only verification is abandoned, so leave the destination
+					// in place for a resumed job to re-verify or overwrite.
+					return Err(anyhow::anyhow!(
+						"Transfer cancelled during verification of {}",
+						dst_path.display()
+					));
+				}
 				let vend = (voff + CHUNK).min(written);
 				let bytes = dst_backend
 					.read_range(dst_path, voff..vend)
@@ -1089,13 +1164,28 @@ impl CopyStrategy for CloudTransferStrategy {
 		let (src_backend, src_path) = Self::resolve_backend(&vm, library, source).await?;
 		let (dst_backend, dst_path) = Self::resolve_backend(&vm, library, destination).await?;
 
+		// Both endpoints on the same cloud volume (same provider and same
+		// account/bucket identifier) can use the service's server-side copy
+		// instead of streaming the bytes down and back up.
+		let same_volume = match (source.as_cloud(), destination.as_cloud()) {
+			(Some((src_service, src_id, _)), Some((dst_service, dst_id, _))) => {
+				src_service == dst_service && src_id == dst_id
+			}
+			_ => false,
+		};
+
+		let cancel_check: CancelCheck =
+			Box::new(|| ctx.interrupter.try_check_interrupt().is_some());
+
 		let bytes = Self::transfer(
 			src_backend.as_ref(),
 			&src_path,
 			dst_backend.as_ref(),
 			&dst_path,
+			same_volume,
 			verify_checksum,
 			progress_callback,
+			Some(&cancel_check),
 		)
 		.await?;
 
@@ -1665,7 +1755,9 @@ mod cloud_transfer_tests {
 			&src_dir.path().join("hello.txt"),
 			cloud.as_ref(),
 			Path::new("backup/hello.txt"),
-			false,
+			false, // same_volume
+			false, // verify_checksum
+			None,
 			None,
 		)
 		.await
@@ -1698,7 +1790,9 @@ mod cloud_transfer_tests {
 			Path::new("remote/data.bin"),
 			local.as_ref(),
 			&dst_dir.path().join("data.bin"),
-			true, // verify_checksum
+			false, // same_volume
+			true,  // verify_checksum
+			None,
 			None,
 		)
 		.await
@@ -1732,8 +1826,10 @@ mod cloud_transfer_tests {
 			&src_dir.path().join("big.bin"),
 			cloud.as_ref(),
 			Path::new("big.bin"),
-			false,
+			false, // same_volume
+			false, // verify_checksum
 			Some(&cb),
+			None,
 		)
 		.await
 		.expect("transfer");
@@ -1764,7 +1860,9 @@ mod cloud_transfer_tests {
 			&src_dir.path().join("photos"),
 			cloud.as_ref(),
 			Path::new("uploaded"),
-			false,
+			false, // same_volume
+			false, // verify_checksum
+			None,
 			None,
 		)
 		.await
@@ -1795,7 +1893,9 @@ mod cloud_transfer_tests {
 			&src_dir.path().join("empty"),
 			cloud.as_ref(),
 			Path::new("empty"),
-			true,
+			false, // same_volume
+			true,  // verify_checksum
+			None,
 			None,
 		)
 		.await
@@ -1828,7 +1928,9 @@ mod cloud_transfer_tests {
 			&src_dir.path().join("big.bin"),
 			cloud.as_ref(),
 			Path::new("big.bin"),
-			true, // verify_checksum
+			false, // same_volume
+			true,  // verify_checksum
+			None,
 			None,
 		)
 		.await
@@ -1860,7 +1962,9 @@ mod cloud_transfer_tests {
 			&src_dir.path().join("data.bin"),
 			corrupting.as_ref(),
 			Path::new("data.bin"),
-			true, // verify_checksum
+			false, // same_volume
+			true,  // verify_checksum
+			None,
 			None,
 		)
 		.await
@@ -1870,6 +1974,111 @@ mod cloud_transfer_tests {
 		assert!(
 			msg.contains("Checksum verification failed") || msg.contains("content differ"),
 			"expected a checksum failure, got: {msg}"
+		);
+	}
+
+	#[tokio::test]
+	async fn same_volume_cloud_to_cloud_copy() {
+		// Cloud→cloud within one volume takes the native server-side copy when
+		// the service supports it and silently falls back to streaming when it
+		// doesn't — either way the object must arrive intact.
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+		cloud
+			.write(
+				Path::new("src/report.pdf"),
+				bytes::Bytes::from_static(b"report body"),
+			)
+			.await
+			.unwrap();
+
+		let bytes = CloudTransferStrategy::transfer(
+			cloud.as_ref(),
+			Path::new("src/report.pdf"),
+			cloud.as_ref(),
+			Path::new("dst/report.pdf"),
+			true,  // same_volume
+			false, // verify_checksum
+			None,
+			None,
+		)
+		.await
+		.expect("same-volume cloud copy");
+
+		assert_eq!(bytes, 11);
+		assert_eq!(
+			read_string(cloud.as_ref(), Path::new("dst/report.pdf")).await,
+			"report body"
+		);
+	}
+
+	#[tokio::test]
+	async fn cancelled_transfer_aborts_without_committing() {
+		let src_dir = tempfile::tempdir().unwrap();
+		std::fs::write(src_dir.path().join("data.bin"), vec![1u8; 1024]).unwrap();
+
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(src_dir.path()));
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+
+		let cancel: CancelCheck = Box::new(|| true);
+
+		let err = CloudTransferStrategy::transfer(
+			local.as_ref(),
+			&src_dir.path().join("data.bin"),
+			cloud.as_ref(),
+			Path::new("data.bin"),
+			false, // same_volume
+			false, // verify_checksum
+			None,
+			Some(&cancel),
+		)
+		.await
+		.expect_err("an already-interrupted transfer must abort");
+
+		assert!(
+			err.to_string().contains("cancelled"),
+			"expected a cancellation error, got: {err}"
+		);
+		assert!(
+			!cloud.exists(Path::new("data.bin")).await.unwrap(),
+			"no partial object may be committed after cancellation"
+		);
+	}
+
+	#[tokio::test]
+	async fn cancelled_directory_transfer_stops_between_entries() {
+		let src_dir = tempfile::tempdir().unwrap();
+		std::fs::create_dir_all(src_dir.path().join("photos")).unwrap();
+		std::fs::write(src_dir.path().join("photos/a.txt"), b"a").unwrap();
+		std::fs::write(src_dir.path().join("photos/b.txt"), b"b").unwrap();
+
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(src_dir.path()));
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+
+		let cancel: CancelCheck = Box::new(|| true);
+
+		let err = CloudTransferStrategy::transfer(
+			local.as_ref(),
+			&src_dir.path().join("photos"),
+			cloud.as_ref(),
+			Path::new("uploaded"),
+			false, // same_volume
+			false, // verify_checksum
+			None,
+			Some(&cancel),
+		)
+		.await
+		.expect_err("an already-interrupted directory transfer must abort");
+
+		assert!(
+			err.to_string().contains("cancelled"),
+			"expected a cancellation error, got: {err}"
+		);
+		assert!(
+			!cloud.exists(Path::new("uploaded/a.txt")).await.unwrap(),
+			"no child object may transfer after cancellation"
 		);
 	}
 

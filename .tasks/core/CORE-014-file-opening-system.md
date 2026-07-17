@@ -1,12 +1,12 @@
 ---
 id: CORE-014
 title: Cross-Platform File Opening Backend
-status: To Do
+status: Done
 assignee: jamiepine
 priority: High
 tags: [core, platform, file-operations]
 whitepaper: DESIGN-open-with.md
-last_updated: 2025-12-24
+last_updated: 2026-07-15
 related_tasks: [EXPL-004]
 ---
 
@@ -32,30 +32,30 @@ See `DESIGN-open-with.md` for complete architecture details.
 
 ## Acceptance Criteria
 
-- [ ] Shared `file-opening` crate with `FileOpener` trait and types
-- [ ] macOS implementation using Swift FFI + NSWorkspace
-  - [ ] Query apps using `urlsForApplications(toOpen:)` API
-  - [ ] Filter to `/Applications/` directory
-  - [ ] Open with default via NSWorkspace
-  - [ ] Open with specific app by bundle ID
-- [ ] Windows implementation using COM Shell APIs
-  - [ ] Query apps using `SHAssocEnumHandlers`
-  - [ ] Thread-local COM initialization
-  - [ ] Open with default via ShellExecute
-  - [ ] Open with specific app via IAssocHandler
-- [ ] Linux implementation using GTK/GIO
-  - [ ] Content type detection from file magic bytes
-  - [ ] Query apps via `AppInfo::recommended_for_type`
-  - [ ] Open with default via `launch_default_for_uri`
-  - [ ] Open with specific app via DesktopAppInfo
-- [ ] Tauri commands registered:
-  - [ ] `get_apps_for_paths(paths)` - returns Vec<OpenWithApp>
-  - [ ] `open_path_default(path)` - returns OpenResult
-  - [ ] `open_path_with_app(path, app_id)` - returns OpenResult
-  - [ ] `open_paths_with_app(paths, app_id)` - returns Vec<OpenResult>
-- [ ] Intersection logic for multi-file selections works correctly
-- [ ] Error handling returns proper OpenResult variants
-- [ ] All commands are async and non-blocking
+- [x] Shared `file-opening` crate with `FileOpener` trait and types
+- [x] macOS implementation using Swift FFI + NSWorkspace
+  - [x] Query apps using `urlsForApplications(toOpen:)` API
+  - [x] Filter to `/Applications/` directory
+  - [x] Open with default via NSWorkspace
+  - [x] Open with specific app by bundle ID
+- [x] Windows implementation using COM Shell APIs
+  - [x] Query apps using `SHAssocEnumHandlers`
+  - [x] Thread-local COM initialization
+  - [x] Open with default via ShellExecute
+  - [x] Open with specific app via IAssocHandler
+- [x] Linux implementation using GTK/GIO
+  - [x] Content type detection from file magic bytes
+  - [x] Query apps via `AppInfo::recommended_for_type`
+  - [x] Open with default via `launch_default_for_uri`
+  - [x] Open with specific app via DesktopAppInfo
+- [x] Tauri commands registered:
+  - [x] `get_apps_for_paths(paths)` - returns Vec<OpenWithApp>
+  - [x] `open_path_default(path)` - returns OpenResult
+  - [x] `open_path_with_app(path, app_id)` - returns OpenResult
+  - [x] `open_paths_with_app(paths, app_id)` - returns Vec<OpenResult>
+- [x] Intersection logic for multi-file selections works correctly
+- [x] Error handling returns proper OpenResult variants
+- [x] All commands are async and non-blocking
 
 ## Implementation Files
 

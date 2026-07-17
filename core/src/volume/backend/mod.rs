@@ -63,6 +63,14 @@ pub trait VolumeBackend: Send + Sync + Debug {
 	/// Create a directory at the specified path
 	async fn create_directory(&self, path: &Path, recursive: bool) -> Result<(), VolumeError>;
 
+	/// Server-side copy of a single object within this backend, if the
+	/// underlying service supports it (e.g. S3 CopyObject). Returns
+	/// `Ok(Some(bytes_copied))` on success or `Ok(None)` when the backend has
+	/// no native copy, in which case callers fall back to streaming.
+	async fn copy_native(&self, _src: &Path, _dst: &Path) -> Result<Option<u64>, VolumeError> {
+		Ok(None)
+	}
+
 	/// Backend identification (used to optimize operations)
 	fn is_local(&self) -> bool;
 

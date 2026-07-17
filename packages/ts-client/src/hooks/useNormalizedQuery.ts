@@ -27,6 +27,7 @@ import { useQuery, useQueryClient, QueryClient } from "@tanstack/react-query";
 import { useSpacedriveClient } from "./useClient";
 import type { Event } from "../generated/types";
 import type { SdPath } from "../generated/types";
+import { ResourceTypeRegistry } from "../resourceTypeRegistry";
 import invariant from "tiny-invariant";
 import * as v from "valibot";
 import type { Simplify } from "type-fest";
@@ -306,7 +307,9 @@ export function handleResourceEvent(
 				);
 			}
 			updateSingleResource(
-				resource,
+				// Route through the resource type registry so payloads decode
+				// via any registered validator; unknown types pass through.
+				ResourceTypeRegistry.decodeOrPassthrough(resource_type, resource),
 				metadata,
 				queryKey,
 				queryClient,
@@ -336,7 +339,9 @@ export function handleResourceEvent(
 				);
 			}
 			updateBatchResources(
-				resources,
+				resources.map((resource) =>
+					ResourceTypeRegistry.decodeOrPassthrough(resource_type, resource),
+				),
 				metadata,
 				options,
 				queryKey,

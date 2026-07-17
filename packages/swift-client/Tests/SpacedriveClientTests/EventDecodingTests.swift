@@ -9,7 +9,8 @@ final class EventDecodingTests: XCTestCase {
         {
           "JobStarted": {
             "job_id": "8525ff04-3025-409a-a98f-e94737bd94d4",
-            "job_type": "Indexing"
+            "job_type": "Indexing",
+            "device_id": "device-123"
           }
         }
         """
@@ -37,7 +38,7 @@ final class EventDecodingTests: XCTestCase {
     func testDaemonResponseDecoding() throws {
         // This is the exact JSON that the daemon sends (wrapped format)
         let jsonString = """
-        {"Event":{"JobStarted":{"job_id":"8525ff04-3025-409a-a98f-e94737bd94d4","job_type":"Indexing"}}}
+        {"Event":{"JobStarted":{"job_id":"8525ff04-3025-409a-a98f-e94737bd94d4","job_type":"Indexing","device_id":"device-123"}}}
         """
 
         let jsonData = jsonString.data(using: .utf8)!

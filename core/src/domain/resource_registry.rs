@@ -63,6 +63,11 @@ pub struct ResourceRegistration {
 	/// Resource type identifier (e.g., "file", "space", "location")
 	pub resource_type: &'static str,
 
+	/// Rust type name of the resource (e.g., "File", "SpaceLayout").
+	/// Matches the exported specta type name, so client codegen can map
+	/// resource_type strings to concrete client-side types.
+	pub type_name: &'static str,
+
 	/// List of dependency resource types (for virtual resources)
 	/// Simple resources return empty slice.
 	pub dependencies: &'static [&'static str],
@@ -82,6 +87,7 @@ impl ResourceRegistration {
 	/// Create a new resource registration
 	pub fn new(
 		resource_type: &'static str,
+		type_name: &'static str,
 		dependencies: &'static [&'static str],
 		router: RouterFn,
 		constructor: ConstructorFn,
@@ -89,6 +95,7 @@ impl ResourceRegistration {
 	) -> Self {
 		Self {
 			resource_type,
+			type_name,
 			dependencies,
 			router,
 			constructor,
@@ -99,11 +106,13 @@ impl ResourceRegistration {
 	/// Create a registration for a simple resource (no dependencies)
 	pub fn simple(
 		resource_type: &'static str,
+		type_name: &'static str,
 		constructor: ConstructorFn,
 		no_merge_fields: &'static [&'static str],
 	) -> Self {
 		Self {
 			resource_type,
+			type_name,
 			dependencies: &[],
 			router: |_db, _dep_type, _dep_id| Box::pin(async move { Ok(vec![]) }),
 			constructor,
@@ -190,6 +199,7 @@ macro_rules! register_resource {
 				build: || {
 					$crate::domain::resource_registry::ResourceRegistration::simple(
 						<$resource as $crate::domain::resource::Identifiable>::resource_type(),
+						stringify!($resource),
 						|db, ids| {
 							Box::pin(async move {
 								let resources = <$resource as $crate::domain::resource::Identifiable>::from_ids(db, ids).await?;
@@ -221,6 +231,7 @@ macro_rules! register_resource {
 				build: || {
 					$crate::domain::resource_registry::ResourceRegistration::new(
 						<$resource as $crate::domain::resource::Identifiable>::resource_type(),
+						stringify!($resource),
 						<$resource as $crate::domain::resource::Identifiable>::sync_dependencies(),
 						|db, dep_type, dep_id| {
 							Box::pin(async move {

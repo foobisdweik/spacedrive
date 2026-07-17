@@ -236,6 +236,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	typescript_code.push_str(&individual_types);
 	typescript_code.push('\n');
 
+	// Resource type registry: maps resource_type identifiers carried by
+	// resource events (ResourceChanged/ResourceChangedBatch/ResourceDeleted)
+	// to the generated types above, sourced from the core RESOURCE_REGISTRY.
+	typescript_code.push_str("// ===== Resource Type Registry =====\n\n");
+
+	let mut resources: Vec<_> = sd_core::domain::resource_registry::all_resources().collect();
+	resources.sort_by_key(|r| r.resource_type);
+
+	typescript_code.push_str(
+		"/** Maps resource_type identifiers from resource events to their generated types. */\n",
+	);
+	typescript_code.push_str("export interface ResourceTypeMap {\n");
+	for resource in &resources {
+		typescript_code.push_str(&format!(
+			"  \"{}\": {};\n",
+			resource.resource_type, resource.type_name
+		));
+	}
+	typescript_code.push_str("}\n\n");
+
+	typescript_code.push_str("export type ResourceType = keyof ResourceTypeMap;\n\n");
+
+	typescript_code.push_str(
+		"/** resource_type -> generated type name (runtime mirror of ResourceTypeMap). */\n",
+	);
+	typescript_code.push_str("export const RESOURCE_TYPE_NAMES = {\n");
+	for resource in &resources {
+		typescript_code.push_str(&format!(
+			"  \"{}\": \"{}\",\n",
+			resource.resource_type, resource.type_name
+		));
+	}
+	typescript_code.push_str("} as const;\n\n");
+
 	// Generate operation/query type unions (like Swift enums)
 	typescript_code.push_str("// ===== API Type Unions =====\n\n");
 

@@ -114,7 +114,7 @@ extension SpacedriveClient {
     /// - Parameter code: The 12-word BIP39 pairing code
     /// - Returns: Information about the newly paired device
     public func joinPairingSession(code: String) async throws -> PairJoinOutput {
-        let input = PairJoinInput(code: code)
+        let input = PairJoinInput(code: code, nodeId: nil)
         return try await network.pairJoin(input)
     }
 

@@ -38,8 +38,25 @@ pub struct SyncStateSnapshot {
 	pub state_entered_at: DateTime<Utc>,
 	pub uptime_seconds: u64,
 	pub state_history: Vec<StateTransition>,
-	pub total_time_in_state: Vec<(DeviceSyncState, u64)>, // milliseconds
-	pub transition_count: Vec<((DeviceSyncState, DeviceSyncState), u64)>,
+	pub total_time_in_state: Vec<StateTimeEntry>,
+	pub transition_count: Vec<StateTransitionCount>,
+}
+
+/// Time spent in one sync state.
+/// A named struct (not a tuple) so specta can export it to Swift, where
+/// tuples cannot conform to Codable.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct StateTimeEntry {
+	pub state: DeviceSyncState,
+	pub milliseconds: u64,
+}
+
+/// Number of transitions between a pair of sync states.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct StateTransitionCount {
+	pub from: DeviceSyncState,
+	pub to: DeviceSyncState,
+	pub count: u64,
 }
 
 /// Operation metrics snapshot
@@ -147,7 +164,10 @@ impl SyncMetricsSnapshot {
 			.read()
 			.await
 			.iter()
-			.map(|(k, v)| (*k, v.as_millis() as u64))
+			.map(|(state, duration)| StateTimeEntry {
+				state: *state,
+				milliseconds: duration.as_millis() as u64,
+			})
 			.collect();
 		let transition_count = metrics
 			.state
@@ -155,7 +175,11 @@ impl SyncMetricsSnapshot {
 			.read()
 			.await
 			.iter()
-			.map(|(k, v)| (*k, *v))
+			.map(|((from, to), count)| StateTransitionCount {
+				from: *from,
+				to: *to,
+				count: *count,
+			})
 			.collect();
 
 		let state = SyncStateSnapshot {

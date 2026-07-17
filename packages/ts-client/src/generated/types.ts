@@ -27,6 +27,32 @@ export type AddItemInput = { space_id: string; group_id: string | null; item_typ
 export type AddItemOutput = { item: SpaceItem };
 
 /**
+ * Extension-facing alias for OCR text extraction.
+ *
+ * PLUG-002: the plugin SDK addresses OCR as `ai.ocr` (see `AiContext::ocr_document`
+ * in `crates/sdk`). This registers that method against the existing OCR pipeline by
+ * delegating to [`ExtractTextAction`], so plugins get a stable `ai.*` namespace
+ * without a second implementation of the job dispatch.
+ *
+ * Uses a dedicated `AiOcrInput` (structurally identical to [`ExtractTextInput`])
+ * because the `register_library_action!` macro implements `Wire` on the action's
+ * `Input` type — two actions sharing one `Input` would collide on that impl.
+ */
+export type AiOcrInput = {
+/**
+ * UUID of the entry to extract text from
+ */
+entry_uuid: string;
+/**
+ * Languages to use for OCR (e.g., ["eng", "spa"])
+ */
+languages?: string[] | null;
+/**
+ * Force re-extraction even if text exists
+ */
+force?: boolean };
+
+/**
  * Input for alternate instances query
  */
 export type AlternateInstancesInput = {
@@ -599,6 +625,25 @@ namespace: string | null;
  * Success message
  */
 message: string };
+
+/**
+ * Plugin-facing credential payload. Mirrors the constructors on
+ * [`CloudCredential`] with primitive fields so the internal crypto types don't
+ * need to cross the Wire/specta boundary.
+ */
+export type CredentialInput =
+/**
+ * Access key + secret (S3 and compatible services).
+ */
+{ type: "AccessKey"; access_key_id: string; secret_access_key: string; session_token?: string | null } |
+/**
+ * OAuth tokens (Google Drive, Dropbox, OneDrive).
+ */
+{ type: "OAuth"; access_token: string; refresh_token: string; client_id: string; client_secret: string } |
+/**
+ * Simple API key (e.g. GCS service-account JSON).
+ */
+{ type: "ApiKey"; api_key: string };
 
 /**
  * Data volume metrics snapshot
@@ -4203,9 +4248,37 @@ model: string;
 reprocess: boolean };
 
 /**
+ * Time spent in one sync state.
+ * A named struct (not a tuple) so specta can export it to Swift, where
+ * tuples cannot conform to Codable.
+ */
+export type StateTimeEntry = { state: DeviceSyncState; milliseconds: number };
+
+/**
  * State transition event
  */
 export type StateTransition = { from: DeviceSyncState; to: DeviceSyncState; timestamp: string; reason: string | null };
+
+/**
+ * Number of transitions between a pair of sync states.
+ */
+export type StateTransitionCount = { from: DeviceSyncState; to: DeviceSyncState; count: number };
+
+export type StoreCredentialInput = {
+/**
+ * Key the credential is stored under (typically a volume fingerprint).
+ */
+volume_fingerprint: string;
+/**
+ * Cloud service this credential authenticates against.
+ */
+service: CloudServiceType;
+/**
+ * Credential material.
+ */
+credential: CredentialInput };
+
+export type StoreCredentialOutput = { stored: boolean };
 
 export type SuggestedLocation = { name: string; path: string; sd_path: SdPath };
 
@@ -4332,7 +4405,7 @@ export type SyncSourceInput = { source_id: string };
 /**
  * State metrics snapshot
  */
-export type SyncStateSnapshot = { current_state: DeviceSyncState; state_entered_at: string; uptime_seconds: number; state_history: StateTransition[]; total_time_in_state: ([DeviceSyncState, number])[]; transition_count: ([[DeviceSyncState, DeviceSyncState], number])[] };
+export type SyncStateSnapshot = { current_state: DeviceSyncState; state_entered_at: string; uptime_seconds: number; state_history: StateTransition[]; total_time_in_state: StateTimeEntry[]; transition_count: StateTransitionCount[] };
 
 export type SyncStatusResponse = { conduit_id: number; is_syncing: boolean; enabled: boolean; sync_generation: number; last_sync_completed_at: string | null; last_sync_error: string | null };
 
@@ -5233,6 +5306,74 @@ export type VouchingSessionInput = { session_id: string };
 export type VouchingSessionOutput = { session: VouchingSession | null };
 
 export type VouchingSessionState = "Pending" | "InProgress" | "Completed";
+
+export type WriteSidecarInput = {
+/**
+ * Content identity the sidecar is attached to.
+ */
+content_uuid: string;
+/**
+ * Sidecar kind, e.g. "ocr", "transcript", "embeddings".
+ */
+kind: string;
+/**
+ * Variant discriminator (defaults to "default").
+ */
+variant?: string;
+/**
+ * Storage format, e.g. "json", "txt", "msgpack".
+ */
+format: string;
+/**
+ * Sidecar payload, base64-encoded (standard alphabet).
+ */
+data_base64: string };
+
+export type WriteSidecarOutput = {
+/**
+ * Bytes written.
+ */
+size: number;
+/**
+ * blake3 checksum of the written bytes (hex).
+ */
+checksum: string;
+/**
+ * Path of the sidecar relative to the library's sidecar directory.
+ */
+relative_path: string };
+// ===== Resource Type Registry =====
+
+/** Maps resource_type identifiers from resource events to their generated types. */
+export interface ResourceTypeMap {
+  "device": Device;
+  "file": File;
+  "library": Library;
+  "location": Location;
+  "space": Space;
+  "space_group": SpaceGroup;
+  "space_item": SpaceItem;
+  "space_layout": SpaceLayout;
+  "tag": Tag;
+  "volume": Volume;
+}
+
+export type ResourceType = keyof ResourceTypeMap;
+
+/** resource_type -> generated type name (runtime mirror of ResourceTypeMap). */
+export const RESOURCE_TYPE_NAMES = {
+  "device": "Device",
+  "file": "File",
+  "library": "Library",
+  "location": "Location",
+  "space": "Space",
+  "space_group": "SpaceGroup",
+  "space_item": "SpaceItem",
+  "space_layout": "SpaceLayout",
+  "tag": "Tag",
+  "volume": "Volume",
+} as const;
+
 // ===== API Type Unions =====
 
 export type CoreAction =
@@ -5259,7 +5400,9 @@ export type CoreAction =
 
 export type LibraryAction =
      { type: 'adapters.update'; input: UpdateAdapterInput; output: UpdateAdapterOutput }
+  |  { type: 'ai.ocr'; input: AiOcrInput; output: ExtractTextOutput }
   |  { type: 'config.library.update'; input: UpdateLibraryConfigInput; output: UpdateLibraryConfigOutput }
+  |  { type: 'credentials.store'; input: StoreCredentialInput; output: StoreCredentialOutput }
   |  { type: 'file_sync.conduit.create'; input: CreateConduitInput; output: SyncConduitResponse }
   |  { type: 'file_sync.conduit.delete'; input: DeleteConduitInput; output: Empty }
   |  { type: 'file_sync.conduit.update'; input: UpdateConduitInput; output: SyncConduitResponse }
@@ -5313,6 +5456,7 @@ export type LibraryAction =
   |  { type: 'tags.create'; input: CreateTagInput; output: CreateTagOutput }
   |  { type: 'tags.delete'; input: DeleteTagInput; output: DeleteTagOutput }
   |  { type: 'tags.unapply'; input: UnapplyTagsInput; output: UnapplyTagsOutput }
+  |  { type: 'vdfs.write_sidecar'; input: WriteSidecarInput; output: WriteSidecarOutput }
   |  { type: 'volumes.add_cloud'; input: VolumeAddCloudInput; output: VolumeAddCloudOutput }
   |  { type: 'volumes.eject'; input: VolumeEjectInput; output: VolumeEjectOutput }
   |  { type: 'volumes.index'; input: IndexVolumeInput; output: IndexVolumeOutput }
@@ -5414,7 +5558,9 @@ export const WIRE_METHODS = {
 
   libraryActions: {
     'adapters.update': 'action:adapters.update.input',
+    'ai.ocr': 'action:ai.ocr.input',
     'config.library.update': 'action:config.library.update.input',
+    'credentials.store': 'action:credentials.store.input',
     'file_sync.conduit.create': 'action:file_sync.conduit.create.input',
     'file_sync.conduit.delete': 'action:file_sync.conduit.delete.input',
     'file_sync.conduit.update': 'action:file_sync.conduit.update.input',
@@ -5468,6 +5614,7 @@ export const WIRE_METHODS = {
     'tags.create': 'action:tags.create.input',
     'tags.delete': 'action:tags.delete.input',
     'tags.unapply': 'action:tags.unapply.input',
+    'vdfs.write_sidecar': 'action:vdfs.write_sidecar.input',
     'volumes.add_cloud': 'action:volumes.add_cloud.input',
     'volumes.eject': 'action:volumes.eject.input',
     'volumes.index': 'action:volumes.index.input',

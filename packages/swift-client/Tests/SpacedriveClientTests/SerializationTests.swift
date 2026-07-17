@@ -29,7 +29,7 @@ final class SerializationTests: XCTestCase {
         // Test that we can deserialize JSON from daemon into Swift types
         let jsonString = """
             {
-                "libraryId": "123e4567-e89b-12d3-a456-426614174000",
+                "library_id": "123e4567-e89b-12d3-a456-426614174000",
                 "name": "Test Library",
                 "path": "/test/path"
             }
@@ -48,7 +48,7 @@ final class SerializationTests: XCTestCase {
     func testUnionTypeSerialization() throws {
         // Test union types (enums with associated values)
         let physicalPath = SdPath.physical(
-            SdPathPhysicalData(deviceId: "device-123", path: "/test/file.txt"))
+            SdPathPhysicalData(deviceSlug: "device-123", path: "/test/file.txt"))
         let contentPath = SdPath.content(SdPathContentData(contentId: "content-456"))
 
         // Test physical path serialization
@@ -68,16 +68,16 @@ final class SerializationTests: XCTestCase {
         // Verify the decoded values match
         switch decodedPhysical {
         case .physical(let data):
-            XCTAssertEqual(data.deviceId, "device-123")
+            XCTAssertEqual(data.deviceSlug, "device-123")
             XCTAssertEqual(data.path, "/test/file.txt")
-        case .content:
+        default:
             XCTFail("Expected physical path")
         }
 
         switch decodedContent {
         case .content(let data):
             XCTAssertEqual(data.contentId, "content-456")
-        case .physical:
+        default:
             XCTFail("Expected content path")
         }
     }
@@ -103,10 +103,10 @@ final class SerializationTests: XCTestCase {
                 stats: IndexerStats(
                     files: 100, dirs: 10, bytes: 1_024_000, symlinks: 5, skipped: 2, errors: 0),
                 metrics: IndexerMetrics(
-                    totalDuration: 30.5,
-                    discoveryDuration: 5.0,
-                    processingDuration: 20.0,
-                    contentDuration: 5.5,
+                    totalDuration: RustDuration(secs: 30, nanos: 500_000_000),
+                    discoveryDuration: RustDuration(secs: 5, nanos: 0),
+                    processingDuration: RustDuration(secs: 20, nanos: 0),
+                    contentDuration: RustDuration(secs: 5, nanos: 500_000_000),
                     filesPerSecond: 3.33,
                     bytesPerSecond: 34133.33,
                     dirsPerSecond: 0.33,
@@ -156,7 +156,7 @@ final class SerializationTests: XCTestCase {
         print("FileSystem.other JSON: \(otherJson)")
 
         // Test round-trip
-        let decodedApfs = try JSONDecoder().decode(FileSystem.self, from: apfsData)
+        _ = try JSONDecoder().decode(FileSystem.self, from: apfsData)
         let decodedOther = try JSONDecoder().decode(FileSystem.self, from: otherData)
 
         // XCTAssertEqual(decodedApfs, .apfs) // TODO: Add Equatable to generated enums
@@ -181,21 +181,15 @@ final class SerializationTests: XCTestCase {
 
         // Test real API call with generated types
         do {
-            let libraries = try await client.executeQuery(
-                LibraryListQuery(),
-                method: "query:libraries.list",
-                responseType: [LibraryInfo].self
-            )
+            let libraries = try await client.libraries.list(
+                ListLibrariesInput(includeStats: true))
 
             print("Real daemon integration successful - found \(libraries.count) libraries")
 
             // If we have libraries, test job list with generated types
             if !libraries.isEmpty {
-                let jobsResponse = try await client.executeQuery(
-                    JobListQuery(),
-                    method: "query:jobs.list",
-                    responseType: JobListOutput.self
-                )
+                client.setCurrentLibrary(libraries[0].id)
+                let jobsResponse = try await client.jobs.list(JobListInput(status: nil))
 
                 print("Jobs query successful - found \(jobsResponse.jobs.count) jobs")
 
@@ -213,45 +207,4 @@ final class SerializationTests: XCTestCase {
             // Don't fail the test - daemon might not have libraries
         }
     }
-}
-
-// Helper types for testing (these should eventually be generated too)
-struct LibraryListQuery: Codable {
-    let include_stats: Bool
-
-    init() {
-        self.include_stats = false
-    }
-}
-
-struct JobListQuery: Codable {
-    let status: String?
-
-    init() {
-        self.status = nil
-    }
-}
-
-struct LibraryInfo: Codable {
-    let id: String
-    let name: String
-    let path: String
-    let stats: LibraryStatistics?
-}
-
-struct LibraryStatistics: Codable {
-    let total_files: UInt64
-    let total_size: UInt64
-    let location_count: UInt32
-}
-
-struct JobListOutput: Codable {
-    let jobs: [JobListItem]
-}
-
-struct JobListItem: Codable {
-    let id: String
-    let name: String
-    let status: String
-    let progress: Float
 }

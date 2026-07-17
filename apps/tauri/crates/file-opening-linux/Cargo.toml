@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 file-opening = { path = "../file-opening" }
-open = "5.3"
+gio = "0.20"

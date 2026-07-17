@@ -1,7 +1,8 @@
 ---
 id: CORE-012
 title: Resource Type Registry (Swift)
-status: To Do
+status: Done
+last_updated: 2026-07-15
 assignee: jamiepine
 parent: CORE-011
 priority: High
@@ -59,12 +60,12 @@ class ResourceTypeRegistry {
 
 ## Acceptance Criteria
 
-- [ ] ResourceTypeRegistry implemented
-- [ ] All domain resources conform to CacheableResource
-- [ ] Auto-registration on app init
-- [ ] Error handling for unknown types
-- [ ] Unit tests for registration and decoding
-- [ ] Integration with EventCacheUpdater
+- [x] ResourceTypeRegistry implemented
+- [x] All domain resources conform to CacheableResource
+- [x] Auto-registration on app init
+- [x] Error handling for unknown types
+- [x] Unit tests for registration and decoding
+- [x] Integration with EventCacheUpdater
 
 ## References
 

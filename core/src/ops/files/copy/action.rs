@@ -3,6 +3,7 @@
 use super::{
 	input::FileCopyInput,
 	job::{CopyOptions, FileCopyJob},
+	strategy::CloudTransferStrategy,
 };
 use crate::{
 	context::CoreContext,
@@ -334,7 +335,7 @@ impl LibraryAction for FileCopyAction {
 
 	async fn validate(
 		&self,
-		_library: &std::sync::Arc<crate::library::Library>,
+		library: &std::sync::Arc<crate::library::Library>,
 		context: Arc<CoreContext>,
 	) -> Result<ValidationResult, ActionError> {
 		use serde_json::json;
@@ -359,12 +360,16 @@ impl LibraryAction for FileCopyAction {
 			.await;
 
 		// Calculate file counts and total bytes
-		let (file_count, total_bytes) = self.calculate_totals().await?;
+		let (file_count, total_bytes) = self
+			.calculate_totals(library, &context.volume_manager)
+			.await?;
 
 		// Check for file conflicts if overwrite is not enabled AND on_conflict is not already set
 		// If on_conflict is set, the user has already made their choice (via UI or CLI)
 		if !self.options.overwrite && self.on_conflict.is_none() {
-			let conflicts = self.check_for_conflicts_detailed().await?;
+			let conflicts = self
+				.check_for_conflicts_detailed(library, &context.volume_manager)
+				.await?;
 
 			if !conflicts.is_empty() {
 				let metadata = json!({
@@ -444,7 +449,11 @@ impl LibraryAction for FileCopyAction {
 
 impl FileCopyAction {
 	/// Calculate total file count and bytes for the sources
-	async fn calculate_totals(&self) -> Result<(usize, u64), ActionError> {
+	async fn calculate_totals(
+		&self,
+		library: &std::sync::Arc<crate::library::Library>,
+		volume_manager: &crate::volume::VolumeManager,
+	) -> Result<(usize, u64), ActionError> {
 		let mut total_files = 0usize;
 		let mut total_bytes = 0u64;
 
@@ -461,6 +470,35 @@ impl FileCopyAction {
 					let (count, size) = self.count_directory(local_path).await?;
 					total_files += count;
 					total_bytes += size;
+				}
+			} else if source.as_cloud().is_some() {
+				// Cloud sources have no local path; stat them through their
+				// volume backend so validation reports real totals instead of
+				// silently skipping them (the GUI shows these numbers).
+				let (backend, path) =
+					CloudTransferStrategy::resolve_backend(volume_manager, library, source)
+						.await
+						.map_err(|e| {
+							ActionError::Internal(format!(
+								"Failed to resolve cloud source {}: {}",
+								source, e
+							))
+						})?;
+				let metadata = backend.metadata(&path).await.map_err(|e| {
+					ActionError::Internal(format!(
+						"Failed to read cloud metadata for {}: {}",
+						source, e
+					))
+				})?;
+
+				if metadata.kind == crate::ops::indexing::state::EntryKind::Directory {
+					let (count, size) =
+						Self::count_backend_directory(backend.as_ref(), &path).await?;
+					total_files += count;
+					total_bytes += size;
+				} else {
+					total_files += 1;
+					total_bytes += metadata.size;
 				}
 			}
 		}
@@ -498,9 +536,93 @@ impl FileCopyAction {
 		Ok((count, size))
 	}
 
+	/// Count files and total bytes under `root` through a volume backend
+	/// (iterative walk — cloud listings are shallow per-prefix, and recursion
+	/// through a boxed async fn would buy nothing here).
+	async fn count_backend_directory(
+		backend: &dyn crate::volume::VolumeBackend,
+		root: &std::path::Path,
+	) -> Result<(usize, u64), ActionError> {
+		use crate::ops::indexing::state::EntryKind;
+
+		let mut total_files = 0usize;
+		let mut total_bytes = 0u64;
+		let mut stack = vec![root.to_path_buf()];
+
+		while let Some(dir) = stack.pop() {
+			let entries = backend.read_dir(&dir).await.map_err(|e| {
+				ActionError::Internal(format!("Failed to list {}: {}", dir.display(), e))
+			})?;
+			for entry in entries {
+				if entry.kind == EntryKind::Directory {
+					stack.push(dir.join(&entry.name));
+				} else {
+					total_files += 1;
+					total_bytes += entry.size;
+				}
+			}
+		}
+
+		Ok((total_files, total_bytes))
+	}
+
 	/// Check for all file conflicts and return list of conflicting (source, destination) pairs
-	async fn check_for_conflicts_detailed(&self) -> Result<Vec<(PathBuf, PathBuf)>, ActionError> {
+	async fn check_for_conflicts_detailed(
+		&self,
+		library: &std::sync::Arc<crate::library::Library>,
+		volume_manager: &crate::volume::VolumeManager,
+	) -> Result<Vec<(PathBuf, PathBuf)>, ActionError> {
 		let mut conflicts = Vec::new();
+
+		if self.destination.as_cloud().is_some() {
+			// Cloud destination: probe object existence through the volume
+			// backend so the GUI can warn before silently overwriting objects.
+			let (backend, dest_path) =
+				CloudTransferStrategy::resolve_backend(volume_manager, library, &self.destination)
+					.await
+					.map_err(|e| {
+						ActionError::Internal(format!(
+							"Failed to resolve cloud destination {}: {}",
+							self.destination, e
+						))
+					})?;
+
+			// A cloud destination that already exists as a directory (or a
+			// multi-source copy) receives sources as children; otherwise the
+			// destination key is the object itself.
+			let dest_is_dir = match backend.metadata(&dest_path).await {
+				Ok(m) => m.kind == crate::ops::indexing::state::EntryKind::Directory,
+				Err(_) => false, // Missing key: treated as the target object path
+			};
+
+			for source in &self.sources.paths {
+				let actual_dest = if dest_is_dir || self.sources.paths.len() > 1 {
+					match source.file_name() {
+						Some(name) => dest_path.join(name),
+						None => continue,
+					}
+				} else {
+					dest_path.clone()
+				};
+
+				let exists = backend.exists(&actual_dest).await.map_err(|e| {
+					ActionError::Internal(format!(
+						"Failed to check cloud destination {}: {}",
+						actual_dest.display(),
+						e
+					))
+				})?;
+				if exists {
+					let source_display = source
+						.as_local_path()
+						.map(|p| p.to_path_buf())
+						.unwrap_or_else(|| PathBuf::from(source.to_string()));
+					conflicts.push((source_display, actual_dest));
+				}
+			}
+
+			return Ok(conflicts);
+		}
 
 		let dest_path = match self.destination.as_local_path() {
 			Some(p) => p,
@@ -534,8 +656,14 @@ impl FileCopyAction {
 	}
 
 	/// Check if any destination files would cause conflicts (legacy method)
-	async fn check_for_conflicts(&self) -> Result<Option<PathBuf>, ActionError> {
-		let conflicts = self.check_for_conflicts_detailed().await?;
+	async fn check_for_conflicts(
+		&self,
+		library: &std::sync::Arc<crate::library::Library>,
+		volume_manager: &crate::volume::VolumeManager,
+	) -> Result<Option<PathBuf>, ActionError> {
+		let conflicts = self
+			.check_for_conflicts_detailed(library, volume_manager)
+			.await?;
 		Ok(conflicts.into_iter().next().map(|(_, dest)| dest))
 	}
 
