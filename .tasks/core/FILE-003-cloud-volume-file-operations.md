@@ -1,14 +1,14 @@
 ---
 id: FILE-003
 title: Cloud Volume File Operations
-status: To Do
+status: Done
 assignee: jamiepine
 parent: FILE-000
 priority: High
 tags: [core, file-ops, cloud, jobs]
 whitepaper: Section 4.4.6
 related_tasks: [FILE-001, CLOUD-003, VOL-004]
-last_updated: 2025-10-14
+last_updated: 2026-07-15
 ---
 
 ## Description
@@ -46,12 +46,12 @@ Extend the file copy job system to support cloud volumes, enabling users to copy
 
 ## Acceptance Criteria
 
-- [ ] User can copy a local file to a cloud volume
-- [ ] User can copy a file from a cloud volume to local storage
-- [ ] User can copy files between two different cloud volumes
-- [ ] Progress is accurately reported for cloud transfers
-- [ ] Transfers can be cancelled mid-operation
-- [ ] Checksum verification works for cloud transfers
+- [x] User can copy a local file to a cloud volume
+- [x] User can copy a file from a cloud volume to local storage
+- [x] User can copy files between two different cloud volumes
+- [x] Progress is accurately reported for cloud transfers
+- [x] Transfers can be cancelled mid-operation
+- [x] Checksum verification works for cloud transfers
 
 ## Implementation Files
 

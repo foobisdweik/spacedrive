@@ -50,6 +50,12 @@ export {
 } from "./transport";
 export { SubscriptionManager } from "./subscriptionManager";
 
+// Resource event decoding
+export {
+	ResourceTypeRegistry,
+	type ResourceDecoder,
+} from "./resourceTypeRegistry";
+
 // Event filtering utilities
 export {
 	DEFAULT_EVENT_SUBSCRIPTION,

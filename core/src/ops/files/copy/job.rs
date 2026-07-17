@@ -510,28 +510,54 @@ impl JobHandler for FileCopyJob {
 
 				// Handle conflict resolution before copying
 				let final_destination = if let Some(resolution) = self.options.conflict_resolution {
+					// Cloud destinations can't be probed through the filesystem,
+					// so resolve the volume backend and route existence checks /
+					// unique-name minting through it — otherwise Skip and
+					// AutoModifyName silently no-op and every cloud collision is
+					// overwritten regardless of the user's choice.
+					let cloud_target = if final_destination.as_local_path().is_none() {
+						match volume_manager.as_deref() {
+							Some(vm) => super::strategy::CloudTransferStrategy::resolve_backend(
+								vm,
+								ctx.library(),
+								&final_destination,
+							)
+							.await
+							.ok(),
+							None => None,
+						}
+					} else {
+						None
+					};
+
 					match resolution {
 						super::action::FileConflictResolution::Skip => {
-							// Check if destination exists
-							if let Some(dest_path) = final_destination.as_local_path() {
-								if dest_path.exists() {
-									ctx.log(format!(
-										"Skipping existing file: {}",
-										dest_path.display()
-									));
+							let exists = if let Some(dest_path) = final_destination.as_local_path()
+							{
+								dest_path.exists()
+							} else if let Some((backend, path)) = &cloud_target {
+								backend.exists(path).await.unwrap_or(false)
+							} else {
+								false
+							};
 
-									// Mark as skipped in metadata
-									self.job_metadata.update_status(
-										&resolved_source,
-										super::metadata::CopyFileStatus::Skipped,
-									);
+							if exists {
+								ctx.log(format!(
+									"Skipping existing file: {}",
+									final_destination.display()
+								));
 
-									// Skip this file
-									progress_aggregator.complete_source();
-									copied_count += files_in_source;
-									self.completed_indices.push(index);
-									continue;
-								}
+								// Mark as skipped in metadata
+								self.job_metadata.update_status(
+									&resolved_source,
+									super::metadata::CopyFileStatus::Skipped,
+								);
+
+								// Skip this file
+								progress_aggregator.complete_source();
+								copied_count += files_in_source;
+								self.completed_indices.push(index);
+								continue;
 							}
 							final_destination
 						}
@@ -547,6 +573,16 @@ impl JobHandler for FileCopyJob {
 											.to_string(),
 										path: unique_dest,
 									}
+								} else {
+									final_destination
+								}
+							} else if let Some((backend, path)) = &cloud_target {
+								if backend.exists(path).await.unwrap_or(false) {
+									self.generate_unique_cloud_name(
+										backend.as_ref(),
+										&final_destination,
+									)
+									.await?
 								} else {
 									final_destination
 								}
@@ -1469,6 +1505,46 @@ impl FileCopyJob {
 		}
 
 		Ok(new_path)
+	}
+
+	/// Cloud analogue of [`generate_unique_name`]: probe the volume backend for
+	/// a free object key by appending ` (1)`, ` (2)`, … before the extension.
+	/// Used when AutoModifyName resolves a collision on a cloud destination,
+	/// where there is no filesystem to `stat`.
+	async fn generate_unique_cloud_name(
+		&self,
+		backend: &dyn crate::volume::VolumeBackend,
+		base: &SdPath,
+	) -> JobResult<SdPath> {
+		let (service, identifier, key) = base
+			.as_cloud()
+			.ok_or_else(|| JobError::execution("Expected a cloud destination"))?;
+
+		// Preserve the parent prefix (with its trailing separator) and split the
+		// filename from its extension so the counter lands before the suffix.
+		let (prefix, file_name) = match key.rfind('/') {
+			Some(idx) => (&key[..=idx], &key[idx + 1..]),
+			None => ("", key),
+		};
+		let (stem, ext) = match file_name.rfind('.') {
+			Some(dot) => (&file_name[..dot], &file_name[dot..]),
+			None => (file_name, ""),
+		};
+
+		for counter in 1..=1000 {
+			let candidate = format!("{}{} ({}){}", prefix, stem, counter, ext);
+			if !backend
+				.exists(std::path::Path::new(&candidate))
+				.await
+				.unwrap_or(false)
+			{
+				return Ok(SdPath::cloud(service, identifier.to_string(), candidate));
+			}
+		}
+
+		Err(JobError::execution(
+			"Could not generate unique cloud name after 1000 attempts",
+		))
 	}
 
 	/// Delete source file after successful cross-volume move

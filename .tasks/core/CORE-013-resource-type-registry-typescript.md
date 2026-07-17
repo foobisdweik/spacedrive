@@ -1,7 +1,8 @@
 ---
 id: CORE-013
 title: Resource Type Registry (TypeScript)
-status: To Do
+status: Done
+last_updated: 2026-07-15
 assignee: jamiepine
 parent: CORE-011
 priority: High
@@ -68,12 +69,12 @@ Object.entries(resourceTypeMap).forEach(([type, TypeClass]) => {
 
 ## Acceptance Criteria
 
-- [ ] ResourceTypeRegistry implemented
-- [ ] Auto-generated resourceTypeMap from specta
-- [ ] Type safety preserved through generics
-- [ ] Error handling for unknown types
-- [ ] Unit tests for registration and decoding
-- [ ] Integration with EventCacheUpdater
+- [x] ResourceTypeRegistry implemented
+- [x] Auto-generated resourceTypeMap from specta
+- [x] Type safety preserved through generics
+- [x] Error handling for unknown types
+- [x] Unit tests for registration and decoding
+- [x] Integration with EventCacheUpdater
 
 ## References
 

@@ -4,8 +4,8 @@ import PackageDescription
 let package = Package(
     name: "SpacedriveClient",
     platforms: [
-        .macOS(3),
-        .iOS(6),
+        .macOS(.v13),
+        .iOS(.v16),
     ],
     products: [
         .library(

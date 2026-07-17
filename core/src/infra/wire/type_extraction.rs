@@ -541,9 +541,69 @@ pub fn generate_swift_api_code(functions: &[ApiFunction]) -> String {
 	swift_code
 }
 
+/// Swift reserved words that must be backtick-escaped when used as
+/// identifiers (e.g. the generated method for "locations.import").
+const SWIFT_KEYWORDS: &[&str] = &[
+	"as",
+	"break",
+	"case",
+	"catch",
+	"class",
+	"continue",
+	"default",
+	"defer",
+	"do",
+	"else",
+	"enum",
+	"extension",
+	"fallthrough",
+	"false",
+	"for",
+	"func",
+	"guard",
+	"if",
+	"import",
+	"in",
+	"init",
+	"internal",
+	"is",
+	"let",
+	"nil",
+	"open",
+	"operator",
+	"private",
+	"protocol",
+	"public",
+	"repeat",
+	"rethrows",
+	"return",
+	"self",
+	"static",
+	"struct",
+	"subscript",
+	"super",
+	"switch",
+	"throw",
+	"throws",
+	"true",
+	"try",
+	"var",
+	"where",
+	"while",
+];
+
+/// Escape a generated identifier if it collides with a Swift keyword.
+fn escape_swift_keyword(name: &str) -> String {
+	if SWIFT_KEYWORDS.contains(&name) {
+		format!("`{}`", name)
+	} else {
+		name.to_string()
+	}
+}
+
 /// Generate Swift method code for a single API function
 fn generate_swift_method(func: &ApiFunction) -> String {
-	let method_name = to_camel_case(&func.method_name);
+	let method_name = escape_swift_keyword(&to_camel_case(&func.method_name));
 	let input_type = &func.input_type_name;
 	let output_type = &func.output_type_name;
 	let wire_method = &func.wire_method;

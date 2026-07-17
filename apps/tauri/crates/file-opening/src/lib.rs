@@ -82,3 +82,67 @@ pub trait FileOpener: Send + Sync {
 			.collect()
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	struct MockOpener {
+		apps_by_path: HashMap<PathBuf, Vec<OpenWithApp>>,
+	}
+
+	impl FileOpener for MockOpener {
+		fn get_apps_for_file(&self, path: &Path) -> Result<Vec<OpenWithApp>, String> {
+			Ok(self.apps_by_path.get(path).cloned().unwrap_or_default())
+		}
+
+		fn open_with_default(&self, _path: &Path) -> Result<OpenResult, String> {
+			unreachable!("not used by intersection tests")
+		}
+
+		fn open_with_app(&self, _path: &Path, _app_id: &str) -> Result<OpenResult, String> {
+			unreachable!("not used by intersection tests")
+		}
+	}
+
+	fn app(id: &str, name: &str) -> OpenWithApp {
+		OpenWithApp {
+			id: id.to_string(),
+			name: name.to_string(),
+			icon: None,
+		}
+	}
+
+	#[test]
+	fn get_apps_for_files_intersects_and_sorts_by_name() {
+		let first = PathBuf::from("first.txt");
+		let second = PathBuf::from("second.jpg");
+		let opener = MockOpener {
+			apps_by_path: HashMap::from([
+				(
+					first.clone(),
+					vec![app("editor", "Text Editor"), app("viewer", "Image Viewer")],
+				),
+				(
+					second.clone(),
+					vec![app("viewer", "Image Viewer"), app("other", "Other")],
+				),
+			]),
+		};
+
+		let apps = opener.get_apps_for_files(&[first, second]).unwrap();
+
+		assert_eq!(apps.len(), 1);
+		assert_eq!(apps[0].id, "viewer");
+		assert_eq!(apps[0].name, "Image Viewer");
+	}
+
+	#[test]
+	fn get_apps_for_files_returns_empty_for_no_paths() {
+		let opener = MockOpener {
+			apps_by_path: HashMap::new(),
+		};
+
+		assert!(opener.get_apps_for_files(&[]).unwrap().is_empty());
+	}
+}

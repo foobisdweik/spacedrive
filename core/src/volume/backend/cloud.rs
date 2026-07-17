@@ -476,6 +476,27 @@ impl VolumeBackend for CloudBackend {
 		Ok(())
 	}
 
+	async fn copy_native(&self, src: &Path, dst: &Path) -> Result<Option<u64>, VolumeError> {
+		let src_path = self.to_cloud_path(src);
+		let dst_path = self.to_cloud_path(dst);
+		debug!("CloudBackend::copy_native: {} -> {}", src_path, dst_path);
+
+		match self.operator.copy(&src_path, &dst_path).await {
+			Ok(()) => {
+				let metadata = self.operator.stat(&dst_path).await.map_err(|e| {
+					VolumeError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+				})?;
+				Ok(Some(metadata.content_length()))
+			}
+			// Service has no server-side copy — caller falls back to streaming.
+			Err(e) if e.kind() == opendal::ErrorKind::Unsupported => Ok(None),
+			Err(e) => Err(VolumeError::Io(std::io::Error::new(
+				std::io::ErrorKind::Other,
+				e,
+			))),
+		}
+	}
+
 	fn is_local(&self) -> bool {
 		false
 	}
@@ -552,5 +573,32 @@ mod tests {
 
 		// Test exists
 		assert!(backend.exists(Path::new("test.txt")).await.unwrap());
+	}
+
+	#[tokio::test]
+	async fn copy_native_in_memory() {
+		let backend = CloudBackend::new_in_memory(CloudServiceType::S3).unwrap();
+		let data = Bytes::from_static(b"native copy payload");
+		backend
+			.write(Path::new("a/original.bin"), data.clone())
+			.await
+			.unwrap();
+
+		match backend
+			.copy_native(Path::new("a/original.bin"), Path::new("b/copy.bin"))
+			.await
+			.unwrap()
+		{
+			Some(bytes) => {
+				assert_eq!(bytes, data.len() as u64);
+				let copied = backend.read(Path::new("b/copy.bin")).await.unwrap();
+				assert_eq!(copied, data);
+			}
+			// The in-memory service may not implement server-side copy; the
+			// contract is then to signal "unsupported" so callers stream.
+			None => {
+				assert!(!backend.exists(Path::new("b/copy.bin")).await.unwrap());
+			}
+		}
 	}
 }
