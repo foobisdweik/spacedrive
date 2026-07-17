@@ -1019,16 +1019,26 @@ impl CloudTransferStrategy {
 		// I/O and no full-file buffer.
 		let mut hasher = verify_checksum.then(blake3::Hasher::new);
 
+		// Whether the destination already held a committed object before this
+		// transfer. On cancellation we must not delete a pre-existing object:
+		// the writer's work is uncommitted (a cloud multipart upload is
+		// abandoned, not finalized), so the live object is still the user's
+		// original. Deleting it would turn a cancel into data loss. If we can't
+		// determine prior existence, err on the side of preserving data.
+		let dst_pre_existed = dst_backend.exists(dst_path).await.unwrap_or(true);
+
 		let mut written = 0u64;
 		let mut offset = 0u64;
 		while offset < size {
 			if cancel_check.is_some_and(|cancelled| cancelled()) {
-				// Drop the writer without closing it: the upload is left
-				// uncommitted (a cloud multipart upload is abandoned, not
-				// finalized). Best-effort delete of any partial object so a
-				// resumed job never sees truncated data.
+				// Drop the writer without closing it, abandoning the uncommitted
+				// upload. Only clean up when this attempt created the
+				// destination; a pre-existing object is left untouched so a
+				// resumed job (and the user) still sees the original data.
 				drop(writer);
-				let _ = dst_backend.delete(dst_path).await;
+				if !dst_pre_existed {
+					let _ = dst_backend.delete(dst_path).await;
+				}
 				return Err(anyhow::anyhow!(
 					"Transfer cancelled: {} -> {}",
 					src_path.display(),
@@ -2043,6 +2053,53 @@ mod cloud_transfer_tests {
 		assert!(
 			!cloud.exists(Path::new("data.bin")).await.unwrap(),
 			"no partial object may be committed after cancellation"
+		);
+	}
+
+	#[tokio::test]
+	async fn cancelled_overwrite_preserves_existing_object() {
+		let src_dir = tempfile::tempdir().unwrap();
+		std::fs::write(src_dir.path().join("data.bin"), vec![1u8; 1024]).unwrap();
+
+		let local: Arc<dyn VolumeBackend> = Arc::new(LocalBackend::new(src_dir.path()));
+		let cloud: Arc<dyn VolumeBackend> =
+			Arc::new(CloudBackend::new_in_memory(CloudServiceType::S3).unwrap());
+
+		// Seed a committed object at the destination. Cancelling an overwrite of
+		// it must not delete the user's original data.
+		let original = Bytes::from_static(b"the original object");
+		cloud
+			.write(Path::new("data.bin"), original.clone())
+			.await
+			.unwrap();
+
+		let cancel: CancelCheck = Box::new(|| true);
+
+		let err = CloudTransferStrategy::transfer(
+			local.as_ref(),
+			&src_dir.path().join("data.bin"),
+			cloud.as_ref(),
+			Path::new("data.bin"),
+			false, // same_volume
+			false, // verify_checksum
+			None,
+			Some(&cancel),
+		)
+		.await
+		.expect_err("an already-interrupted transfer must abort");
+
+		assert!(
+			err.to_string().contains("cancelled"),
+			"expected a cancellation error, got: {err}"
+		);
+		assert!(
+			cloud.exists(Path::new("data.bin")).await.unwrap(),
+			"a pre-existing destination must survive a cancelled overwrite"
+		);
+		assert_eq!(
+			cloud.read(Path::new("data.bin")).await.unwrap(),
+			original,
+			"the original object's contents must be left untouched"
 		);
 	}
 

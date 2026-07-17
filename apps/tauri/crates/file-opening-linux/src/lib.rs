@@ -12,6 +12,9 @@ pub struct LinuxFileOpener;
 /// Detect a file's content type from its name and leading magic bytes, so
 /// extension-less files still resolve to the right handlers.
 fn content_type_for(path: &Path) -> String {
+	if path.is_dir() {
+		return "inode/directory".to_string();
+	}
 	let mut head = Vec::with_capacity(4096);
 	if let Ok(file) = std::fs::File::open(path) {
 		let _ = file.take(4096).read_to_end(&mut head);
@@ -37,12 +40,16 @@ impl FileOpener for LinuxFileOpener {
 		}
 
 		let content_type = content_type_for(path);
+		let mut seen = std::collections::HashSet::new();
 		let mut apps: Vec<OpenWithApp> = gio::AppInfo::recommended_for_type(&content_type)
 			.into_iter()
 			.filter_map(|app| {
 				// The desktop entry ID (org.gnome.Evince.desktop) is the stable
 				// identifier open_with_app resolves back through DesktopAppInfo.
 				let id = app.id()?.to_string();
+				if !seen.insert(id.clone()) {
+					return None;
+				}
 				Some(OpenWithApp {
 					id,
 					name: app.display_name().to_string(),
@@ -52,7 +59,6 @@ impl FileOpener for LinuxFileOpener {
 			.collect();
 
 		apps.sort_by(|a, b| a.name.cmp(&b.name));
-		apps.dedup_by(|a, b| a.id == b.id);
 		Ok(apps)
 	}
 
@@ -108,17 +114,42 @@ impl FileOpener for LinuxFileOpener {
 				.collect());
 		};
 
-		// Launch all files in one call so the app opens a single instance
-		// with every document, matching Files/Nautilus behavior.
-		let files: Vec<gio::File> = paths.iter().map(gio::File::for_path).collect();
-		match app.launch(&files, None::<&gio::AppLaunchContext>) {
-			Ok(()) => Ok(paths.iter().map(|_| OpenResult::Success).collect()),
-			Err(e) => Ok(paths
-				.iter()
-				.map(|_| OpenResult::PlatformError {
-					message: e.to_string(),
-				})
-				.collect()),
+		// Preserve the trait default's per-path semantics: a missing path must
+		// report FileNotFound, not ride along on a successful bulk launch. Only
+		// existing paths are handed to the single launch call.
+		let existing: Vec<usize> = paths
+			.iter()
+			.enumerate()
+			.filter(|(_, path)| path.exists())
+			.map(|(i, _)| i)
+			.collect();
+
+		let mut results: Vec<OpenResult> = paths
+			.iter()
+			.map(|path| OpenResult::FileNotFound {
+				path: path.to_string_lossy().to_string(),
+			})
+			.collect();
+
+		if existing.is_empty() {
+			return Ok(results);
 		}
+
+		// Launch all existing files in one call so the app opens a single
+		// instance with every document, matching Files/Nautilus behavior.
+		let files: Vec<gio::File> = existing
+			.iter()
+			.map(|&i| gio::File::for_path(&paths[i]))
+			.collect();
+		let launched = match app.launch(&files, None::<&gio::AppLaunchContext>) {
+			Ok(()) => OpenResult::Success,
+			Err(e) => OpenResult::PlatformError {
+				message: e.to_string(),
+			},
+		};
+		for &i in &existing {
+			results[i] = launched.clone();
+		}
+		Ok(results)
 	}
 }

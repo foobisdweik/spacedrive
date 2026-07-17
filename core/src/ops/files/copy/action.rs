@@ -587,22 +587,14 @@ impl FileCopyAction {
 						))
 					})?;
 
-			// A cloud destination that already exists as a directory (or a
-			// multi-source copy) receives sources as children; otherwise the
-			// destination key is the object itself.
-			let dest_is_dir = match backend.metadata(&dest_path).await {
-				Ok(m) => m.kind == crate::ops::indexing::state::EntryKind::Directory,
-				Err(_) => false, // Missing key: treated as the target object path
-			};
-
+			// Execution always appends the source filename to a cloud
+			// destination (see FileCopyJob's non-local branch), so validation
+			// must probe the same child key — otherwise the conflict we report
+			// and the object we later write disagree.
 			for source in &self.sources.paths {
-				let actual_dest = if dest_is_dir || self.sources.paths.len() > 1 {
-					match source.file_name() {
-						Some(name) => dest_path.join(name),
-						None => continue,
-					}
-				} else {
-					dest_path.clone()
+				let actual_dest = match source.file_name() {
+					Some(name) => dest_path.join(name),
+					None => continue,
 				};
 
 				let exists = backend.exists(&actual_dest).await.map_err(|e| {

@@ -20,9 +20,12 @@ import {
 
 export type ResourceDecoder<T> = (data: unknown) => T;
 
-export class ResourceTypeRegistry {
-	private static decoders = new Map<string, ResourceDecoder<unknown>>();
+// Module-level registry state. Kept off the class so static methods never rely
+// on `this`, which would be lost if a method is destructured or passed as a
+// callback (e.g. `const { decode } = ResourceTypeRegistry`).
+const decoders = new Map<string, ResourceDecoder<unknown>>();
 
+export class ResourceTypeRegistry {
 	/**
 	 * Register a decoder for a resource type. Omitting `decoder` installs a
 	 * passthrough cast, which is sound for payloads produced by the core's own
@@ -32,7 +35,7 @@ export class ResourceTypeRegistry {
 		resourceType: K,
 		decoder?: ResourceDecoder<ResourceTypeMap[K]>,
 	): void {
-		this.decoders.set(
+		decoders.set(
 			resourceType,
 			decoder ?? ((data: unknown) => data as ResourceTypeMap[K]),
 		);
@@ -40,7 +43,7 @@ export class ResourceTypeRegistry {
 
 	/** Whether a decoder is registered for the given resource type. */
 	static isRegistered(resourceType: string): boolean {
-		return this.decoders.has(resourceType);
+		return decoders.has(resourceType);
 	}
 
 	/** Decode a resource payload. Throws on unknown resource types. */
@@ -50,7 +53,7 @@ export class ResourceTypeRegistry {
 	): ResourceTypeMap[K];
 	static decode(resourceType: string, data: unknown): unknown;
 	static decode(resourceType: string, data: unknown): unknown {
-		const decoder = this.decoders.get(resourceType);
+		const decoder = decoders.get(resourceType);
 		if (!decoder) {
 			throw new Error(`Unknown resource type: ${resourceType}`);
 		}
@@ -63,13 +66,13 @@ export class ResourceTypeRegistry {
 	 * this so an unknown (newer-core) resource type degrades gracefully.
 	 */
 	static decodeOrPassthrough(resourceType: string, data: unknown): unknown {
-		const decoder = this.decoders.get(resourceType);
+		const decoder = decoders.get(resourceType);
 		return decoder ? decoder(data) : data;
 	}
 
 	/** All resource types with a registered decoder. */
 	static registeredTypes(): string[] {
-		return [...this.decoders.keys()];
+		return [...decoders.keys()];
 	}
 }
 
