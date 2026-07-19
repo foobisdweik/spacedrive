@@ -499,7 +499,7 @@ export function SelectionProvider({
 				if (key) fileByPath.set(key, f);
 			}
 
-			setSelectedFilesInternal((prev) => {
+			setSelectedFiles((prev) => {
 				const prevById = new Map(prev.map((f) => [f.id, f]));
 				const resolved: File[] = [];
 				const seen = new Set<string>();
@@ -552,7 +552,7 @@ export function SelectionProvider({
 				return newFocus !== -1 ? newFocus : prevFocus;
 			});
 		},
-		[storedIds]
+		[storedIds, setSelectedFiles]
 	);
 
 	const isRenaming = renamingFileId !== null;

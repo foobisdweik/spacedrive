@@ -22,6 +22,12 @@ export function useScrollRestoration(
 	const {activeTabId, scrollPosition, setScrollPosition} = useExplorer();
 	const restoredTabRef = useRef<string | null>(null);
 	const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const activeTabIdRef = useRef(activeTabId);
+
+	// Keep activeTabIdRef up to date
+	useLayoutEffect(() => {
+		activeTabIdRef.current = activeTabId;
+	}, [activeTabId]);
 
 	// Restore the saved offset for the current tab (once per tab).
 	useLayoutEffect(() => {
@@ -51,9 +57,12 @@ export function useScrollRestoration(
 		// restored, so the programmatic restore isn't clobbered by a transient 0.
 		if (restoredTabRef.current !== activeTabId) return;
 		const {scrollTop, scrollLeft} = event.currentTarget;
+		const currentTabId = activeTabId;
 		if (saveTimeout.current) clearTimeout(saveTimeout.current);
 		saveTimeout.current = setTimeout(() => {
-			setScrollPosition({top: scrollTop, left: scrollLeft});
+			if (activeTabIdRef.current === currentTabId) {
+				setScrollPosition({top: scrollTop, left: scrollLeft});
+			}
 		}, 150);
 	};
 }

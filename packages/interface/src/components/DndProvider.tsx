@@ -349,13 +349,33 @@ export function DndProvider({ children }: { children: React.ReactNode }) {
 				return;
 			}
 
-			// Guard against dropping a file onto its own folder (no-op) by comparing
-			// physical paths.
-			const physicalPath = (p: SdPath | undefined): string | undefined =>
-				p && "Physical" in p ? p.Physical.path : undefined;
-			const destPath = physicalPath(destination);
+			// Guard against dropping a file onto its own parent folder (no-op) by comparing
+			// normalized parent paths. This prevents accidental duplicates/renames (e.g. "file (1).txt")
+			// when on_conflict is set to "AutoModifyName".
+			const getPathKey = (p: SdPath | undefined, isParent = false): string | null => {
+				if (!p) return null;
+				const normalize = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+				if ("Physical" in p) {
+					let path = normalize(p.Physical.path);
+					if (isParent) {
+						const lastSlash = path.lastIndexOf("/");
+						path = lastSlash !== -1 ? path.substring(0, lastSlash) : path;
+					}
+					return `p:${p.Physical.device_slug}:${path}`;
+				}
+				if ("Cloud" in p) {
+					let path = normalize(p.Cloud.path);
+					if (isParent) {
+						const lastSlash = path.lastIndexOf("/");
+						path = lastSlash !== -1 ? path.substring(0, lastSlash) : path;
+					}
+					return `c:${p.Cloud.service}:${p.Cloud.identifier}:${path}`;
+				}
+				return null;
+			};
+			const destKey = getPathKey(destination);
 			const sources = allSources.filter(
-				(s) => !destPath || physicalPath(s) !== destPath,
+				(s) => !destKey || getPathKey(s, true) !== destKey,
 			);
 			if (sources.length === 0) return;
 
