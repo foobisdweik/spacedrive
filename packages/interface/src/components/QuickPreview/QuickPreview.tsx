@@ -1,7 +1,7 @@
 import { useNormalizedQuery } from "../../contexts/SpacedriveContext";
 import { usePlatform } from "../../contexts/PlatformContext";
-import type { File } from "@sd/ts-client";
-import { getContentKind } from "@sd/ts-client";
+import type { File, SdPath } from "@sd/ts-client";
+import { getContentKind, getParentSdPath } from "@sd/ts-client";
 import { useEffect, useState } from "react";
 import { formatBytes } from "../../routes/explorer/utils";
 import { X } from "@phosphor-icons/react";
@@ -70,6 +70,7 @@ function MetadataPanel({ file }: { file: File }) {
 export function QuickPreview() {
 	const platform = usePlatform();
 	const [fileId, setFileId] = useState<string | null>(null);
+	const [pathScope, setPathScope] = useState<SdPath | undefined>(undefined);
 
 	useEffect(() => {
 		// Extract file_id from window label
@@ -80,6 +81,7 @@ export function QuickPreview() {
 			const match = label.match(/^quick-preview-(.+)$/);
 			if (match) {
 				setFileId(match[1]);
+				setPathScope(undefined);
 			}
 		}
 	}, [platform]);
@@ -93,8 +95,18 @@ export function QuickPreview() {
 		input: { file_id: fileId! },
 		resourceType: "file",
 		resourceId: fileId!,
+		pathScope,
 		enabled: !!fileId,
 	});
+
+	// Once the file's path is known, scope the subscription to its parent
+	// folder instead of leaving it unscoped (an unscoped file subscription
+	// fires for every file event in the library).
+	useEffect(() => {
+		if (file?.sd_path) {
+			setPathScope(getParentSdPath(file.sd_path));
+		}
+	}, [file?.sd_path]);
 
 	const handleClose = () => {
 		if (platform.closeCurrentWindow) {

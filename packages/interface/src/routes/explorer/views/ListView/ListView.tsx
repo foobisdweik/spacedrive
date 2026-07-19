@@ -41,8 +41,14 @@ export const ListView = memo(function ListView() {
 
 	// Get files from centralized hook (handles search, virtual, and directory)
 	const { files } = useExplorerFiles();
-	// Preserve scroll position per tab (survives tab/view switches).
-	const handleScroll = useScrollRestoration(containerRef, files.length > 0);
+	// Preserve scroll position per tab (survives tab/view switches). Horizontal
+	// scroll happens on bodyScrollRef (the sticky header keeps vertical scroll
+	// on containerRef), so both are passed in.
+	const handleScroll = useScrollRestoration(
+		containerRef,
+		files.length > 0,
+		bodyScrollRef,
+	);
 	const { table } = useTable(files);
 	const { rows } = table.getRowModel();
 
@@ -234,7 +240,10 @@ export const ListView = memo(function ListView() {
 			<div
 				ref={bodyScrollRef}
 				className="overflow-x-auto"
-				onScroll={handleBodyScroll}
+				onScroll={(e) => {
+					handleBodyScroll();
+					handleScroll(e);
+				}}
 				style={{ pointerEvents: "auto" }}
 			>
 				<div

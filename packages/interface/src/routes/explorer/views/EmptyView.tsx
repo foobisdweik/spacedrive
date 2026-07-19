@@ -1,4 +1,5 @@
 import {Folder} from '@phosphor-icons/react';
+import {useEmptySpaceContextMenu} from '../hooks/useEmptySpaceContextMenu';
 
 interface EmptyViewProps {
 	/** Primary message. Defaults to the "no location selected" prompt. */
@@ -14,8 +15,13 @@ export function EmptyView({
 	subtitle,
 	showIcon = false
 }: EmptyViewProps = {}) {
+	const emptySpaceContextMenu = useEmptySpaceContextMenu();
+
 	return (
-		<div className="flex items-center justify-center h-full">
+		<div
+			className="flex items-center justify-center h-full"
+			onContextMenu={(e) => emptySpaceContextMenu.show(e)}
+		>
 			<div className="flex flex-col items-center gap-2 text-center">
 				{showIcon && (
 					<Folder className="size-10 text-ink-faint" weight="thin" />

@@ -374,6 +374,28 @@ export function DndProvider({ children }: { children: React.ReactNode }) {
 				return null;
 			};
 			const destKey = getPathKey(destination);
+
+			// Reject dropping a directory onto itself or one of its own descendants
+			// (e.g. moving "Docs" into "Docs/Sub") before dispatching anything - the
+			// previous modal-based flow rejected this up front, and letting it through
+			// to files.move would recurse the directory into a child it just created.
+			const sourceFiles: (File | undefined)[] = dragData.selectedFiles
+				? dragData.selectedFiles
+				: [dragData.file];
+			const isSelfOrDescendantDrop = sourceFiles.some((f, i) => {
+				if (f?.kind !== "Directory") return false;
+				const srcKey = getPathKey(allSources[i]);
+				if (!destKey || !srcKey) return false;
+				return destKey === srcKey || destKey.startsWith(`${srcKey}/`);
+			});
+			if (isSelfOrDescendantDrop) {
+				toast.error({
+					title: "Move failed",
+					body: "Can't move a folder into itself or one of its own subfolders.",
+				});
+				return;
+			}
+
 			const sources = allSources.filter(
 				(s) => !destKey || getPathKey(s, true) !== destKey,
 			);

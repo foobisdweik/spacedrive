@@ -163,18 +163,15 @@ export function useNormalizedQuery<I, O = any, TSelected = O>(
 	useEffect(() => {
 		if (!libraryId) return;
 
-		// Skip subscription for unscoped file *list* queries (prevent overly broad
-		// subscriptions - file resources are too numerous and a global list subscription
-		// causes massive event spam). Single-resource file queries (e.g. FileInspector's
-		// files.by_id, QuickPreview) carry a resourceId, so they are cheap to subscribe:
-		// client-side filtering (filterBatchResources) narrows events to the one id, and
-		// merges are by-id only. Subscribing them keeps the Inspector in sync after a
-		// rename/move instead of leaking stale name/path details.
-		if (
-			options.resourceType === "file" &&
-			!options.pathScope &&
-			!options.resourceId
-		) {
+		// Skip subscription for unscoped file queries (prevent overly broad
+		// subscriptions - file resources are too numerous and a global subscription
+		// causes massive event spam). The transport's subscribeFiltered only scopes
+		// by path_scope, not resourceId, so a resourceId alone can't narrow the
+		// subscription server-side - client-side id filtering only reduces cache
+		// churn, not incoming event volume. Callers with a single known resource
+		// (e.g. FileInspector, QuickPreview) should derive a pathScope once the
+		// resource's path is known so they subscribe scoped instead of unscoped.
+		if (options.resourceType === "file" && !options.pathScope) {
 			return;
 		}
 

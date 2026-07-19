@@ -1,7 +1,8 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, ArrowLeft, ArrowRight } from '@phosphor-icons/react';
-import { useEffect } from 'react';
-import type { File } from '@sd/ts-client';
+import { useEffect, useState } from 'react';
+import type { File, SdPath } from '@sd/ts-client';
+import { getParentSdPath } from '@sd/ts-client';
 import { useNormalizedQuery } from '../../contexts/SpacedriveContext';
 import { ContentRenderer } from './ContentRenderer';
 
@@ -24,13 +25,29 @@ export function QuickPreviewOverlay({
 	hasPrevious,
 	hasNext
 }: QuickPreviewOverlayProps) {
+	const [pathScope, setPathScope] = useState<SdPath | undefined>(undefined);
+
+	useEffect(() => {
+		setPathScope(undefined);
+	}, [fileId]);
+
 	const { data: file, isLoading, error } = useNormalizedQuery<{ file_id: string }, File>({
 		query: 'files.by_id',
 		input: { file_id: fileId },
 		resourceType: 'file',
 		resourceId: fileId,
+		pathScope,
 		enabled: !!fileId && isOpen,
 	});
+
+	// Once the file's path is known, scope the subscription to its parent
+	// folder instead of leaving it unscoped (an unscoped file subscription
+	// fires for every file event in the library).
+	useEffect(() => {
+		if (file?.sd_path) {
+			setPathScope(getParentSdPath(file.sd_path));
+		}
+	}, [file?.sd_path]);
 
 	useEffect(() => {
 		if (!isOpen) return;

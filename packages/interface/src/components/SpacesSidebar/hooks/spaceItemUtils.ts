@@ -236,7 +236,13 @@ export function resolveItemMetadata(
 export function isDropTargetItem(
 	item: SpaceItemType | Record<string, unknown>,
 ): boolean {
-	if (isRawLocation(item)) return true;
+	if (isRawLocation(item)) {
+		// Unavailable locations (missing folder) are rendered dimmed and
+		// navigable so the user can reach the recovery flow, but must not
+		// accept drops - the destination path doesn't exist on disk, and
+		// files.move only knows the sd_path, not the recovery flow.
+		return (item as Record<string, unknown>).is_available !== false;
+	}
 
 	const spaceItem = item as SpaceItemType;
 	const itemType = spaceItem.item_type;
