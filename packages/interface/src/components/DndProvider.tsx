@@ -11,10 +11,10 @@ import { useState } from "react";
 import { House, Clock, Heart, Folders } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLibraryMutation, useSpacedriveClient } from "../contexts/SpacedriveContext";
+import { toast } from "@spacedrive/primitives";
 import { useSidebarStore } from "@sd/ts-client";
 import type { File, SdPath } from "@sd/ts-client";
 import { useSpaces } from "./SpacesSidebar/hooks/useSpaces";
-import { useFileOperationDialog } from "./modals/FileOperationModal";
 import { File as FileComponent } from "../routes/explorer/File";
 import { useTabManager } from "./TabManager/useTabManager";
 
@@ -51,9 +51,9 @@ export function DndProvider({ children }: { children: React.ReactNode }) {
 		}),
 	);
 	const addItem = useLibraryMutation("spaces.add_item");
+	const moveFiles = useLibraryMutation("files.move");
 	const reorderItems = useLibraryMutation("spaces.reorder_items");
 	const reorderGroups = useLibraryMutation("spaces.reorder_groups");
-	const openFileOperation = useFileOperationDialog();
 	const [activeItem, setActiveItem] = useState<any>(null);
 	const client = useSpacedriveClient();
 	const queryClient = useQueryClient();
@@ -338,7 +338,7 @@ export function DndProvider({ children }: { children: React.ReactNode }) {
 				draggedFile: dragData.name,
 			});
 
-			const sources: SdPath[] = dragData.selectedFiles
+			const allSources: SdPath[] = dragData.selectedFiles
 				? dragData.selectedFiles.map((f: File) => f.sd_path)
 				: [dragData.sdPath];
 
@@ -349,15 +349,79 @@ export function DndProvider({ children }: { children: React.ReactNode }) {
 				return;
 			}
 
-			// Determine operation based on modifier keys
-			// For now default to copy (user can choose in modal)
-			const operation = "copy";
+			// Guard against dropping a file onto its own parent folder (no-op) by comparing
+			// normalized parent paths. This prevents accidental duplicates/renames (e.g. "file (1).txt")
+			// when on_conflict is set to "AutoModifyName".
+			const getPathKey = (p: SdPath | undefined, isParent = false): string | null => {
+				if (!p) return null;
+				const normalize = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+				if ("Physical" in p) {
+					let path = normalize(p.Physical.path);
+					if (isParent) {
+						const lastSlash = path.lastIndexOf("/");
+						path = lastSlash !== -1 ? path.substring(0, lastSlash) : path;
+					}
+					return `p:${p.Physical.device_slug}:${path}`;
+				}
+				if ("Cloud" in p) {
+					let path = normalize(p.Cloud.path);
+					if (isParent) {
+						const lastSlash = path.lastIndexOf("/");
+						path = lastSlash !== -1 ? path.substring(0, lastSlash) : path;
+					}
+					return `c:${p.Cloud.service}:${p.Cloud.identifier}:${path}`;
+				}
+				return null;
+			};
+			const destKey = getPathKey(destination);
 
-			openFileOperation({
-				operation,
-				sources,
-				destination,
+			// Reject dropping a directory onto itself or one of its own descendants
+			// (e.g. moving "Docs" into "Docs/Sub") before dispatching anything - the
+			// previous modal-based flow rejected this up front, and letting it through
+			// to files.move would recurse the directory into a child it just created.
+			const sourceFiles: (File | undefined)[] = dragData.selectedFiles
+				? dragData.selectedFiles
+				: [dragData.file];
+			const isSelfOrDescendantDrop = sourceFiles.some((f, i) => {
+				if (f?.kind !== "Directory") return false;
+				const srcKey = getPathKey(allSources[i]);
+				if (!destKey || !srcKey) return false;
+				return destKey === srcKey || destKey.startsWith(`${srcKey}/`);
 			});
+			if (isSelfOrDescendantDrop) {
+				toast.error({
+					title: "Move failed",
+					body: "Can't move a folder into itself or one of its own subfolders.",
+				});
+				return;
+			}
+
+			const sources = allSources.filter(
+				(s) => !destKey || getPathKey(s, true) !== destKey,
+			);
+			if (sources.length === 0) return;
+
+			// Dragging into a folder performs a move. Dispatch it directly instead of
+			// opening a modal so the drop actually does what the UI announced; surface
+			// any failure (e.g. permission or conflict error) as a toast rather than
+			// silently doing nothing. AutoModifyName avoids clobbering an existing file.
+			try {
+				await moveFiles.mutateAsync({
+					sources: { paths: sources },
+					destination,
+					overwrite: false,
+					verify_checksum: false,
+					preserve_timestamps: true,
+					copy_method: "Auto",
+					on_conflict: "AutoModifyName",
+				});
+			} catch (err) {
+				console.error("[DnD] Move failed:", err);
+				toast.error({
+					title: "Move failed",
+					body: String(err).replace(/^Error:\s*/, ""),
+				});
+			}
 			return;
 		}
 

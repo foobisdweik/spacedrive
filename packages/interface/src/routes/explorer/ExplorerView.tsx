@@ -66,7 +66,12 @@ export function ExplorerView() {
 	} = useExplorer();
 
 	const {isVirtualView} = useVirtualListing();
-	const {error: filesError, source: filesSource} = useExplorerFiles();
+	const {
+		files: listingFiles,
+		isLoading: filesLoading,
+		error: filesError,
+		source: filesSource
+	} = useExplorerFiles();
 	const isPreviewActive = !!quickPreviewFileId;
 
 	// In column view, the path bar should reflect the deepest column, not the root
@@ -356,6 +361,14 @@ export function ExplorerView() {
 					<TabNavigationGuard>
 						{filesSource === 'directory' && filesError ? (
 							<MissingPathView error={filesError} />
+						) : filesSource === 'directory' &&
+						  !filesLoading &&
+						  listingFiles.length === 0 ? (
+							<EmptyView
+								showIcon
+								title="This folder is empty"
+								subtitle="Drag files here, or use New Folder to add something"
+							/>
 						) : mode.type === 'search' ? (
 							<SearchView />
 						) : viewMode === 'grid' ? (

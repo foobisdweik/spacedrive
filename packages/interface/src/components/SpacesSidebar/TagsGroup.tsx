@@ -1,5 +1,6 @@
 import {CaretRight, Plus, Tag as TagIcon, Trash} from '@phosphor-icons/react';
 import type {Tag} from '@sd/ts-client';
+import {toast} from '@spacedrive/primitives';
 import clsx from 'clsx';
 import {useState} from 'react';
 import {useLocation, useNavigate} from 'react-router-dom';
@@ -51,21 +52,29 @@ function TagItem({tag, depth = 0}: TagItemProps) {
 				icon: Trash,
 				label: 'Delete Tag',
 				variant: 'danger',
-				onClick: () => {
-					platform.confirm(
-						`Delete tag "${tag.canonical_name || tag.display_name || 'this tag'}"? This will remove it from all files.`,
-						async (confirmed) => {
-							if (!confirmed) return;
-							try {
-								await deleteTag.mutateAsync({tag_id: tag.id});
-								if (isActive) {
-									navigate('/');
-								}
-							} catch (err) {
-								console.error('Failed to delete tag:', err);
-							}
-						}
+				onClick: async () => {
+					// Await the confirm result at the top level (rather than nesting
+					// the mutation inside the callback) so the dispatch runs on a clean
+					// promise chain and any failure is surfaced instead of swallowed.
+					const confirmed = await new Promise<boolean>((resolve) =>
+						platform.confirm(
+							`Delete tag "${tag.canonical_name || tag.display_name || 'this tag'}"? This will remove it from all files.`,
+							resolve
+						)
 					);
+					if (!confirmed) return;
+					try {
+						await deleteTag.mutateAsync({tag_id: tag.id});
+						if (isActive) {
+							navigate('/');
+						}
+					} catch (err) {
+						console.error('Failed to delete tag:', err);
+						toast.error({
+							title: 'Delete failed',
+							body: `Couldn't delete the tag. ${String(err).replace(/^Error:\s*/, '')}`
+						});
+					}
 				}
 			}
 		]

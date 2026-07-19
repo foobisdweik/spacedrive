@@ -22,7 +22,6 @@ export function LocationsGroup({
   });
 
   const locations = locationsData?.locations ?? [];
-  const activeLocations = locations.filter((loc: any) => loc.is_available);
 
   return (
     <div>
@@ -37,13 +36,28 @@ export function LocationsGroup({
       {/* Items */}
       {!isCollapsed && (
         <div className="space-y-0.5">
-          {activeLocations.map((location: any, index: number) => (
-            <SpaceItem
+          {/*
+            Render unavailable locations too (dimmed), rather than filtering them
+            out. Hiding them made a location whose folder went missing silently
+            disappear; keeping it visible and navigable lets the user open it and
+            reach the missing-path recovery view.
+          */}
+          {locations.map((location: any, index: number) => (
+            <div
               key={location.id}
-              item={location}
-              allowInsertion={false}
-              isLastItem={index === activeLocations.length - 1}
-            />
+              className={location.is_available ? undefined : "opacity-50"}
+              title={
+                location.is_available
+                  ? undefined
+                  : "This location's folder is missing. Open it to relink or remove."
+              }
+            >
+              <SpaceItem
+                item={location}
+                allowInsertion={false}
+                isLastItem={index === locations.length - 1}
+              />
+            </div>
           ))}
         </div>
       )}

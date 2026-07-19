@@ -162,16 +162,18 @@ export function useExplorerKeyboard() {
 		{enabled: clipboard.hasClipboard() && !!currentPath && !isRenaming}
 	);
 
-	// Rename: Enter key triggers rename mode for any selected file or directory
-	useKeybind(
-		'explorer.renameFile',
-		() => {
-			if (selectedFiles.length === 1 && !isRenaming) {
-				startRename(selectedFiles[0].id);
-			}
-		},
-		{enabled: selectedFiles.length === 1 && !isRenaming}
-	);
+	// Rename: Enter (or F2) triggers rename mode for any selected file or directory
+	const triggerRename = () => {
+		if (selectedFiles.length === 1 && !isRenaming) {
+			startRename(selectedFiles[0].id);
+		}
+	};
+	useKeybind('explorer.renameFile', triggerRename, {
+		enabled: selectedFiles.length === 1 && !isRenaming
+	});
+	useKeybind('explorer.renameFileAlt', triggerRename, {
+		enabled: selectedFiles.length === 1 && !isRenaming
+	});
 
 	// Tag mode: T key enters tag assignment mode
 	useKeybind(

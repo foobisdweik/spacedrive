@@ -16,6 +16,7 @@ import {
 } from "./useTable";
 import type { DirectorySortBy } from "@sd/ts-client";
 import { useExplorerFiles } from "../../hooks/useExplorerFiles";
+import { useScrollRestoration } from "../../hooks/useScrollRestoration";
 import { DragSelect } from "./DragSelect";
 import { useEmptySpaceContextMenu } from "../../hooks/useEmptySpaceContextMenu";
 
@@ -40,6 +41,14 @@ export const ListView = memo(function ListView() {
 
 	// Get files from centralized hook (handles search, virtual, and directory)
 	const { files } = useExplorerFiles();
+	// Preserve scroll position per tab (survives tab/view switches). Horizontal
+	// scroll happens on bodyScrollRef (the sticky header keeps vertical scroll
+	// on containerRef), so both are passed in.
+	const handleScroll = useScrollRestoration(
+		containerRef,
+		files.length > 0,
+		bodyScrollRef,
+	);
 	const { table } = useTable(files);
 	const { rows } = table.getRowModel();
 
@@ -155,7 +164,7 @@ export const ListView = memo(function ListView() {
 	const totalWidth = table.getTotalSize() + TABLE_PADDING_X * 2;
 
 	return (
-		<div ref={containerRef} className="h-full overflow-auto" onContextMenu={handleContainerContextMenu}>
+		<div ref={containerRef} className="h-full overflow-auto" onContextMenu={handleContainerContextMenu} onScroll={handleScroll}>
 			<DragSelect files={files} scrollRef={containerRef}>
 				{/* Sticky Header */}
 			<div
@@ -231,7 +240,10 @@ export const ListView = memo(function ListView() {
 			<div
 				ref={bodyScrollRef}
 				className="overflow-x-auto"
-				onScroll={handleBodyScroll}
+				onScroll={(e) => {
+					handleBodyScroll();
+					handleScroll(e);
+				}}
 				style={{ pointerEvents: "auto" }}
 			>
 				<div

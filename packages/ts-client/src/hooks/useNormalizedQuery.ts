@@ -163,9 +163,14 @@ export function useNormalizedQuery<I, O = any, TSelected = O>(
 	useEffect(() => {
 		if (!libraryId) return;
 
-		// Skip subscription for file queries without pathScope (prevent overly broad subscriptions)
-		// File resources are too numerous - global subscriptions cause massive event spam
-		// Single-file queries (FileInspector) will use stale-while-revalidate instead
+		// Skip subscription for unscoped file queries (prevent overly broad
+		// subscriptions - file resources are too numerous and a global subscription
+		// causes massive event spam). The transport's subscribeFiltered only scopes
+		// by path_scope, not resourceId, so a resourceId alone can't narrow the
+		// subscription server-side - client-side id filtering only reduces cache
+		// churn, not incoming event volume. Callers with a single known resource
+		// (e.g. FileInspector, QuickPreview) should derive a pathScope once the
+		// resource's path is known so they subscribe scoped instead of unscoped.
 		if (options.resourceType === "file" && !options.pathScope) {
 			return;
 		}
@@ -365,7 +370,7 @@ export function handleResourceEvent(
 					event,
 				);
 			}
-			deleteResource(resource_id, queryKey, queryClient);
+			deleteResource(resource_id, queryKey, queryClient, resource_type);
 		}
 	}
 }
@@ -503,7 +508,7 @@ export function updateSingleResource<O>(
 		if (resourcesToUpdate.length === 0) {
 			// Resource was filtered out - may have moved out of scope, remove from cache
 			if (resource.id) {
-				deleteResource(resource.id, queryKey, queryClient);
+				deleteResource(resource.id, queryKey, queryClient, options.resourceType);
 			}
 			return;
 		}
@@ -568,7 +573,7 @@ export function updateBatchResources<O>(
 	if (filteredResources.length === 0) {
 		for (const resource of resources) {
 			if (resource.id) {
-				deleteResource(resource.id, queryKey, queryClient);
+				deleteResource(resource.id, queryKey, queryClient, options.resourceType);
 			}
 		}
 		return;
@@ -617,12 +622,20 @@ export function deleteResource<O>(
 	resourceId: string,
 	queryKey: any[],
 	queryClient: QueryClient,
+	resourceType?: string,
 ) {
+	// Some list queries wrap each row (e.g. tags.search returns
+	// { tag, relevance, ... }), so the resource id lives at item[resourceType].id
+	// rather than item.id. Match both so deletions actually evict the row.
+	const matches = (item: any) =>
+		item?.id === resourceId ||
+		(resourceType && item?.[resourceType]?.id === resourceId);
+
 	queryClient.setQueryData<O>(queryKey, (oldData: any) => {
 		if (!oldData) return oldData;
 
 		if (Array.isArray(oldData)) {
-			return oldData.filter((item: any) => item.id !== resourceId) as O;
+			return oldData.filter((item: any) => !matches(item)) as O;
 		}
 
 		if (oldData && typeof oldData === "object") {
@@ -634,7 +647,7 @@ export function deleteResource<O>(
 				return {
 					...oldData,
 					[arrayField]: (oldData as any)[arrayField].filter(
-						(item: any) => item.id !== resourceId,
+						(item: any) => !matches(item),
 					),
 				};
 			}
@@ -645,6 +658,53 @@ export function deleteResource<O>(
 }
 
 // Cache Update Helpers
+
+/**
+ * Extract a normalized physical-path key for a file resource, if it has one.
+ *
+ * Used to reconcile renames/moves: after a rename the daemon watcher emits a
+ * ResourceChanged for the file under a NEW id and NEW path, but the stale entry
+ * (old id) is never explicitly deleted. Matching on path lets us collapse the two
+ * into one row instead of showing a duplicate. Within a single directory listing a
+ * physical path is unique, so path equality reliably means "same file".
+ */
+function getPhysicalPathKey(resource: any): string | undefined {
+	const raw =
+		resource?.sd_path?.Physical?.path ??
+		resource?.alternate_paths?.find((p: any) => p.Physical)?.Physical?.path;
+	if (!raw) return undefined;
+	const normalized = String(raw).replace(/\\/g, "/").replace(/\/+$/, "");
+	const isWindowsPath =
+		/^[a-zA-Z]:\//.test(normalized) || normalized.startsWith("//?/");
+	return isWindowsPath ? normalized.toLowerCase() : normalized;
+}
+
+/**
+ * If an incoming resource shares a physical path with an existing entry that has a
+ * DIFFERENT id, replace that entry in place (rename/move reconciliation) and return
+ * true. Prevents the stale-old + new duplicate rows reported after rename/move.
+ */
+function reconcileByPath(
+	array: any[],
+	resource: any,
+	noMergeFields: string[],
+): boolean {
+	const incomingPath = getPhysicalPathKey(resource);
+	if (!incomingPath) return false;
+
+	const staleIndex = array.findIndex(
+		(item: any) =>
+			item.id !== resource.id && getPhysicalPathKey(item) === incomingPath,
+	);
+	if (staleIndex === -1) return false;
+
+	// Merge over the stale entry (keeps richer fields like thumbnails if the event
+	// is sparse) but adopt the incoming resource's authoritative identity.
+	const merged = safeMerge(array[staleIndex], resource, noMergeFields);
+	merged.id = resource.id;
+	array[staleIndex] = merged;
+	return true;
+}
 
 /**
  * Update array cache (direct array response)
@@ -701,6 +761,13 @@ function updateArrayCache(
 	// Append new items (excluding Content paths that didn't match an existing entry)
 	for (const resource of newResources) {
 		if (!seenIds.has(resource.id)) {
+			// Rename/move reconciliation: if this file already exists under a
+			// different id (same physical path), replace it instead of duplicating.
+			if (reconcileByPath(newData, resource, noMergeFields)) {
+				seenIds.add(resource.id);
+				continue;
+			}
+
 			// For Content paths: only add if they don't belong to an existing Physical entry
 			// Content paths without matching Physical entries are either:
 			// 1. Files moved into this directory (have alternate_paths but no match) → ADD
@@ -788,6 +855,13 @@ function updateWrappedCache(
 		// Append new items (excluding Content paths that didn't match an existing entry)
 		for (const resource of newResources) {
 			if (!seenIds.has(resource.id)) {
+				// Rename/move reconciliation: if this file already exists under a
+				// different id (same physical path), replace it instead of duplicating.
+				if (reconcileByPath(array, resource, noMergeFields)) {
+					seenIds.add(resource.id);
+					continue;
+				}
+
 				// For Content paths: only add if they don't belong to an existing Physical entry
 				// Content paths without matching Physical entries are either:
 				// 1. Files moved into this directory (have alternate_paths but no match) → ADD
