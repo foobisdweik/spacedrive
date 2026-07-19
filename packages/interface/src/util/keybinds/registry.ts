@@ -25,6 +25,15 @@ export const explorerKeybinds = {
 		scope: 'explorer'
 	}),
 
+	// F2 is the conventional rename shortcut on Windows/Linux; offered alongside
+	// Enter so the action is discoverable without guessing.
+	renameFileAlt: defineKeybind({
+		id: 'explorer.renameFileAlt',
+		label: 'Rename',
+		combo: { modifiers: [], key: 'F2' },
+		scope: 'explorer'
+	}),
+
 	// Selection
 	selectAll: defineKeybind({
 		id: 'explorer.selectAll',

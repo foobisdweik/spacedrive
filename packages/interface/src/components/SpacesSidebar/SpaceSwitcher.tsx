@@ -30,7 +30,7 @@ export function SpaceSwitcher({
 					</span>
 				</SelectPill>
 			</DropdownMenu.Trigger>
-			<DropdownMenu.Content className="min-w-[var(--radix-dropdown-menu-trigger-width)] p-1">
+			<DropdownMenu.Content className="min-w-[var(--radix-dropdown-menu-trigger-width)] z-50 rounded-lg border border-sidebar-line bg-sidebar-box p-1 shadow-lg">
 				{spaces && spaces.length > 1
 					? spaces.map((space) => (
 							<DropdownMenu.Item

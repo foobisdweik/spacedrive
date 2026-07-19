@@ -14,6 +14,7 @@ import {
 	useState,
 	type ReactNode
 } from 'react';
+import {toast} from '@spacedrive/primitives';
 import {useTabManager} from '../../components/TabManager';
 import {usePlatform} from '../../contexts/PlatformContext';
 import {useLibraryMutation} from '../../contexts/SpacedriveContext';
@@ -96,6 +97,20 @@ function sdPathsEqual(
 		left.Sidecar.variant === right.Sidecar.variant &&
 		left.Sidecar.format === right.Sidecar.format
 	);
+}
+
+// A stable string key for a location-addressable path, used to re-link a selected
+// file to its renamed/moved counterpart (which arrives under a new id). Content and
+// Sidecar paths are not location-stable across a rename, so they return undefined.
+function sdPathKey(path: SdPath | null | undefined): string | undefined {
+	if (!path) return undefined;
+	if ('Physical' in path) {
+		return `p:${path.Physical.device_slug}:${path.Physical.path}`;
+	}
+	if ('Cloud' in path) {
+		return `c:${path.Cloud.service}:${path.Cloud.identifier}:${path.Cloud.path}`;
+	}
+	return undefined;
 }
 
 export function SelectionProvider({
@@ -420,8 +435,21 @@ export function SelectionProvider({
 					new_name: newName
 				});
 				setRenamingFileId(null);
-				// Stale invalidation is still triggered immediately, but the job completion
-				// event in useJobsDesktop.ts will perform the final authoritative invalidation.
+
+				// Keep the selection (and therefore the Inspector) pointed at the
+				// renamed object by applying the same transform to the selected File
+				// snapshots. We intentionally do NOT invalidate here: rename runs as a
+				// background job that resolves at dispatch, so an immediate refetch
+				// returns the pre-rename listing and clobbers the optimistic edit. The
+				// authoritative refresh happens on job completion (useJobsDesktop.ts),
+				// and cache reconciliation collapses the old/new rows by path.
+				setSelectedFilesInternal((prev) => prev.map(updateRenamedFile));
+			} catch (error) {
+				// Rename failed (e.g. a name collision). Revert the optimistic edit by
+				// refetching authoritative state and surface a clear error instead of
+				// silently leaving the file unchanged. Stay in edit mode so the user
+				// can correct the name.
+				console.error('Rename failed:', error);
 				await queryClient.invalidateQueries({
 					predicate: (query) =>
 						Array.isArray(query.queryKey) &&
@@ -430,9 +458,10 @@ export function SelectionProvider({
 							'query:files.directory_listing' ||
 							query.queryKey[0] === 'query:search.files')
 				});
-			} catch (error) {
-				// Keep in edit mode on error so user can retry
-				console.error('Rename failed:', error);
+				toast.error({
+					title: 'Rename failed',
+					body: `Couldn't rename to "${newName}". ${String(error).replace(/^Error:\s*/, '')}`
+				});
 				throw error;
 			}
 		},
@@ -463,50 +492,65 @@ export function SelectionProvider({
 		(files: File[]) => {
 			if (storedIds.length === 0) return;
 
-			const fileMap = new Map(files.map((f) => [f.id, f]));
-			const matchingFiles: File[] = [];
-
-			for (const id of storedIds) {
-				const file = fileMap.get(id);
-				if (file) {
-					matchingFiles.push(file);
-				}
+			const fileById = new Map(files.map((f) => [f.id, f]));
+			const fileByPath = new Map<string, File>();
+			for (const f of files) {
+				const key = sdPathKey(f.sd_path);
+				if (key) fileByPath.set(key, f);
 			}
 
-			// Only update if we found matching files and they're different from current
-			if (matchingFiles.length > 0) {
-				setFocusedIndex((prev) => {
-					if (prev !== -1) return prev;
-					const newFocus = files.findIndex((f) => f.id === storedIds[0]);
-					return newFocus !== -1 ? newFocus : prev;
-				});
+			setSelectedFilesInternal((prev) => {
+				const prevById = new Map(prev.map((f) => [f.id, f]));
+				const resolved: File[] = [];
+				const seen = new Set<string>();
 
-				setSelectedFilesInternal((prev) => {
-					const prevIds = new Set(prev.map((f) => f.id));
-					const newIds = new Set(matchingFiles.map((f) => f.id));
-
-					if (
-						prevIds.size === newIds.size &&
-						[...newIds].every((id) => prevIds.has(id))
-					) {
-						const prevById = new Map(prev.map((f) => [f.id, f]));
-						const hasStaleData = matchingFiles.some((file) => {
-							const previous = prevById.get(file.id);
-							return (
-								!previous ||
-								previous.name !== file.name ||
-								previous.extension !== file.extension ||
-								!sdPathsEqual(previous.sd_path, file.sd_path)
-							);
-						});
-						if (!hasStaleData) {
-							return prev;
-						}
+				for (const id of storedIds) {
+					// Prefer an exact id match from the authoritative listing.
+					let file = fileById.get(id);
+					// If the id vanished, the object may have been renamed/moved (new
+					// id, same path). Re-link via the previously-selected object's path
+					// so the Inspector follows the renamed file instead of stranding on
+					// a stale or deleted object.
+					if (!file) {
+						const previous = prevById.get(id);
+						const prevKey = previous
+							? sdPathKey(previous.sd_path)
+							: undefined;
+						if (prevKey) file = fileByPath.get(prevKey);
 					}
+					if (file && !seen.has(file.id)) {
+						seen.add(file.id);
+						resolved.push(file);
+					}
+					// Otherwise the file is gone from this listing (deleted/moved out)
+					// and is dropped from the selection.
+				}
 
-					return matchingFiles;
-				});
-			}
+				// Nothing resolved: keep the previous selection to avoid clearing it
+				// during a transient empty/loading listing.
+				if (resolved.length === 0) return prev;
+
+				// Avoid needless state churn when nothing actually changed.
+				const unchanged =
+					resolved.length === prev.length &&
+					resolved.every((f, i) => {
+						const p = prev[i];
+						return (
+							p &&
+							p.id === f.id &&
+							p.name === f.name &&
+							p.extension === f.extension &&
+							sdPathsEqual(p.sd_path, f.sd_path)
+						);
+					});
+				return unchanged ? prev : resolved;
+			});
+
+			setFocusedIndex((prevFocus) => {
+				if (prevFocus !== -1) return prevFocus;
+				const newFocus = files.findIndex((f) => f.id === storedIds[0]);
+				return newFocus !== -1 ? newFocus : prevFocus;
+			});
 		},
 		[storedIds]
 	);

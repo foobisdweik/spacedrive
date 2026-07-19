@@ -16,6 +16,7 @@ import {
 } from "./useTable";
 import type { DirectorySortBy } from "@sd/ts-client";
 import { useExplorerFiles } from "../../hooks/useExplorerFiles";
+import { useScrollRestoration } from "../../hooks/useScrollRestoration";
 import { DragSelect } from "./DragSelect";
 import { useEmptySpaceContextMenu } from "../../hooks/useEmptySpaceContextMenu";
 
@@ -40,6 +41,8 @@ export const ListView = memo(function ListView() {
 
 	// Get files from centralized hook (handles search, virtual, and directory)
 	const { files } = useExplorerFiles();
+	// Preserve scroll position per tab (survives tab/view switches).
+	const handleScroll = useScrollRestoration(containerRef, files.length > 0);
 	const { table } = useTable(files);
 	const { rows } = table.getRowModel();
 
@@ -155,7 +158,7 @@ export const ListView = memo(function ListView() {
 	const totalWidth = table.getTotalSize() + TABLE_PADDING_X * 2;
 
 	return (
-		<div ref={containerRef} className="h-full overflow-auto" onContextMenu={handleContainerContextMenu}>
+		<div ref={containerRef} className="h-full overflow-auto" onContextMenu={handleContainerContextMenu} onScroll={handleScroll}>
 			<DragSelect files={files} scrollRef={containerRef}>
 				{/* Sticky Header */}
 			<div

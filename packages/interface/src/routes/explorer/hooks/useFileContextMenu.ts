@@ -49,7 +49,7 @@ export function useFileContextMenu({
 	selectedFiles,
 	selected
 }: UseFileContextMenuProps) {
-	const {navigateToPath, currentPath, mode} = useExplorer();
+	const {navigateToPath, currentPath, mode, openQuickPreview} = useExplorer();
 	const navigate = useNavigate();
 	const platform = usePlatform();
 	const refetchTagQueries = useRefetchTagQueries();
@@ -124,8 +124,7 @@ export function useFileContextMenu({
 				label: 'Quick Look',
 				onClick: () => {
 					if (!file) return;
-					console.log('Quick Look:', file.name);
-					// TODO: Implement quick look
+					openQuickPreview(file.id);
 				},
 				keybind: 'Space',
 				condition: () => !!file

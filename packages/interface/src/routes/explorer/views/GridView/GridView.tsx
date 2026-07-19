@@ -5,6 +5,7 @@ import { useSelection } from "../../SelectionContext";
 import { FileCard } from "./FileCard";
 import type { File } from "@sd/ts-client";
 import { useExplorerFiles } from "../../hooks/useExplorerFiles";
+import { useScrollRestoration } from "../../hooks/useScrollRestoration";
 import { DragSelect } from "./DragSelect";
 import { useEmptySpaceContextMenu } from "../../hooks/useEmptySpaceContextMenu";
 
@@ -159,7 +160,11 @@ function VirtualizedGrid({
 	const [containerWidth, setContainerWidth] = useState<number | null>(null);
 	const [isInitialized, setIsInitialized] = useState(false);
 
-	// TODO: Preserve scroll position per tab using scrollPosition from context
+	// Preserve scroll position per tab (survives tab/view switches).
+	const handleScroll = useScrollRestoration(
+		parentRef,
+		isInitialized && files.length > 0,
+	);
 
 	// Synchronous measurement before paint to prevent layout shift
 	useLayoutEffect(() => {
@@ -276,6 +281,7 @@ function VirtualizedGrid({
 			className="h-full overflow-auto"
 			onClick={onContainerClick}
 			onContextMenu={onContainerContextMenu}
+			onScroll={handleScroll}
 		>
 			<DragSelect files={files} scrollRef={parentRef}>
 				<div

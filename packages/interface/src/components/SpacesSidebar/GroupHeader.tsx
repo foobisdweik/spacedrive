@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useContextMenu } from "../../hooks/useContextMenu";
 import { useLibraryMutation } from "@sd/ts-client";
 import type { SpaceGroup } from "@sd/ts-client";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface GroupHeaderProps {
   label: string;
@@ -30,8 +31,19 @@ export function GroupHeader({
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(label);
   
+  const queryClient = useQueryClient();
   const updateGroup = useLibraryMutation("spaces.update_group");
   const deleteGroup = useLibraryMutation("spaces.delete_group");
+
+  // The space layout query subscribes to 'space_layout' events, but group
+  // mutations emit 'space_group' events, so the sidebar would not refresh until
+  // relaunch. Refetch the layout explicitly after a group mutation.
+  const refetchSpaceLayout = () =>
+    queryClient.invalidateQueries({
+      predicate: (query) =>
+        Array.isArray(query.queryKey) &&
+        query.queryKey[0] === "query:spaces.get_layout",
+    });
 
   const handleRename = async () => {
     if (!group || !newName.trim() || newName === label) {
@@ -46,6 +58,7 @@ export function GroupHeader({
         name: newName.trim(),
         is_collapsed: null,
       });
+      await refetchSpaceLayout();
       setIsRenaming(false);
     } catch (error) {
       console.error("Failed to rename group:", error);
@@ -56,9 +69,10 @@ export function GroupHeader({
 
   const handleDelete = async () => {
     if (!group) return;
-    
+
     try {
       await deleteGroup.mutateAsync({ group_id: group.id });
+      await refetchSpaceLayout();
     } catch (error) {
       console.error("Failed to delete group:", error);
     }
