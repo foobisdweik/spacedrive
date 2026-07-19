@@ -256,14 +256,14 @@ if ($LASTEXITCODE -ne 0) {
     Exit-WithError "Something went wrong, exit code: $LASTEXITCODE"
 }
 
-# Run xtask setup to download native dependencies and configure cargo
+# Run xtask setup directly so first-time setup does not depend on the generated Cargo alias.
 if (-not $env:CI) {
     Write-Host
-    Write-Host 'Running cargo xtask setup to download native dependencies...' -ForegroundColor Yellow
+    Write-Host 'Running cargo run --package xtask -- setup to download native dependencies...' -ForegroundColor Yellow
     Set-Location $projectRoot
-    cargo xtask setup
+    cargo run --package xtask -- setup
     if ($LASTEXITCODE -ne 0) {
-        Exit-WithError 'Failed to run cargo xtask setup'
+        Exit-WithError 'Failed to run cargo run --package xtask -- setup'
     }
 }
 

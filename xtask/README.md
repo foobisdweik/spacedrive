@@ -27,7 +27,7 @@ Run tasks using `cargo xtask`:
 
 ```bash
 # Setup development environment (replaces pnpm prep)
-cargo xtask setup
+cargo run --package xtask -- setup
 
 # Build iOS framework (device + simulator)
 cargo xtask build-ios
@@ -78,7 +78,7 @@ Sets up your development environment:
 **Usage:**
 
 ```bash
-cargo xtask setup
+cargo run --package xtask -- setup
 ```
 
 **First time setup:**
@@ -91,7 +91,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
 # Run setup
-cargo xtask setup
+cargo run --package xtask -- setup
 
 # Build the CLI
 cargo build
@@ -153,7 +153,7 @@ pnpm prep           # Run JavaScript setup script
 **New way:**
 
 ```bash
-cargo xtask setup   # Pure Rust, no JS needed!
+cargo run --package xtask -- setup   # Pure Rust, no JS needed!
 ```
 
 ### Replaced: `scripts/build_ios_xcframework.sh` (Bash)

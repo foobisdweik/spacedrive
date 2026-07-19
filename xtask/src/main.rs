@@ -6,7 +6,7 @@
 //! ## Usage
 //!
 //! ```bash
-//! cargo xtask setup        # Setup dev environment (replaces pnpm prep)
+//! cargo run --package xtask -- setup  # Setup dev environment (replaces pnpm prep)
 //! cargo xtask build-ios    # Build iOS XCFramework
 //! cargo ios                # Convenient alias for build-ios
 //! ```
@@ -75,7 +75,7 @@ fn main() -> Result<()> {
 		);
 		eprintln!();
 		eprintln!("Examples:");
-		eprintln!("  cargo xtask setup          # First time setup");
+		eprintln!("  cargo run --package xtask -- setup  # First time setup");
 		eprintln!("  cargo xtask build-ios      # Build iOS framework");
 		eprintln!("  cargo xtask build-mobile   # Build mobile core for React Native");
 		eprintln!("  cargo xtask test-core      # Run all core tests");

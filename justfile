@@ -3,7 +3,7 @@
 # Install JS dependencies and set up native deps + cargo config
 setup:
     bun install
-    cargo xtask setup
+    cargo run --package xtask -- setup
 
 # Run the daemon (default dev workflow: just dev-daemon + just dev-desktop)
 dev-daemon *ARGS:
