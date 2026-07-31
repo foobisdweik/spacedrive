@@ -24,7 +24,7 @@ import {
 	Waveform
 } from '@phosphor-icons/react';
 import type {File, SdPath} from '@sd/ts-client';
-import {getContentKind, isVirtualFile} from '@sd/ts-client';
+import {isVirtualFile} from '@sd/ts-client';
 import {toast} from '@spacedrive/primitives';
 import {useNavigate} from 'react-router-dom';
 import {useFileOperationDialog} from '../../../components/modals/FileOperationModal';
@@ -36,6 +36,17 @@ import {useOpenWith} from '../../../hooks/useOpenWith';
 import {useRefetchTagQueries} from '../../../hooks/useRefetchTagQueries';
 import {useExplorer} from '../context';
 import {useSelection} from '../SelectionContext';
+import {
+	createAudioTranscriptionInput,
+	formatMediaActionFailures,
+	getEffectiveSelection,
+	isDocumentMediaSelection,
+	isMediaActionSupported,
+	isUniformMediaSelection,
+	toMediaActionTarget,
+	validateMediaAction,
+	type MediaAction
+} from './mediaActionCapabilities';
 import {useDeleteFiles} from './useDeleteFiles';
 
 interface UseFileContextMenuProps {
@@ -43,6 +54,12 @@ interface UseFileContextMenuProps {
 	selectedFiles: File[];
 	selected: boolean;
 }
+
+const BATCH_MEDIA_ACTIONS: readonly MediaAction[] = [
+	'regenerateThumbnail',
+	'generateBlurhash',
+	'extractText'
+];
 
 export function useFileContextMenu({
 	file,
@@ -68,17 +85,38 @@ export function useFileContextMenu({
 	const generateProxy = useLibraryMutation('media.proxy.generate');
 	const duplicateFiles = useLibraryMutation('files.duplicate');
 
-	// Helper to run a mutation on each target file
-	const forEachTarget = async (
-		targets: File[],
+	const effectiveSelection = getEffectiveSelection(
+		file,
+		selectedFiles,
+		selected
+	);
+	const mediaTargets = effectiveSelection.map((target) =>
+		toMediaActionTarget(target, isVirtualFile(target))
+	);
+	const supportsMediaAction = (action: MediaAction) =>
+		isMediaActionSupported(action, mediaTargets);
+	const runMediaAction = async (
+		action: MediaAction,
 		fn: (f: File) => Promise<unknown>
 	) => {
-		for (const f of targets) {
+		const validation = validateMediaAction(action, mediaTargets);
+		if (validation.ok === false) {
+			toast.error(validation.message);
+			return;
+		}
+
+		const failures = [];
+		for (const target of effectiveSelection) {
 			try {
-				await fn(f);
-			} catch (err) {
-				console.error(`Failed for ${f.name}:`, err);
+				await fn(target);
+			} catch (error) {
+				failures.push({error, name: target.name});
+				console.error(`Media action failed for ${target.name}:`, error);
 			}
+		}
+
+		if (failures.length > 0) {
+			toast.error(formatMediaActionFailures(action, failures));
 		}
 	};
 	const clipboard = useClipboard();
@@ -434,14 +472,13 @@ export function useFileContextMenu({
 				type: 'submenu',
 				icon: Image,
 				label: 'Image Processing',
-				condition: () => !!file && getContentKind(file) === 'image',
+				condition: () => isUniformMediaSelection(mediaTargets, 'image'),
 				submenu: [
 					{
 						icon: Sparkle,
 						label: 'Generate Blurhash',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('generateBlurhash', (f) =>
 								regenerateThumbnail.mutateAsync({
 									entry_uuid: f.id,
 									variants: null,
@@ -450,28 +487,31 @@ export function useFileContextMenu({
 							);
 						},
 						condition: () =>
-							!!file && !file.image_media_data?.blurhash
+							supportsMediaAction('generateBlurhash') &&
+							effectiveSelection.some(
+								(target) => !target.image_media_data?.blurhash
+							)
 					},
 					{
 						icon: Crop,
 						label: 'Regenerate Thumbnail',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('regenerateThumbnail', (f) =>
 								regenerateThumbnail.mutateAsync({
 									entry_uuid: f.id,
 									variants: null,
 									force: true
 								})
 							);
-						}
+						},
+						condition: () =>
+							supportsMediaAction('regenerateThumbnail')
 					},
 					{
 						icon: TextAa,
 						label: 'Extract Text (OCR)',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('extractText', (f) =>
 								extractText.mutateAsync({
 									entry_uuid: f.id,
 									languages: null,
@@ -479,7 +519,8 @@ export function useFileContextMenu({
 								})
 							);
 						},
-						keybind: '⌘⇧T'
+						keybind: '⌘⇧T',
+						condition: () => supportsMediaAction('extractText')
 					}
 				]
 			},
@@ -487,14 +528,13 @@ export function useFileContextMenu({
 				type: 'submenu',
 				icon: Video,
 				label: 'Video Processing',
-				condition: () => !!file && getContentKind(file) === 'video',
+				condition: () => isUniformMediaSelection(mediaTargets, 'video'),
 				submenu: [
 					{
 						icon: FilmStrip,
 						label: 'Generate Thumbstrip',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('generateThumbstrip', (f) =>
 								generateThumbstrip.mutateAsync({
 									entry_uuid: f.id,
 									variants: null,
@@ -503,15 +543,20 @@ export function useFileContextMenu({
 							);
 						},
 						condition: () =>
-							!!file &&
-							!file.sidecars?.some((s) => s.kind === 'thumbstrip')
+							supportsMediaAction('generateThumbstrip') &&
+							effectiveSelection.some(
+								(target) =>
+									!target.sidecars?.some(
+										(sidecar) =>
+											sidecar.kind === 'thumbstrip'
+									)
+							)
 					},
 					{
 						icon: Sparkle,
 						label: 'Generate Blurhash',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('generateBlurhash', (f) =>
 								regenerateThumbnail.mutateAsync({
 									entry_uuid: f.id,
 									variants: null,
@@ -520,42 +565,45 @@ export function useFileContextMenu({
 							);
 						},
 						condition: () =>
-							!!file && !file.video_media_data?.blurhash
+							supportsMediaAction('generateBlurhash') &&
+							effectiveSelection.some(
+								(target) => !target.video_media_data?.blurhash
+							)
 					},
 					{
 						icon: Crop,
 						label: 'Regenerate Thumbnail',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('regenerateThumbnail', (f) =>
 								regenerateThumbnail.mutateAsync({
 									entry_uuid: f.id,
 									variants: null,
 									force: true
 								})
 							);
-						}
+						},
+						condition: () =>
+							supportsMediaAction('regenerateThumbnail')
 					},
 					{
 						icon: Waveform,
 						label: 'Extract Subtitles',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('extractSubtitles', (f) =>
 								transcribeAudio.mutateAsync({
 									entry_uuid: f.id,
 									model: null,
 									language: null
 								})
 							);
-						}
+						},
+						condition: () => supportsMediaAction('extractSubtitles')
 					},
 					{
 						icon: FileVideo,
 						label: 'Generate Proxy',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('generateProxy', (f) =>
 								generateProxy.mutateAsync({
 									entry_uuid: f.id,
 									resolution: null,
@@ -564,7 +612,8 @@ export function useFileContextMenu({
 								})
 							);
 						},
-						keybind: '⌘⇧P'
+						keybind: '⌘⇧P',
+						condition: () => supportsMediaAction('generateProxy')
 					}
 				]
 			},
@@ -572,22 +621,20 @@ export function useFileContextMenu({
 				type: 'submenu',
 				icon: Microphone,
 				label: 'Audio Processing',
-				condition: () => !!file && getContentKind(file) === 'audio',
+				condition: () => isUniformMediaSelection(mediaTargets, 'audio'),
 				submenu: [
 					{
 						icon: TextAa,
 						label: 'Transcribe Audio',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
-								transcribeAudio.mutateAsync({
-									entry_uuid: f.id,
-									model: 'whisper-base',
-									language: null
-								})
+							await runMediaAction('transcribeAudio', (f) =>
+								transcribeAudio.mutateAsync(
+									createAudioTranscriptionInput(f.id)
+								)
 							);
 						},
-						keybind: '⌘⇧T'
+						keybind: '⌘⇧T',
+						condition: () => supportsMediaAction('transcribeAudio')
 					}
 				]
 			},
@@ -595,17 +642,13 @@ export function useFileContextMenu({
 				type: 'submenu',
 				icon: FileText,
 				label: 'Document Processing',
-				condition: () =>
-					!!file &&
-					file.kind === 'File' &&
-					['pdf', 'doc', 'docx'].includes(file.extension || ''),
+				condition: () => isDocumentMediaSelection(mediaTargets),
 				submenu: [
 					{
 						icon: TextAa,
 						label: 'Extract Text (OCR)',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('extractText', (f) =>
 								extractText.mutateAsync({
 									entry_uuid: f.id,
 									languages: null,
@@ -613,21 +656,23 @@ export function useFileContextMenu({
 								})
 							);
 						},
-						keybind: '⌘⇧T'
+						keybind: '⌘⇧T',
+						condition: () => supportsMediaAction('extractText')
 					},
 					{
 						icon: Crop,
 						label: 'Regenerate Thumbnail',
 						onClick: async () => {
-							const targets = getTargetFiles();
-							await forEachTarget(targets, (f) =>
+							await runMediaAction('regenerateThumbnail', (f) =>
 								regenerateThumbnail.mutateAsync({
 									entry_uuid: f.id,
 									variants: null,
 									force: true
 								})
 							);
-						}
+						},
+						condition: () =>
+							supportsMediaAction('regenerateThumbnail')
 					}
 				]
 			},
@@ -636,26 +681,31 @@ export function useFileContextMenu({
 				type: 'submenu',
 				icon: Stack,
 				label: `Process ${selectedFiles.length} Items`,
-				condition: () => selected && selectedFiles.length > 1,
+				condition: () =>
+					selected &&
+					selectedFiles.length > 1 &&
+					BATCH_MEDIA_ACTIONS.some(supportsMediaAction),
 				submenu: [
 					{
 						icon: Crop,
 						label: 'Regenerate All Thumbnails',
 						onClick: async () => {
-							await forEachTarget(selectedFiles, (f) =>
+							await runMediaAction('regenerateThumbnail', (f) =>
 								regenerateThumbnail.mutateAsync({
 									entry_uuid: f.id,
 									variants: null,
 									force: true
 								})
 							);
-						}
+						},
+						condition: () =>
+							supportsMediaAction('regenerateThumbnail')
 					},
 					{
 						icon: Sparkle,
 						label: 'Generate Blurhashes',
 						onClick: async () => {
-							await forEachTarget(selectedFiles, (f) =>
+							await runMediaAction('generateBlurhash', (f) =>
 								regenerateThumbnail.mutateAsync({
 									entry_uuid: f.id,
 									variants: null,
@@ -663,20 +713,22 @@ export function useFileContextMenu({
 								})
 							);
 						},
-						keybind: '⌘⇧B'
+						keybind: '⌘⇧B',
+						condition: () => supportsMediaAction('generateBlurhash')
 					},
 					{
 						icon: TextAa,
 						label: 'Extract Text (OCR)',
 						onClick: async () => {
-							await forEachTarget(selectedFiles, (f) =>
+							await runMediaAction('extractText', (f) =>
 								extractText.mutateAsync({
 									entry_uuid: f.id,
 									languages: null,
 									force: false
 								})
 							);
-						}
+						},
+						condition: () => supportsMediaAction('extractText')
 					}
 				]
 			},
