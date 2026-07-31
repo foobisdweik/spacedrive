@@ -3,7 +3,11 @@ import clsx from 'clsx';
 import {useExplorer} from './context';
 import type {SearchScope} from './context';
 
-export function SearchToolbar() {
+interface SearchToolbarProps {
+	onClearSearch?: () => void;
+}
+
+export function SearchToolbar({onClearSearch}: SearchToolbarProps) {
 	const explorer = useExplorer();
 
 	if (explorer.mode.type !== 'search' && explorer.mode.type !== 'filtered') {
@@ -95,7 +99,7 @@ export function SearchToolbar() {
 			<div className="flex-1" />
 
 			<button
-				onClick={explorer.exitSearchMode}
+				onClick={onClearSearch ?? explorer.exitSearchMode}
 				className={clsx(
 					'flex items-center gap-1.5 rounded-md px-2 py-1',
 					'text-sidebar-inkDull text-xs font-medium',

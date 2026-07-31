@@ -10,7 +10,7 @@ import {
 import {useLibraryMutation} from '@sd/ts-client';
 import {CircleButton, Popover, usePopover} from '@spacedrive/primitives';
 import clsx from 'clsx';
-import {useEffect, useMemo, useState} from 'react';
+import {useCallback, useEffect, useMemo, useState} from 'react';
 import {useNavigate} from 'react-router-dom';
 import {useCreateLibraryDialog} from '../../components/modals/CreateLibraryModal';
 import {PairingModal} from '../../components/modals/PairingModal';
@@ -96,6 +96,10 @@ export function OverviewTopBar({libraryName}: OverviewTopBarProps) {
 	const handleSyncSetup = () => {
 		useSyncSetupDialog();
 	};
+
+	const handleSearch = useCallback(() => {
+		navigate('/search');
+	}, [navigate]);
 
 	// Mutation for refreshing volume statistics
 	const volumeRefreshMutation = useLibraryMutation('volumes.refresh');
@@ -202,8 +206,14 @@ export function OverviewTopBar({libraryName}: OverviewTopBarProps) {
 	);
 
 	const searchButton = useMemo(
-		() => <CircleButton icon={MagnifyingGlass} title="Search" />,
-		[]
+		() => (
+			<CircleButton
+				icon={MagnifyingGlass}
+				title="Search"
+				onClick={handleSearch}
+			/>
+		),
+		[handleSearch]
 	);
 
 	const pairButton = useMemo(
@@ -276,7 +286,12 @@ export function OverviewTopBar({libraryName}: OverviewTopBarProps) {
 				}
 				right={
 					<>
-						<TopBarItem id="search" label="Search" priority="high">
+						<TopBarItem
+							id="search"
+							label="Search"
+							priority="high"
+							onClick={handleSearch}
+						>
 							{searchButton}
 						</TopBarItem>
 						<TopBarItem

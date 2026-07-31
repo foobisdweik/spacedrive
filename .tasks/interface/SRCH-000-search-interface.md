@@ -31,6 +31,12 @@ Build the search interface with support for full-text search, filters, and seman
 - Results virtualized for large result sets
 - Highlight matching terms
 
+## Implemented Foundation
+
+- [x] The Overview search action opens a dedicated `/search` route.
+- [x] The search route reuses Explorer results with library-wide scope and an empty-query prompt.
+- [x] Search input is focused on route entry and debounced without losing the selected scope.
+
 ## Acceptance Criteria
 
 - [ ] Search bar in top bar
