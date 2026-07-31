@@ -91,6 +91,13 @@ impl LibraryAction for EnableIndexingAction {
 
 		let updated_location = active.update(db).await.map_err(ActionError::SeaOrm)?;
 
+		// Publish the index-mode change before dispatch. The indexer job owns scan-state
+		// transitions, and clients must still observe this durable update if dispatch fails.
+		use crate::domain::resource::EventEmitter;
+		crate::domain::Location::emit_changed_batch(db, &context.events, &[updated_location.uuid])
+			.await
+			.map_err(|e| ActionError::Internal(format!("Failed to emit location event: {}", e)))?;
+
 		// Get the entry and directory path for the location
 		let entry_id = updated_location
 			.entry_id
@@ -151,12 +158,6 @@ impl LibraryAction for EnableIndexingAction {
 			)
 			.await
 			.map_err(|e| ActionError::Internal(format!("Failed to start indexing: {}", e)))?;
-
-		// Emit ResourceChanged event for UI reactivity using EventEmitter trait
-		use crate::domain::resource::EventEmitter;
-		crate::domain::Location::emit_changed_batch(db, &context.events, &[updated_location.uuid])
-			.await
-			.map_err(|e| ActionError::Internal(format!("Failed to emit location event: {}", e)))?;
 
 		Ok(EnableIndexingOutput::new(self.input.id, job_id))
 	}

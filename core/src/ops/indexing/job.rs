@@ -6,7 +6,7 @@
 //!
 
 use crate::{
-	domain::addressing::SdPath,
+	domain::{addressing::SdPath, resource::EventEmitter, Location},
 	infra::db::entities,
 	infra::event::Event,
 	infra::job::{prelude::*, traits::DynJob},
@@ -280,10 +280,18 @@ impl IndexerJob {
 			active_location.last_scan_at = Set(Some(chrono::Utc::now().into()));
 		}
 
-		active_location
+		let updated_location = active_location
 			.update(ctx.library_db())
 			.await
 			.map_err(|e| JobError::Database(e.to_string()))?;
+
+		Location::emit_changed_batch(
+			ctx.library_db(),
+			ctx.library().event_bus(),
+			&[updated_location.uuid],
+		)
+		.await
+		.map_err(|e| JobError::execution(format!("Failed to emit location event: {e}")))?;
 
 		Ok(())
 	}
