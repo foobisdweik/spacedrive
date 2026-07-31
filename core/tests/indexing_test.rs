@@ -9,12 +9,16 @@
 
 mod helpers;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use helpers::{wait_for_indexing, IndexingHarnessBuilder};
 use sd_core::{
 	domain::{addressing::SdPath, Location, ScanState},
 	infra::{
-		action::LibraryAction, api::SessionContext, db::entities, event::Event, query::LibraryQuery,
+		action::LibraryAction,
+		api::SessionContext,
+		db::entities,
+		event::{Event, EventBus, EventSubscriber, SubscriptionFilter},
+		query::LibraryQuery,
 	},
 	location::{IndexMode, LocationManager},
 	ops::locations::{
@@ -23,8 +27,53 @@ use sd_core::{
 	},
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use tokio::sync::broadcast::error::TryRecvError;
-use tokio::time::Duration;
+use tokio::time::{timeout, Duration, Instant};
+use uuid::Uuid;
+
+fn subscribe_to_location_events(event_bus: &EventBus) -> EventSubscriber {
+	event_bus.subscribe_filtered(vec![SubscriptionFilter::Global {
+		resource_type: "location".to_string(),
+	}])
+}
+
+async fn collect_location_events_until<F>(
+	subscriber: &mut EventSubscriber,
+	location_id: Uuid,
+	timeout_duration: Duration,
+	done: F,
+) -> Result<Vec<Location>>
+where
+	F: Fn(&Location) -> bool,
+{
+	let mut locations = Vec::new();
+	let deadline = Instant::now() + timeout_duration;
+
+	loop {
+		let remaining = deadline.saturating_duration_since(Instant::now());
+		let event = timeout(remaining, subscriber.recv())
+			.await
+			.map_err(|_| anyhow!("timed out waiting for location {location_id} events"))?
+			.map_err(|error| anyhow!("location event subscription failed: {error}"))?;
+
+		let Event::ResourceChangedBatch { resources, .. } = event else {
+			continue;
+		};
+
+		let matching_locations = resources
+			.as_array()
+			.into_iter()
+			.flatten()
+			.filter_map(|resource| serde_json::from_value::<Location>(resource.clone()).ok())
+			.filter(|location| location.id == location_id)
+			.collect::<Vec<_>>();
+		let reached_done = matching_locations.iter().any(&done);
+		locations.extend(matching_locations);
+
+		if reached_done {
+			return Ok(locations);
+		}
+	}
+}
 
 #[tokio::test]
 async fn test_enable_indexing_emits_mode_before_single_scanning_transition() -> Result<()> {
@@ -59,7 +108,7 @@ async fn test_enable_indexing_emits_mode_before_single_scanning_transition() -> 
 		.await?
 		.expect("location should exist before enabling indexing");
 
-	let mut event_subscriber = harness.library.event_bus().subscribe();
+	let mut event_subscriber = subscribe_to_location_events(harness.library.event_bus());
 	EnableIndexingAction::new(EnableIndexingInput {
 		id: location_id,
 		index_mode: "deep".to_string(),
@@ -73,29 +122,19 @@ async fn test_enable_indexing_emits_mode_before_single_scanning_transition() -> 
 	)
 	.await?;
 
-	let mut location_events = Vec::new();
-	loop {
-		match event_subscriber.try_recv() {
-			Ok(Event::ResourceChangedBatch {
-				resource_type,
-				resources,
-				..
-			}) if resource_type == "location" => {
-				location_events.extend(
-					resources
-						.as_array()
-						.into_iter()
-						.flatten()
-						.filter_map(|resource| {
-							serde_json::from_value::<Location>(resource.clone()).ok()
-						})
-						.filter(|location| location.id == location_id),
-				);
-			}
-			Ok(_) | Err(TryRecvError::Lagged(_)) => {}
-			Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-		}
-	}
+	let location_events = collect_location_events_until(
+		&mut event_subscriber,
+		location_id,
+		Duration::from_secs(5),
+		|location| location.scan_state == ScanState::Completed,
+	)
+	.await?;
+	assert!(
+		location_events
+			.iter()
+			.all(|location| location.library_id == harness.library.id()),
+		"location events must preserve the owning library ID"
+	);
 
 	let mode_event_position = location_events
 		.iter()
@@ -151,7 +190,7 @@ async fn test_enable_indexing_emits_mode_before_single_scanning_transition() -> 
 			&failure_harness.core.context.volume_manager,
 		)
 		.await?;
-	let mut failure_events = failure_harness.library.event_bus().subscribe();
+	let mut failure_events = subscribe_to_location_events(failure_harness.library.event_bus());
 
 	failure_harness
 		.library
@@ -163,7 +202,7 @@ async fn test_enable_indexing_emits_mode_before_single_scanning_transition() -> 
 		.await?;
 	let dispatch_result = EnableIndexingAction::new(EnableIndexingInput {
 		id: failure_location_id,
-		index_mode: "deep".to_string(),
+		index_mode: "quick".to_string(),
 	})
 	.execute(
 		failure_harness.library.clone(),
@@ -180,39 +219,27 @@ async fn test_enable_indexing_emits_mode_before_single_scanning_transition() -> 
 		.one(failure_harness.library.db().conn())
 		.await?
 		.expect("location should remain after dispatch failure");
-	assert_eq!(persisted_location.index_mode, "deep");
+	assert_eq!(persisted_location.index_mode, "content");
 	assert_eq!(
 		persisted_location.scan_state, "pending",
 		"dispatch failure must not persist a scanning transition"
 	);
 
-	let mut emitted_mode_update = false;
-	loop {
-		match failure_events.try_recv() {
-			Ok(Event::ResourceChangedBatch {
-				resource_type,
-				resources,
-				..
-			}) if resource_type == "location" => {
-				emitted_mode_update |= resources
-					.as_array()
-					.into_iter()
-					.flatten()
-					.filter_map(|resource| {
-						serde_json::from_value::<Location>(resource.clone()).ok()
-					})
-					.any(|location| {
-						location.id == failure_location_id
-							&& location.index_mode == sd_core::domain::IndexMode::Deep
-							&& location.scan_state == ScanState::Idle
-					});
-			}
-			Ok(_) | Err(TryRecvError::Lagged(_)) => {}
-			Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-		}
-	}
+	let failure_location_events = collect_location_events_until(
+		&mut failure_events,
+		failure_location_id,
+		Duration::from_secs(5),
+		|location| {
+			location.index_mode == sd_core::domain::IndexMode::Content
+				&& location.scan_state == ScanState::Idle
+		},
+	)
+	.await?;
 	assert!(
-		emitted_mode_update,
+		failure_location_events.iter().any(|location| {
+			location.index_mode == sd_core::domain::IndexMode::Content
+				&& location.scan_state == ScanState::Idle
+		}),
 		"dispatch failure must not hide the durable index-mode update"
 	);
 
@@ -236,7 +263,7 @@ async fn test_basic_indexing() -> Result<()> {
 	// Create files that should be filtered
 	location.create_filtered_files().await?;
 
-	let mut event_subscriber = harness.library.event_bus().subscribe();
+	let mut event_subscriber = subscribe_to_location_events(harness.library.event_bus());
 
 	// Index the location
 	let handle = location.index("Test Location", IndexMode::Deep).await?;
@@ -256,22 +283,16 @@ async fn test_basic_indexing() -> Result<()> {
 	assert_eq!(location_record.scan_state, "completed");
 	assert_eq!(location_record.total_file_count, 3);
 
-	let emitted_location = std::iter::from_fn(|| event_subscriber.try_recv().ok())
-		.filter_map(|event| match event {
-			Event::ResourceChangedBatch {
-				resource_type,
-				resources,
-				..
-			} if resource_type == "location" => resources.as_array().cloned(),
-			_ => None,
-		})
-		.flatten()
-		.filter_map(|resource| serde_json::from_value::<Location>(resource).ok())
-		.find(|location| {
-			location.id == handle.uuid
-				&& location.scan_state == sd_core::domain::ScanState::Completed
-		})
-		.expect("completed indexing should emit the persisted location");
+	let emitted_location = collect_location_events_until(
+		&mut event_subscriber,
+		handle.uuid,
+		Duration::from_secs(5),
+		|location| location.scan_state == ScanState::Completed,
+	)
+	.await?
+	.into_iter()
+	.find(|location| location.scan_state == ScanState::Completed)
+	.expect("completed indexing should emit the persisted location");
 
 	let mut session = SessionContext::device_session(
 		harness.device_id,
@@ -290,6 +311,8 @@ async fn test_basic_indexing() -> Result<()> {
 	assert_eq!(emitted_location.file_count, listed_location.file_count);
 	assert_eq!(emitted_location.total_size, listed_location.total_size);
 	assert_eq!(emitted_location.scan_state, listed_location.scan_state);
+	assert_eq!(emitted_location.library_id, harness.library.id());
+	assert_eq!(emitted_location.library_id, listed_location.library_id);
 
 	// Verify smart filtering worked
 	handle.verify_no_filtered_entries().await?;

@@ -285,9 +285,10 @@ impl IndexerJob {
 			.await
 			.map_err(|e| JobError::Database(e.to_string()))?;
 
-		Location::emit_changed_batch(
+		crate::ops::locations::emit_location_changed_batch(
 			ctx.library_db(),
 			ctx.library().event_bus(),
+			ctx.library().id(),
 			&[updated_location.uuid],
 		)
 		.await

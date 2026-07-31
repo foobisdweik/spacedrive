@@ -31,6 +31,14 @@ fn default_index_mode() -> String {
 	"deep".to_string()
 }
 
+fn canonical_index_mode(index_mode: IndexMode) -> IndexMode {
+	match index_mode {
+		IndexMode::Quick => IndexMode::Content,
+		IndexMode::Full => IndexMode::Deep,
+		other => other,
+	}
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnableIndexingAction {
 	input: EnableIndexingInput,
@@ -75,6 +83,7 @@ impl LibraryAction for EnableIndexingAction {
 					field: "index_mode".to_string(),
 					message: format!("Invalid index mode: {}", e),
 				})?;
+		let index_mode = canonical_index_mode(index_mode);
 
 		// Don't allow setting to None
 		if index_mode == IndexMode::None {
@@ -93,10 +102,14 @@ impl LibraryAction for EnableIndexingAction {
 
 		// Publish the index-mode change before dispatch. The indexer job owns scan-state
 		// transitions, and clients must still observe this durable update if dispatch fails.
-		use crate::domain::resource::EventEmitter;
-		crate::domain::Location::emit_changed_batch(db, &context.events, &[updated_location.uuid])
-			.await
-			.map_err(|e| ActionError::Internal(format!("Failed to emit location event: {}", e)))?;
+		crate::ops::locations::emit_location_changed_batch(
+			db,
+			&context.events,
+			library.id(),
+			&[updated_location.uuid],
+		)
+		.await
+		.map_err(|e| ActionError::Internal(format!("Failed to emit location event: {}", e)))?;
 
 		// Get the entry and directory path for the location
 		let entry_id = updated_location
@@ -220,3 +233,15 @@ impl ActionContextProvider for EnableIndexingAction {
 }
 
 crate::register_library_action!(EnableIndexingAction, "locations.enable_indexing");
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn canonicalizes_index_mode_aliases() {
+		assert_eq!(canonical_index_mode(IndexMode::Quick), IndexMode::Content);
+		assert_eq!(canonical_index_mode(IndexMode::Full), IndexMode::Deep);
+		assert_eq!(canonical_index_mode(IndexMode::Shallow), IndexMode::Shallow);
+	}
+}
