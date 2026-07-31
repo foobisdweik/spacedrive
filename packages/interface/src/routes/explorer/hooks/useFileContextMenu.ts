@@ -38,6 +38,7 @@ import {useExplorer} from '../context';
 import {useSelection} from '../SelectionContext';
 import {
 	createAudioTranscriptionInput,
+	filterVisibleMediaMenuItems,
 	formatMediaActionFailures,
 	getEffectiveSelection,
 	isDocumentMediaSelection,
@@ -45,7 +46,8 @@ import {
 	isUniformMediaSelection,
 	toMediaActionTarget,
 	validateMediaAction,
-	type MediaAction
+	type MediaAction,
+	type MediaActionFailure
 } from './mediaActionCapabilities';
 import {useDeleteFiles} from './useDeleteFiles';
 
@@ -105,7 +107,7 @@ export function useFileContextMenu({
 			return;
 		}
 
-		const failures = [];
+		const failures: MediaActionFailure[] = [];
 		for (const target of effectiveSelection) {
 			try {
 				await fn(target);
@@ -473,7 +475,7 @@ export function useFileContextMenu({
 				icon: Image,
 				label: 'Image Processing',
 				condition: () => isUniformMediaSelection(mediaTargets, 'image'),
-				submenu: [
+				submenu: filterVisibleMediaMenuItems([
 					{
 						icon: Sparkle,
 						label: 'Generate Blurhash',
@@ -522,14 +524,14 @@ export function useFileContextMenu({
 						keybind: '⌘⇧T',
 						condition: () => supportsMediaAction('extractText')
 					}
-				]
+				])
 			},
 			{
 				type: 'submenu',
 				icon: Video,
 				label: 'Video Processing',
 				condition: () => isUniformMediaSelection(mediaTargets, 'video'),
-				submenu: [
+				submenu: filterVisibleMediaMenuItems([
 					{
 						icon: FilmStrip,
 						label: 'Generate Thumbstrip',
@@ -615,14 +617,14 @@ export function useFileContextMenu({
 						keybind: '⌘⇧P',
 						condition: () => supportsMediaAction('generateProxy')
 					}
-				]
+				])
 			},
 			{
 				type: 'submenu',
 				icon: Microphone,
 				label: 'Audio Processing',
 				condition: () => isUniformMediaSelection(mediaTargets, 'audio'),
-				submenu: [
+				submenu: filterVisibleMediaMenuItems([
 					{
 						icon: TextAa,
 						label: 'Transcribe Audio',
@@ -636,14 +638,14 @@ export function useFileContextMenu({
 						keybind: '⌘⇧T',
 						condition: () => supportsMediaAction('transcribeAudio')
 					}
-				]
+				])
 			},
 			{
 				type: 'submenu',
 				icon: FileText,
 				label: 'Document Processing',
 				condition: () => isDocumentMediaSelection(mediaTargets),
-				submenu: [
+				submenu: filterVisibleMediaMenuItems([
 					{
 						icon: TextAa,
 						label: 'Extract Text (OCR)',
@@ -674,7 +676,7 @@ export function useFileContextMenu({
 						condition: () =>
 							supportsMediaAction('regenerateThumbnail')
 					}
-				]
+				])
 			},
 			// Batch operations submenu
 			{
@@ -685,7 +687,7 @@ export function useFileContextMenu({
 					selected &&
 					selectedFiles.length > 1 &&
 					BATCH_MEDIA_ACTIONS.some(supportsMediaAction),
-				submenu: [
+				submenu: filterVisibleMediaMenuItems([
 					{
 						icon: Crop,
 						label: 'Regenerate All Thumbnails',
@@ -730,7 +732,7 @@ export function useFileContextMenu({
 						},
 						condition: () => supportsMediaAction('extractText')
 					}
-				]
+				])
 			},
 			{
 				icon: TagIconComponent,

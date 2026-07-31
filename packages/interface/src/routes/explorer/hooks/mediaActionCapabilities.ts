@@ -31,6 +31,12 @@ export interface MediaActionFailure {
 	name: string;
 }
 
+export function filterVisibleMediaMenuItems<
+	T extends {condition?: () => boolean}
+>(items: readonly T[]): T[] {
+	return items.filter((item) => item.condition?.() !== false);
+}
+
 const DOCUMENT_EXTENSIONS = new Set(['doc', 'docx']);
 
 export const MEDIA_ACTION_CAPABILITIES: Readonly<

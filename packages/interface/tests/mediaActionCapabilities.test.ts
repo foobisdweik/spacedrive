@@ -2,6 +2,7 @@ import type {ContentKind, File} from '@sd/ts-client/generated/types';
 import {describe, expect, test} from 'bun:test';
 import {
 	createAudioTranscriptionInput,
+	filterVisibleMediaMenuItems,
 	formatMediaActionFailures,
 	getEffectiveSelection,
 	getMediaTargetKind,
@@ -28,6 +29,16 @@ function target(
 }
 
 describe('media action capabilities', () => {
+	test('filters unsupported submenu children before context-menu rendering', () => {
+		const visible = {label: 'OCR', condition: () => true};
+		const hidden = {label: 'Thumbnail', condition: () => false};
+		const unconditional = {label: 'Details'};
+
+		expect(
+			filterVisibleMediaMenuItems([visible, hidden, unconditional])
+		).toEqual([visible, unconditional]);
+	});
+
 	test('uses the selected files only when the clicked file is selected', () => {
 		const clicked = {id: 'clicked'};
 		const selected = [{id: 'one'}, {id: 'two'}];
