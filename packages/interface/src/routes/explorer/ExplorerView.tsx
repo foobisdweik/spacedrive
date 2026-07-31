@@ -88,12 +88,11 @@ export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
 
 	const [searchValue, setSearchValue] = useState('');
 	const searchRef = useRef<ExpandableSearchButtonHandle>(null);
-	const searchScope =
-		mode.type === 'search'
+	const searchScope = dedicatedSearch
+		? 'library'
+		: mode.type === 'search'
 			? mode.scope
-			: dedicatedSearch
-				? 'library'
-				: 'folder';
+			: 'folder';
 	const activeSearchQuery = mode.type === 'search' ? mode.query : null;
 
 	useKeybind('global.focusSearchBar', () => {
@@ -179,9 +178,13 @@ export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
 	useKeybind('explorer.setViewMedia', () => handleViewModeChange('media'));
 	useKeybind('explorer.setViewColumn', () => handleViewModeChange('column'));
 	useKeybind('explorer.setViewSize', () => handleViewModeChange('size'));
-	useKeybind('explorer.setViewKnowledge', () => handleViewModeChange('knowledge'), {
-		enabled: import.meta.env.DEV
-	});
+	useKeybind(
+		'explorer.setViewKnowledge',
+		() => handleViewModeChange('knowledge'),
+		{
+			enabled: import.meta.env.DEV
+		}
+	);
 
 	// Memoize submenu content to prevent infinite re-renders
 	const viewModeSubmenu = useMemo(
@@ -386,7 +389,10 @@ export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
 				)}
 			>
 				{(mode.type === 'search' || mode.type === 'filtered') && (
-					<SearchToolbar onClearSearch={handleSearchClear} />
+					<SearchToolbar
+						onClearSearch={handleSearchClear}
+						lockScope={dedicatedSearch}
+					/>
 				)}
 				<div
 					className={clsx(
