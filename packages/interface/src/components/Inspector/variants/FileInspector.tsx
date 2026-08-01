@@ -1459,6 +1459,7 @@ function SidecarItem({
 		(sidecar.format === 'webp' ||
 			sidecar.format === 'jpg' ||
 			sidecar.format === 'png');
+	const deleteSidecar = useLibraryMutation('sidecar.delete');
 
 	// Get appropriate Spacedrive icon based on sidecar format/kind
 	const getSidecarIcon = () => {
@@ -1526,9 +1527,26 @@ function SidecarItem({
 			{
 				icon: Trash,
 				label: 'Delete Sidecar',
-				onClick: () => {
-					console.log('Delete sidecar:', sidecar);
-					// TODO: Implement sidecar deletion
+				onClick: async () => {
+					try {
+						await deleteSidecar.mutateAsync({
+							content_uuid: sidecar.content_uuid,
+							kind: String(sidecar.kind),
+							variant: String(sidecar.variant)
+						});
+						toast.success({
+							title: 'Sidecar Deleted',
+							body: `${String(sidecar.kind)} sidecar removed`
+						});
+					} catch (error) {
+						toast.error({
+							title: 'Sidecar Delete Failed',
+							body:
+								error instanceof Error
+									? error.message
+									: String(error)
+						});
+					}
 				},
 				variant: 'danger' as const
 			}

@@ -1,12 +1,16 @@
 use std::{
-	collections::HashMap,
-	path::{Path, PathBuf},
-	sync::Arc,
+	collections::{HashMap, HashSet},
+	io::ErrorKind,
+	path::{Component, Path, PathBuf},
+	sync::{Arc, LazyLock},
 };
 
 use anyhow::Result;
 use chrono::Utc;
-use sea_orm::{entity::prelude::*, ActiveValue, QueryFilter, QuerySelect, TransactionTrait};
+use sea_orm::{
+	entity::prelude::*, ActiveValue, ConnectionTrait, DatabaseBackend, QueryFilter, QuerySelect,
+	Statement, TransactionTrait,
+};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -23,13 +27,174 @@ use crate::{
 	},
 };
 
+fn should_delete_managed_file(_source: Option<&str>, relative_path: &str) -> bool {
+	!relative_path.is_empty()
+}
+
+type SyncedDeletionKey = (PathBuf, Uuid, String, String);
+
+static SYNCED_DELETED_SIDECARS: LazyLock<Mutex<HashSet<SyncedDeletionKey>>> =
+	LazyLock::new(|| Mutex::new(HashSet::new()));
+static SIDECAR_LIFECYCLE_LOCK: Mutex<()> = Mutex::const_new(());
+
+async fn normalize_library_scope(path: &Path) -> PathBuf {
+	tokio::fs::canonicalize(path)
+		.await
+		.unwrap_or_else(|_| path.to_path_buf())
+}
+
+async fn library_scope_from_db(db: &DatabaseConnection) -> Result<PathBuf, DbErr> {
+	let database = db
+		.query_one(Statement::from_string(
+			DatabaseBackend::Sqlite,
+			"PRAGMA database_list".to_string(),
+		))
+		.await?
+		.ok_or_else(|| DbErr::Custom("Library database path is unavailable".to_string()))?;
+	let database_path: String = database.try_get("", "file")?;
+	if database_path.is_empty() {
+		return Ok(PathBuf::from("<memory-library>"));
+	}
+
+	let library_path = Path::new(&database_path)
+		.parent()
+		.ok_or_else(|| DbErr::Custom("Library database has no parent directory".to_string()))?;
+	Ok(normalize_library_scope(library_path).await)
+}
+
+async fn mark_synced_sidecar_deleted(
+	library_scope: &Path,
+	content_uuid: Uuid,
+	kind: &str,
+	variant: &str,
+) {
+	SYNCED_DELETED_SIDECARS.lock().await.insert((
+		library_scope.to_path_buf(),
+		content_uuid,
+		kind.to_string(),
+		variant.to_string(),
+	));
+}
+
+async fn clear_synced_sidecar_deletion(
+	library_scope: &Path,
+	content_uuid: Uuid,
+	kind: &str,
+	variant: &str,
+) {
+	SYNCED_DELETED_SIDECARS.lock().await.remove(&(
+		library_scope.to_path_buf(),
+		content_uuid,
+		kind.to_string(),
+		variant.to_string(),
+	));
+}
+
+async fn was_synced_sidecar_deleted(
+	library_scope: &Path,
+	content_uuid: Uuid,
+	kind: &str,
+	variant: &str,
+) -> bool {
+	SYNCED_DELETED_SIDECARS.lock().await.contains(&(
+		library_scope.to_path_buf(),
+		content_uuid,
+		kind.to_string(),
+		variant.to_string(),
+	))
+}
+
+pub(crate) async fn mark_synced_sidecar_deleted_from_db(
+	db: &DatabaseConnection,
+	content_uuid: Uuid,
+	kind: &str,
+	variant: &str,
+) -> Result<(), DbErr> {
+	let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+	let library_scope = library_scope_from_db(db).await?;
+	mark_synced_sidecar_deleted(&library_scope, content_uuid, kind, variant).await;
+	Ok(())
+}
+
+async fn resolve_managed_sidecar_path(base: &Path, relative_path: &str) -> Result<Option<PathBuf>> {
+	let relative_path = Path::new(relative_path);
+	if relative_path.is_absolute()
+		|| relative_path.components().any(|component| {
+			matches!(
+				component,
+				Component::ParentDir | Component::RootDir | Component::Prefix(_)
+			)
+		}) {
+		anyhow::bail!("Invalid managed sidecar path");
+	}
+
+	let target = base.join(relative_path);
+	let Some(parent) = target.parent() else {
+		anyhow::bail!("Invalid managed sidecar path");
+	};
+	let canonical_base = match tokio::fs::canonicalize(base).await {
+		Ok(base) => base,
+		Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+		Err(error) => return Err(error.into()),
+	};
+	let canonical_parent = match tokio::fs::canonicalize(parent).await {
+		Ok(parent) => parent,
+		Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+		Err(error) => return Err(error.into()),
+	};
+
+	if !canonical_parent.starts_with(&canonical_base) {
+		anyhow::bail!("Managed sidecar path escapes the sidecar directory");
+	}
+
+	let file_name = target
+		.file_name()
+		.ok_or_else(|| anyhow::anyhow!("Invalid managed sidecar path"))?;
+	Ok(Some(canonical_parent.join(file_name)))
+}
+
+pub(crate) async fn remove_synced_managed_sidecar(
+	db: &DatabaseConnection,
+	sidecar: &sidecar::Model,
+) -> Result<(), DbErr> {
+	let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+	let library_scope = library_scope_from_db(db).await?;
+	mark_synced_sidecar_deleted(
+		&library_scope,
+		sidecar.content_uuid,
+		&sidecar.kind,
+		&sidecar.variant,
+	)
+	.await;
+
+	if !should_delete_managed_file(sidecar.source.as_deref(), &sidecar.rel_path) {
+		return Ok(());
+	}
+
+	if library_scope == Path::new("<memory-library>") {
+		return Ok(());
+	}
+	let sidecars_dir = library_scope.join("sidecars");
+
+	if let Some(path) = resolve_managed_sidecar_path(&sidecars_dir, &sidecar.rel_path)
+		.await
+		.map_err(|error| DbErr::Custom(error.to_string()))?
+	{
+		match tokio::fs::remove_file(path).await {
+			Ok(()) => {}
+			Err(error) if error.kind() == ErrorKind::NotFound => {}
+			Err(error) => return Err(DbErr::Custom(error.to_string())),
+		}
+	}
+
+	Ok(())
+}
+
 /// Manages the Virtual Sidecar System
 pub struct SidecarManager {
 	context: Arc<CoreContext>,
 	/// Path builders per library
 	path_builders: RwLock<HashMap<Uuid, Arc<SidecarPathBuilder>>>,
-	/// Active generation tasks
-	active_tasks: Mutex<HashMap<(Uuid, String, String), tokio::task::JoinHandle<()>>>,
 }
 
 impl SidecarManager {
@@ -38,7 +203,6 @@ impl SidecarManager {
 		Self {
 			context,
 			path_builders: RwLock::new(HashMap::new()),
-			active_tasks: Mutex::new(HashMap::new()),
 		}
 	}
 
@@ -82,7 +246,18 @@ impl SidecarManager {
 	/// Remove path builder for a library
 	pub async fn deinit_library(&self, library_id: &Uuid) {
 		let mut builders = self.path_builders.write().await;
-		builders.remove(library_id);
+		let library_scope = builders
+			.remove(library_id)
+			.and_then(|builder| builder.sidecars_dir().parent().map(Path::to_path_buf));
+		drop(builders);
+
+		if let Some(library_scope) = library_scope {
+			let library_scope = normalize_library_scope(&library_scope).await;
+			SYNCED_DELETED_SIDECARS
+				.lock()
+				.await
+				.retain(|(scope, _, _, _)| scope != &library_scope);
+		}
 
 		info!("Deinitialized sidecar manager for library {}", library_id);
 	}
@@ -218,6 +393,9 @@ impl SidecarManager {
 		variant: &SidecarVariant,
 		format: &SidecarFormat,
 	) -> Result<SidecarResult> {
+		self.begin_generation(library, content_uuid, kind, variant)
+			.await;
+
 		let path = self
 			.compute_path(&library.id(), content_uuid, kind, variant, format)
 			.await?;
@@ -254,6 +432,24 @@ impl SidecarManager {
 				.await?;
 			Ok(SidecarResult::Pending)
 		}
+	}
+
+	pub async fn begin_generation(
+		&self,
+		library: &Library,
+		content_uuid: &Uuid,
+		kind: &SidecarKind,
+		variant: &SidecarVariant,
+	) {
+		let library_scope = normalize_library_scope(library.path()).await;
+		let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+		clear_synced_sidecar_deletion(
+			&library_scope,
+			*content_uuid,
+			kind.as_str(),
+			variant.as_str(),
+		)
+		.await;
 	}
 
 	/// Enqueue sidecar generation
@@ -495,6 +691,35 @@ impl SidecarManager {
 		size: u64,
 		checksum: Option<String>,
 	) -> Result<()> {
+		let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+		let library_scope = normalize_library_scope(library.path()).await;
+		if was_synced_sidecar_deleted(
+			&library_scope,
+			*content_uuid,
+			kind.as_str(),
+			variant.as_str(),
+		)
+		.await
+		{
+			let path = self
+				.compute_path(&library.id(), content_uuid, kind, variant, format)
+				.await?;
+			let sidecars_dir = self.get_path_builder(&library.id()).await?.sidecars_dir();
+
+			if let Some(path) =
+				resolve_managed_sidecar_path(&sidecars_dir, &path.relative_path.to_string_lossy())
+					.await?
+			{
+				match tokio::fs::remove_file(path).await {
+					Ok(()) => {}
+					Err(error) if error.kind() == ErrorKind::NotFound => {}
+					Err(error) => return Err(error.into()),
+				}
+			}
+
+			return Ok(());
+		}
+
 		self.record_sidecar_internal(
 			library,
 			content_uuid,
@@ -526,7 +751,11 @@ impl SidecarManager {
 
 		// Upsert sidecar record
 		let sidecar = sidecar::ActiveModel {
-			uuid: ActiveValue::Set(Uuid::new_v4()),
+			uuid: ActiveValue::Set(sidecar::logical_sync_uuid(
+				*content_uuid,
+				kind.as_str(),
+				variant.as_str(),
+			)),
 			content_uuid: ActiveValue::Set(*content_uuid),
 			kind: ActiveValue::Set(kind.as_str().to_string()),
 			variant: ActiveValue::Set(variant.as_str().to_string()),
@@ -551,10 +780,18 @@ impl SidecarManager {
 
 		if let Some(existing) = result {
 			let mut active: sidecar::ActiveModel = existing.into();
+			active.uuid = ActiveValue::Set(sidecar::logical_sync_uuid(
+				*content_uuid,
+				kind.as_str(),
+				variant.as_str(),
+			));
+			active.format = ActiveValue::Set(format.as_str().to_string());
 			active.rel_path = ActiveValue::Set(path.relative_path.to_string_lossy().to_string());
+			active.source_entry_id = ActiveValue::Set(None);
 			active.size = ActiveValue::Set(size as i64);
 			active.checksum = ActiveValue::Set(checksum);
 			active.status = ActiveValue::Set("ready".to_string());
+			active.source = ActiveValue::Set(Some("sidecar_manager".to_string()));
 			active.updated_at = ActiveValue::Set(Utc::now());
 			active.update(db.conn()).await?;
 		} else {
@@ -667,20 +904,69 @@ impl SidecarManager {
 		kind: &SidecarKind,
 		variant: &SidecarVariant,
 	) -> Result<()> {
+		let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+		let library_scope = normalize_library_scope(library.path()).await;
 		let db = library.db();
-
-		// Delete from database
-		Sidecar::delete_many()
+		let sidecars = Sidecar::find()
 			.filter(sidecar::Column::ContentUuid.eq(*content_uuid))
 			.filter(sidecar::Column::Kind.eq(kind.as_str()))
 			.filter(sidecar::Column::Variant.eq(variant.as_str()))
-			.exec(db.conn())
+			.all(db.conn())
 			.await?;
+		let sidecars_dir = self.get_path_builder(&library.id()).await?.sidecars_dir();
+
+		for sidecar in &sidecars {
+			if !should_delete_managed_file(sidecar.source.as_deref(), &sidecar.rel_path) {
+				continue;
+			}
+
+			if let Some(path) =
+				resolve_managed_sidecar_path(&sidecars_dir, &sidecar.rel_path).await?
+			{
+				match tokio::fs::remove_file(&path).await {
+					Ok(()) => {}
+					Err(error) if error.kind() == ErrorKind::NotFound => {}
+					Err(error) => return Err(error.into()),
+				}
+			}
+		}
 
 		// Update availability
 		self.update_local_availability(library, content_uuid, kind, variant, false, None, None)
 			.await?;
 
+		for sidecar in sidecars {
+			let mut active: sidecar::ActiveModel = sidecar.into();
+			active.status = ActiveValue::Set("deleted".to_string());
+			active.updated_at = ActiveValue::Set(Utc::now());
+			active.update(db.conn()).await?;
+		}
+
+		mark_synced_sidecar_deleted(
+			&library_scope,
+			*content_uuid,
+			kind.as_str(),
+			variant.as_str(),
+		)
+		.await;
+
+		Ok(())
+	}
+
+	pub async fn purge_deleted_sidecar(
+		&self,
+		library: &Library,
+		content_uuid: &Uuid,
+		kind: &SidecarKind,
+		variant: &SidecarVariant,
+	) -> Result<()> {
+		Sidecar::delete_many()
+			.filter(sidecar::Column::ContentUuid.eq(*content_uuid))
+			.filter(sidecar::Column::Kind.eq(kind.as_str()))
+			.filter(sidecar::Column::Variant.eq(variant.as_str()))
+			.filter(sidecar::Column::Status.eq("deleted"))
+			.exec(library.db().conn())
+			.await?;
 		Ok(())
 	}
 
@@ -847,4 +1133,59 @@ pub struct SidecarPresence {
 	pub status: SidecarStatus,
 	/// Remote devices that have this sidecar
 	pub devices: Vec<Uuid>,
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{resolve_managed_sidecar_path, should_delete_managed_file};
+
+	#[test]
+	fn managed_sidecar_files_are_deleted_but_references_are_preserved() {
+		assert!(should_delete_managed_file(
+			Some("sidecar_manager"),
+			"thumb/ab/cd/file.webp"
+		));
+		assert!(!should_delete_managed_file(Some("reference"), ""));
+		assert!(should_delete_managed_file(
+			Some("reference"),
+			"original.mov"
+		));
+		assert!(!should_delete_managed_file(None, ""));
+	}
+
+	#[tokio::test]
+	async fn managed_sidecar_paths_stay_inside_the_sidecar_directory() {
+		let temp = tempfile::tempdir().unwrap();
+		let base = temp.path().join("sidecars");
+		let parent = base.join("thumb/ab/cd");
+		tokio::fs::create_dir_all(&parent).await.unwrap();
+
+		assert_eq!(
+			resolve_managed_sidecar_path(&base, "thumb/ab/cd/file.jpg")
+				.await
+				.unwrap(),
+			Some(
+				tokio::fs::canonicalize(parent)
+					.await
+					.unwrap()
+					.join("file.jpg")
+			)
+		);
+		assert!(resolve_managed_sidecar_path(&base, "../library.db")
+			.await
+			.is_err());
+		assert!(resolve_managed_sidecar_path(&base, "/tmp/file.jpg")
+			.await
+			.is_err());
+
+		#[cfg(unix)]
+		{
+			let outside = temp.path().join("outside");
+			tokio::fs::create_dir_all(&outside).await.unwrap();
+			std::os::unix::fs::symlink(&outside, base.join("escape")).unwrap();
+			assert!(resolve_managed_sidecar_path(&base, "escape/file.jpg")
+				.await
+				.is_err());
+		}
+	}
 }

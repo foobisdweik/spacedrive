@@ -74,6 +74,17 @@ pub async fn generate_thumbnails_for_file(
 	let variants = ThumbnailVariants::defaults();
 	let mut generated_count = 0;
 
+	for variant_config in &variants {
+		sidecar_manager
+			.begin_generation(
+				library,
+				content_uuid,
+				&SidecarKind::Thumb,
+				&variant_config.variant,
+			)
+			.await;
+	}
+
 	for variant_config in variants {
 		// Check if thumbnail already exists
 		if sidecar_manager

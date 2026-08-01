@@ -71,6 +71,84 @@ impl Related<super::entry::Entity> for Entity {
 
 impl ActiveModelBehavior for ActiveModel {}
 
+pub fn logical_sync_uuid(content_uuid: Uuid, kind: &str, variant: &str) -> Uuid {
+	let mut identity = Vec::with_capacity(16 + kind.len() + variant.len() + 2);
+	identity.extend_from_slice(content_uuid.as_bytes());
+	identity.push(0);
+	identity.extend_from_slice(kind.as_bytes());
+	identity.push(0);
+	identity.extend_from_slice(variant.as_bytes());
+	Uuid::new_v5(&Uuid::NAMESPACE_OID, &identity)
+}
+
+pub fn normalize_sync_identity(
+	entry: &mut crate::infra::sync::SharedChangeEntry,
+) -> Result<(), DbErr> {
+	if entry.model_type != "sidecar" {
+		return Ok(());
+	}
+
+	let content_uuid = entry
+		.data
+		.get("content_uuid")
+		.cloned()
+		.ok_or_else(|| DbErr::Custom("Sidecar sync change is missing content_uuid".to_string()))
+		.and_then(|value| {
+			serde_json::from_value::<Uuid>(value)
+				.map_err(|error| DbErr::Custom(format!("Invalid sidecar content UUID: {error}")))
+		})?;
+	let kind = entry
+		.data
+		.get("kind")
+		.and_then(serde_json::Value::as_str)
+		.ok_or_else(|| DbErr::Custom("Sidecar sync change is missing kind".to_string()))?;
+	let variant = entry
+		.data
+		.get("variant")
+		.and_then(serde_json::Value::as_str)
+		.ok_or_else(|| DbErr::Custom("Sidecar sync change is missing variant".to_string()))?;
+	entry.record_uuid = logical_sync_uuid(content_uuid, kind, variant);
+	Ok(())
+}
+
+pub async fn affected_entry_uuids_for_change(
+	entry: &crate::infra::sync::SharedChangeEntry,
+	db: &DatabaseConnection,
+) -> Result<Vec<Uuid>, DbErr> {
+	use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+	if entry.model_type != "sidecar"
+		|| !matches!(entry.change_type, crate::infra::sync::ChangeType::Delete)
+	{
+		return Ok(Vec::new());
+	}
+
+	let content_uuid = entry
+		.data
+		.get("content_uuid")
+		.cloned()
+		.ok_or_else(|| DbErr::Custom("Sidecar deletion is missing content_uuid".to_string()))
+		.and_then(|value| {
+			serde_json::from_value::<Uuid>(value)
+				.map_err(|error| DbErr::Custom(format!("Invalid sidecar content UUID: {error}")))
+		})?;
+	let Some(content) = super::content_identity::Entity::find()
+		.filter(super::content_identity::Column::Uuid.eq(content_uuid))
+		.one(db)
+		.await?
+	else {
+		return Ok(Vec::new());
+	};
+
+	Ok(super::entry::Entity::find()
+		.filter(super::entry::Column::ContentId.eq(content.id))
+		.all(db)
+		.await?
+		.into_iter()
+		.filter_map(|entry| entry.uuid)
+		.collect())
+}
+
 // Sidecars are SHARED resources (content-scoped, not device-owned).
 // All devices should know what sidecars exist globally via library sync.
 // Actual file availability is tracked separately in sidecar_availability (local only).
@@ -101,6 +179,123 @@ impl crate::infra::sync::Syncable for Model {
 			// Map content_uuid FK to content_identities table
 			crate::infra::sync::FKMapping::new("content_uuid", "content_identities"),
 		]
+	}
+
+	async fn apply_shared_change(
+		entry: crate::infra::sync::SharedChangeEntry,
+		db: &DatabaseConnection,
+	) -> Result<(), sea_orm::DbErr> {
+		use crate::infra::sync::ChangeType;
+		use sea_orm::{
+			sea_query::OnConflict, ActiveValue::NotSet, ActiveValue::Set, ColumnTrait, EntityTrait,
+			QueryFilter,
+		};
+
+		#[derive(Deserialize)]
+		struct SyncedSidecar {
+			uuid: Uuid,
+			content_uuid: Uuid,
+			kind: String,
+			variant: String,
+			format: String,
+			rel_path: String,
+			size: i64,
+			checksum: Option<String>,
+			status: String,
+			source: Option<String>,
+			version: i32,
+			created_at: DateTime<Utc>,
+			updated_at: DateTime<Utc>,
+		}
+
+		match entry.change_type {
+			ChangeType::Insert | ChangeType::Update => {
+				let sidecar: SyncedSidecar =
+					serde_json::from_value(entry.data).map_err(|error| {
+						sea_orm::DbErr::Custom(format!("Invalid sidecar sync data: {error}"))
+					})?;
+				let logical_uuid =
+					logical_sync_uuid(sidecar.content_uuid, &sidecar.kind, &sidecar.variant);
+				let active = ActiveModel {
+					id: NotSet,
+					uuid: Set(logical_uuid),
+					content_uuid: Set(sidecar.content_uuid),
+					kind: Set(sidecar.kind),
+					variant: Set(sidecar.variant),
+					format: Set(sidecar.format),
+					rel_path: Set(sidecar.rel_path),
+					source_entry_id: Set(None),
+					size: Set(sidecar.size),
+					checksum: Set(sidecar.checksum),
+					status: Set(sidecar.status),
+					source: Set(sidecar.source),
+					version: Set(sidecar.version),
+					created_at: Set(sidecar.created_at),
+					updated_at: Set(sidecar.updated_at),
+				};
+
+				Entity::insert(active)
+					.on_conflict(
+						OnConflict::columns([Column::ContentUuid, Column::Kind, Column::Variant])
+							.update_columns([
+								Column::Uuid,
+								Column::Format,
+								Column::RelPath,
+								Column::Size,
+								Column::Checksum,
+								Column::Status,
+								Column::Source,
+								Column::Version,
+								Column::UpdatedAt,
+							])
+							.to_owned(),
+					)
+					.exec(db)
+					.await?;
+			}
+			ChangeType::Delete => {
+				let synced: SyncedSidecar =
+					serde_json::from_value(entry.data).map_err(|error| {
+						sea_orm::DbErr::Custom(format!("Invalid sidecar sync data: {error}"))
+					})?;
+				if let Some(sidecar) = Entity::find()
+					.filter(Column::ContentUuid.eq(synced.content_uuid))
+					.filter(Column::Kind.eq(&synced.kind))
+					.filter(Column::Variant.eq(&synced.variant))
+					.one(db)
+					.await?
+				{
+					crate::service::sidecar_manager::remove_synced_managed_sidecar(db, &sidecar)
+						.await?;
+					super::sidecar_availability::Entity::delete_many()
+						.filter(
+							super::sidecar_availability::Column::ContentUuid
+								.eq(sidecar.content_uuid),
+						)
+						.filter(super::sidecar_availability::Column::Kind.eq(sidecar.kind))
+						.filter(super::sidecar_availability::Column::Variant.eq(sidecar.variant))
+						.exec(db)
+						.await?;
+				} else {
+					crate::service::sidecar_manager::mark_synced_sidecar_deleted_from_db(
+						db,
+						synced.content_uuid,
+						&synced.kind,
+						&synced.variant,
+					)
+					.await?;
+				}
+
+				Entity::delete_many()
+					.filter(Column::ContentUuid.eq(synced.content_uuid))
+					.filter(Column::Kind.eq(synced.kind))
+					.filter(Column::Variant.eq(synced.variant))
+					.exec(db)
+					.await?;
+			}
+		}
+
+		Ok(())
 	}
 
 	async fn query_for_sync(

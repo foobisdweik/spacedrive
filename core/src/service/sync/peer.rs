@@ -2328,7 +2328,9 @@ impl PeerSync {
 	}
 
 	/// Apply shared change to database with conflict resolution
-	async fn apply_shared_change(&self, entry: SharedChangeEntry) -> Result<()> {
+	async fn apply_shared_change(&self, mut entry: SharedChangeEntry) -> Result<()> {
+		crate::infra::db::entities::sidecar::normalize_sync_identity(&mut entry)?;
+
 		// Record start time for latency tracking
 		let start_time = std::time::Instant::now();
 
@@ -2355,6 +2357,10 @@ impl PeerSync {
 				return Ok(());
 			}
 		}
+
+		let affected_file_ids =
+			crate::infra::db::entities::sidecar::affected_entry_uuids_for_change(&entry, &self.db)
+				.await?;
 
 		// Use the registry to route to the appropriate apply function
 		crate::infra::sync::apply_shared_change(entry.clone(), self.db.clone())
@@ -2487,10 +2493,20 @@ impl PeerSync {
 		use crate::infra::sync::peer_log::ChangeType;
 		match entry.change_type {
 			ChangeType::Delete => {
-				self.event_bus.emit(Event::ResourceDeleted {
-					resource_type: entry.model_type,
-					resource_id: entry.record_uuid,
-				});
+				if entry.model_type == "sidecar" && !affected_file_ids.is_empty() {
+					let resource_manager = crate::domain::ResourceManager::new(
+						self.db.clone(),
+						self.event_bus.clone(),
+					);
+					resource_manager
+						.emit_resource_events("file", affected_file_ids)
+						.await?;
+				} else {
+					self.event_bus.emit(Event::ResourceDeleted {
+						resource_type: entry.model_type,
+						resource_id: entry.record_uuid,
+					});
+				}
 			}
 			ChangeType::Insert | ChangeType::Update => {
 				// Use ResourceManager to fetch and emit properly formatted resource

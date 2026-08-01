@@ -112,23 +112,14 @@ impl LibraryQuery for AlternateInstancesQuery {
 
 		// Batch load sidecars
 		let sidecars = if let Some(ci_uuid) = content_uuid {
-			sidecar::Entity::find()
-				.filter(sidecar::Column::ContentUuid.eq(ci_uuid))
-				.all(db.conn())
-				.await?
-				.into_iter()
-				.map(|s| crate::domain::file::Sidecar {
-					id: s.id,
-					content_uuid: s.content_uuid,
-					kind: s.kind,
-					variant: s.variant,
-					format: s.format,
-					status: s.status,
-					size: s.size,
-					created_at: s.created_at,
-					updated_at: s.updated_at,
-				})
-				.collect()
+			crate::domain::file::Sidecar::from_models(
+				db.conn(),
+				sidecar::Entity::find()
+					.filter(sidecar::Column::ContentUuid.eq(ci_uuid))
+					.all(db.conn())
+					.await?,
+			)
+			.await?
 		} else {
 			Vec::new()
 		};
