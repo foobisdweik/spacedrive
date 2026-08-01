@@ -305,6 +305,8 @@ impl FileSearchQuery {
 			Vec::new()
 		};
 
+		let all_sidecars = crate::domain::file::Sidecar::from_models(db, all_sidecars).await?;
+
 		// Group sidecars by content_uuid for fast lookup
 		let mut sidecars_by_content: std::collections::HashMap<
 			Uuid,
@@ -314,17 +316,7 @@ impl FileSearchQuery {
 			sidecars_by_content
 				.entry(s.content_uuid)
 				.or_insert_with(Vec::new)
-				.push(crate::domain::file::Sidecar {
-					id: s.id,
-					content_uuid: s.content_uuid,
-					kind: s.kind,
-					variant: s.variant,
-					format: s.format,
-					status: s.status,
-					size: s.size,
-					created_at: s.created_at,
-					updated_at: s.updated_at,
-				});
+				.push(s);
 		}
 
 		// Convert results to FileSearchResult objects
@@ -1033,6 +1025,7 @@ impl FileSearchQuery {
 			Vec::new()
 		};
 
+		let all_sidecars = crate::domain::file::Sidecar::from_models(db, all_sidecars).await?;
 		let mut sidecars_by_content: std::collections::HashMap<
 			Uuid,
 			Vec<crate::domain::file::Sidecar>,
@@ -1041,17 +1034,7 @@ impl FileSearchQuery {
 			sidecars_by_content
 				.entry(s.content_uuid)
 				.or_insert_with(Vec::new)
-				.push(crate::domain::file::Sidecar {
-					id: s.id,
-					content_uuid: s.content_uuid,
-					kind: s.kind,
-					variant: s.variant,
-					format: s.format,
-					status: s.status,
-					size: s.size,
-					created_at: s.created_at,
-					updated_at: s.updated_at,
-				});
+				.push(s);
 		}
 
 		// Index content identities by entry content_id for per-entry lookup

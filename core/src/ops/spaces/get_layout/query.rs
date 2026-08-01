@@ -255,25 +255,16 @@ async fn build_file_from_entry(
 	// Get sidecars for thumbnails
 	let sidecars = if let Some(ref ci) = content_identity {
 		if let Some(uuid) = Some(ci.uuid) {
-			sidecar::Entity::find()
+			let models = sidecar::Entity::find()
 				.filter(sidecar::Column::ContentUuid.eq(uuid))
 				.all(db)
 				.await
 				.ok()
+				.unwrap_or_default();
+			crate::domain::Sidecar::from_models(db, models)
+				.await
+				.ok()
 				.unwrap_or_default()
-				.into_iter()
-				.map(|s| crate::domain::Sidecar {
-					id: s.id,
-					content_uuid: s.content_uuid,
-					kind: s.kind,
-					variant: s.variant,
-					format: s.format,
-					status: s.status,
-					size: s.size,
-					created_at: s.created_at,
-					updated_at: s.updated_at,
-				})
-				.collect()
 		} else {
 			Vec::new()
 		}

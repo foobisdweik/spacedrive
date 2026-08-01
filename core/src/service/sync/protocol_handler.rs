@@ -65,12 +65,24 @@ impl LogSyncHandler {
 		let change_type = entry.change_type;
 
 		let db = Arc::new(self.peer_sync.db().as_ref().clone());
+		let affected_file_ids =
+			crate::infra::db::entities::sidecar::affected_entry_uuids_for_change(&entry, &db)
+				.await?;
 		crate::infra::sync::registry::apply_shared_change(entry, db.clone())
 			.await
 			.map_err(|e| anyhow::anyhow!("{}", e))?;
 
-		// Emit resource event for UI reactivity (for insert/update changes)
-		if matches!(change_type, ChangeType::Insert | ChangeType::Update) {
+		// Emit resource event for UI reactivity.
+		if model_type == "sidecar"
+			&& matches!(change_type, ChangeType::Delete)
+			&& !affected_file_ids.is_empty()
+		{
+			let resource_manager =
+				crate::domain::ResourceManager::new(db.clone(), self.peer_sync.event_bus().clone());
+			resource_manager
+				.emit_resource_events("file", affected_file_ids)
+				.await?;
+		} else if matches!(change_type, ChangeType::Insert | ChangeType::Update) {
 			let resource_manager =
 				crate::domain::ResourceManager::new(db.clone(), self.peer_sync.event_bus().clone());
 

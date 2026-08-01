@@ -5,6 +5,8 @@
 //! The File struct is computed from pre-fetched data rather than fetching
 //! individual pieces on demand.
 
+use std::collections::HashSet;
+
 use crate::domain::{
 	addressing::SdPath,
 	content_identity::{ContentIdentity, ContentKind},
@@ -409,25 +411,13 @@ impl File {
 		};
 
 		let sidecars = if let Some(ref ci) = content_identity {
-			sidecar::Entity::find()
+			let models = sidecar::Entity::find()
 				.filter(sidecar::Column::ContentUuid.eq(ci.uuid))
 				.all(db)
 				.await
 				.ok()
-				.unwrap_or_default()
-				.into_iter()
-				.map(|s| Sidecar {
-					id: s.id,
-					content_uuid: s.content_uuid,
-					kind: s.kind,
-					variant: s.variant,
-					format: s.format,
-					status: s.status,
-					size: s.size,
-					created_at: s.created_at,
-					updated_at: s.updated_at,
-				})
-				.collect()
+				.unwrap_or_default();
+			Sidecar::from_models(db, models).await.unwrap_or_default()
 		} else {
 			Vec::new()
 		};
@@ -756,22 +746,13 @@ impl File {
 			Vec::new()
 		};
 
+		let sidecars = Sidecar::from_models(db, sidecars).await?;
 		let mut sidecars_by_content_uuid: HashMap<Uuid, Vec<Sidecar>> = HashMap::new();
 		for s in sidecars {
 			sidecars_by_content_uuid
 				.entry(s.content_uuid)
 				.or_default()
-				.push(Sidecar {
-					id: s.id,
-					content_uuid: s.content_uuid,
-					kind: s.kind,
-					variant: s.variant,
-					format: s.format,
-					status: s.status,
-					size: s.size,
-					created_at: s.created_at,
-					updated_at: s.updated_at,
-				});
+				.push(s);
 		}
 
 		// Batch load tags (both entry-scoped and content-scoped)
@@ -1012,6 +993,58 @@ impl File {
 }
 
 impl Sidecar {
+	pub async fn from_models(
+		db: &sea_orm::DatabaseConnection,
+		models: Vec<crate::infra::db::entities::sidecar::Model>,
+	) -> Result<Vec<Self>, sea_orm::DbErr> {
+		use crate::infra::db::entities::sidecar_availability;
+		use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+		let locally_available = sidecar_availability::Entity::find()
+			.filter(
+				sidecar_availability::Column::DeviceUuid.eq(crate::device::get_current_device_id()),
+			)
+			.filter(sidecar_availability::Column::Has.eq(true))
+			.all(db)
+			.await?
+			.into_iter()
+			.map(|availability| {
+				(
+					availability.content_uuid,
+					availability.kind,
+					availability.variant,
+				)
+			})
+			.collect::<HashSet<_>>();
+
+		Ok(models
+			.into_iter()
+			.filter(|model| model.status != "deleted")
+			.map(|model| {
+				let is_local = locally_available.contains(&(
+					model.content_uuid,
+					model.kind.clone(),
+					model.variant.clone(),
+				));
+				Self {
+					id: model.id,
+					content_uuid: model.content_uuid,
+					kind: model.kind,
+					variant: model.variant,
+					format: model.format,
+					status: if is_local {
+						model.status
+					} else {
+						"pending".to_string()
+					},
+					size: model.size,
+					created_at: model.created_at,
+					updated_at: model.updated_at,
+				}
+			})
+			.collect())
+	}
+
 	/// Create a new Sidecar from database entity data
 	pub fn from_entity(
 		id: i32,

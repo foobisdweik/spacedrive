@@ -31,33 +31,89 @@ fn should_delete_managed_file(_source: Option<&str>, relative_path: &str) -> boo
 	!relative_path.is_empty()
 }
 
-type SyncedDeletionKey = (Uuid, String, String);
+type SyncedDeletionKey = (PathBuf, Uuid, String, String);
 
 static SYNCED_DELETED_SIDECARS: LazyLock<Mutex<HashSet<SyncedDeletionKey>>> =
 	LazyLock::new(|| Mutex::new(HashSet::new()));
+static SIDECAR_LIFECYCLE_LOCK: Mutex<()> = Mutex::const_new(());
 
-pub(crate) async fn mark_synced_sidecar_deleted(content_uuid: Uuid, kind: &str, variant: &str) {
+async fn normalize_library_scope(path: &Path) -> PathBuf {
+	tokio::fs::canonicalize(path)
+		.await
+		.unwrap_or_else(|_| path.to_path_buf())
+}
+
+async fn library_scope_from_db(db: &DatabaseConnection) -> Result<PathBuf, DbErr> {
+	let database = db
+		.query_one(Statement::from_string(
+			DatabaseBackend::Sqlite,
+			"PRAGMA database_list".to_string(),
+		))
+		.await?
+		.ok_or_else(|| DbErr::Custom("Library database path is unavailable".to_string()))?;
+	let database_path: String = database.try_get("", "file")?;
+	if database_path.is_empty() {
+		return Ok(PathBuf::from("<memory-library>"));
+	}
+
+	let library_path = Path::new(&database_path)
+		.parent()
+		.ok_or_else(|| DbErr::Custom("Library database has no parent directory".to_string()))?;
+	Ok(normalize_library_scope(library_path).await)
+}
+
+async fn mark_synced_sidecar_deleted(
+	library_scope: &Path,
+	content_uuid: Uuid,
+	kind: &str,
+	variant: &str,
+) {
 	SYNCED_DELETED_SIDECARS.lock().await.insert((
+		library_scope.to_path_buf(),
 		content_uuid,
 		kind.to_string(),
 		variant.to_string(),
 	));
 }
 
-async fn clear_synced_sidecar_deletion(content_uuid: Uuid, kind: &str, variant: &str) {
+async fn clear_synced_sidecar_deletion(
+	library_scope: &Path,
+	content_uuid: Uuid,
+	kind: &str,
+	variant: &str,
+) {
 	SYNCED_DELETED_SIDECARS.lock().await.remove(&(
+		library_scope.to_path_buf(),
 		content_uuid,
 		kind.to_string(),
 		variant.to_string(),
 	));
 }
 
-async fn was_synced_sidecar_deleted(content_uuid: Uuid, kind: &str, variant: &str) -> bool {
+async fn was_synced_sidecar_deleted(
+	library_scope: &Path,
+	content_uuid: Uuid,
+	kind: &str,
+	variant: &str,
+) -> bool {
 	SYNCED_DELETED_SIDECARS.lock().await.contains(&(
+		library_scope.to_path_buf(),
 		content_uuid,
 		kind.to_string(),
 		variant.to_string(),
 	))
+}
+
+pub(crate) async fn mark_synced_sidecar_deleted_from_db(
+	db: &DatabaseConnection,
+	content_uuid: Uuid,
+	kind: &str,
+	variant: &str,
+) -> Result<(), DbErr> {
+	let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+	let library_scope = library_scope_from_db(db).await?;
+	mark_synced_sidecar_deleted(&library_scope, content_uuid, kind, variant).await;
+	Ok(())
 }
 
 async fn resolve_managed_sidecar_path(base: &Path, relative_path: &str) -> Result<Option<PathBuf>> {
@@ -97,27 +153,24 @@ pub(crate) async fn remove_synced_managed_sidecar(
 	db: &DatabaseConnection,
 	sidecar: &sidecar::Model,
 ) -> Result<(), DbErr> {
-	mark_synced_sidecar_deleted(sidecar.content_uuid, &sidecar.kind, &sidecar.variant).await;
+	let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+	let library_scope = library_scope_from_db(db).await?;
+	mark_synced_sidecar_deleted(
+		&library_scope,
+		sidecar.content_uuid,
+		&sidecar.kind,
+		&sidecar.variant,
+	)
+	.await;
 
 	if !should_delete_managed_file(sidecar.source.as_deref(), &sidecar.rel_path) {
 		return Ok(());
 	}
 
-	let database = db
-		.query_one(Statement::from_string(
-			DatabaseBackend::Sqlite,
-			"PRAGMA database_list".to_string(),
-		))
-		.await?
-		.ok_or_else(|| DbErr::Custom("Library database path is unavailable".to_string()))?;
-	let database_path: String = database.try_get("", "file")?;
-	if database_path.is_empty() {
+	if library_scope == Path::new("<memory-library>") {
 		return Ok(());
 	}
-	let library_path = Path::new(&database_path)
-		.parent()
-		.ok_or_else(|| DbErr::Custom("Library database has no parent directory".to_string()))?;
-	let sidecars_dir = library_path.join("sidecars");
+	let sidecars_dir = library_scope.join("sidecars");
 
 	if let Some(path) = resolve_managed_sidecar_path(&sidecars_dir, &sidecar.rel_path)
 		.await
@@ -138,12 +191,6 @@ pub struct SidecarManager {
 	context: Arc<CoreContext>,
 	/// Path builders per library
 	path_builders: RwLock<HashMap<Uuid, Arc<SidecarPathBuilder>>>,
-	/// Serializes publication and deletion so a completed generator cannot race
-	/// a user-requested deletion.
-	lifecycle_lock: Mutex<()>,
-	/// Sidecars deleted during this process remain suppressed until explicitly
-	/// requested again through `get_or_enqueue`.
-	deleted_sidecars: Mutex<HashSet<(Uuid, Uuid, String, String)>>,
 }
 
 impl SidecarManager {
@@ -152,8 +199,6 @@ impl SidecarManager {
 		Self {
 			context,
 			path_builders: RwLock::new(HashMap::new()),
-			lifecycle_lock: Mutex::new(()),
-			deleted_sidecars: Mutex::new(HashSet::new()),
 		}
 	}
 
@@ -197,13 +242,18 @@ impl SidecarManager {
 	/// Remove path builder for a library
 	pub async fn deinit_library(&self, library_id: &Uuid) {
 		let mut builders = self.path_builders.write().await;
-		builders.remove(library_id);
+		let library_scope = builders
+			.remove(library_id)
+			.and_then(|builder| builder.sidecars_dir().parent().map(Path::to_path_buf));
 		drop(builders);
 
-		self.deleted_sidecars
-			.lock()
-			.await
-			.retain(|(deleted_library_id, _, _, _)| deleted_library_id != library_id);
+		if let Some(library_scope) = library_scope {
+			let library_scope = normalize_library_scope(&library_scope).await;
+			SYNCED_DELETED_SIDECARS
+				.lock()
+				.await
+				.retain(|(scope, _, _, _)| scope != &library_scope);
+		}
 
 		info!("Deinitialized sidecar manager for library {}", library_id);
 	}
@@ -339,13 +389,17 @@ impl SidecarManager {
 		variant: &SidecarVariant,
 		format: &SidecarFormat,
 	) -> Result<SidecarResult> {
-		self.deleted_sidecars.lock().await.remove(&(
-			library.id(),
-			*content_uuid,
-			kind.as_str().to_string(),
-			variant.as_str().to_string(),
-		));
-		clear_synced_sidecar_deletion(*content_uuid, kind.as_str(), variant.as_str()).await;
+		let library_scope = normalize_library_scope(library.path()).await;
+		{
+			let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+			clear_synced_sidecar_deletion(
+				&library_scope,
+				*content_uuid,
+				kind.as_str(),
+				variant.as_str(),
+			)
+			.await;
+		}
 
 		let path = self
 			.compute_path(&library.id(), content_uuid, kind, variant, format)
@@ -624,39 +678,16 @@ impl SidecarManager {
 		size: u64,
 		checksum: Option<String>,
 	) -> Result<()> {
-		let _lifecycle_guard = self.lifecycle_lock.lock().await;
-		let lifecycle_key = (
-			library.id(),
+		let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+		let library_scope = normalize_library_scope(library.path()).await;
+		if was_synced_sidecar_deleted(
+			&library_scope,
 			*content_uuid,
-			kind.as_str().to_string(),
-			variant.as_str().to_string(),
-		);
-		if self.deleted_sidecars.lock().await.contains(&lifecycle_key) {
-			let path = self
-				.compute_path(&library.id(), content_uuid, kind, variant, format)
-				.await?;
-			let sidecars_dir = self.get_path_builder(&library.id()).await?.sidecars_dir();
-
-			if let Some(path) =
-				resolve_managed_sidecar_path(&sidecars_dir, &path.relative_path.to_string_lossy())
-					.await?
-			{
-				match tokio::fs::remove_file(path).await {
-					Ok(()) => {}
-					Err(error) if error.kind() == ErrorKind::NotFound => {}
-					Err(error) => return Err(error.into()),
-				}
-			}
-
-			info!(
-				content_uuid = %content_uuid,
-				kind = kind.as_str(),
-				variant = variant.as_str(),
-				"discarded sidecar generated after deletion"
-			);
-			return Ok(());
-		}
-		if was_synced_sidecar_deleted(*content_uuid, kind.as_str(), variant.as_str()).await {
+			kind.as_str(),
+			variant.as_str(),
+		)
+		.await
+		{
 			let path = self
 				.compute_path(&library.id(), content_uuid, kind, variant, format)
 				.await?;
@@ -851,7 +882,8 @@ impl SidecarManager {
 		kind: &SidecarKind,
 		variant: &SidecarVariant,
 	) -> Result<()> {
-		let _lifecycle_guard = self.lifecycle_lock.lock().await;
+		let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+		let library_scope = normalize_library_scope(library.path()).await;
 		let db = library.db();
 		let sidecars = Sidecar::find()
 			.filter(sidecar::Column::ContentUuid.eq(*content_uuid))
@@ -877,25 +909,42 @@ impl SidecarManager {
 			}
 		}
 
-		// Delete from database
-		Sidecar::delete_many()
-			.filter(sidecar::Column::ContentUuid.eq(*content_uuid))
-			.filter(sidecar::Column::Kind.eq(kind.as_str()))
-			.filter(sidecar::Column::Variant.eq(variant.as_str()))
-			.exec(db.conn())
-			.await?;
-
 		// Update availability
 		self.update_local_availability(library, content_uuid, kind, variant, false, None, None)
 			.await?;
 
-		self.deleted_sidecars.lock().await.insert((
-			library.id(),
-			*content_uuid,
-			kind.as_str().to_string(),
-			variant.as_str().to_string(),
-		));
+		for sidecar in sidecars {
+			let mut active: sidecar::ActiveModel = sidecar.into();
+			active.status = ActiveValue::Set("deleted".to_string());
+			active.updated_at = ActiveValue::Set(Utc::now());
+			active.update(db.conn()).await?;
+		}
 
+		mark_synced_sidecar_deleted(
+			&library_scope,
+			*content_uuid,
+			kind.as_str(),
+			variant.as_str(),
+		)
+		.await;
+
+		Ok(())
+	}
+
+	pub async fn purge_deleted_sidecar(
+		&self,
+		library: &Library,
+		content_uuid: &Uuid,
+		kind: &SidecarKind,
+		variant: &SidecarVariant,
+	) -> Result<()> {
+		Sidecar::delete_many()
+			.filter(sidecar::Column::ContentUuid.eq(*content_uuid))
+			.filter(sidecar::Column::Kind.eq(kind.as_str()))
+			.filter(sidecar::Column::Variant.eq(variant.as_str()))
+			.filter(sidecar::Column::Status.eq("deleted"))
+			.exec(library.db().conn())
+			.await?;
 		Ok(())
 	}
 
