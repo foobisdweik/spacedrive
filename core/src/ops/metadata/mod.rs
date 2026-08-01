@@ -4,5 +4,7 @@
 //! including semantic tagging integration.
 
 pub mod manager;
+pub mod set_favorite;
 
 pub use manager::UserMetadataManager;
+pub use set_favorite::*;

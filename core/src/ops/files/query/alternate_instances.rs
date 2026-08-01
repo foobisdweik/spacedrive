@@ -135,6 +135,8 @@ impl LibraryQuery for AlternateInstancesQuery {
 
 		// Batch load tags for all entries
 		let entry_uuids: Vec<Uuid> = alternate_entries.iter().filter_map(|e| e.uuid).collect();
+		let favorite_entry_uuids =
+			File::favorite_entry_uuids(db.conn(), entry_uuids.iter().copied()).await?;
 
 		let mut tags_by_entry: HashMap<Uuid, Vec<crate::domain::tag::Tag>> = HashMap::new();
 
@@ -250,7 +252,10 @@ impl LibraryQuery for AlternateInstancesQuery {
 			};
 
 			// Create File from entry model
-			let mut file = File::from_entity_model(entry_model.clone(), sd_path);
+			let favorite = entry_model
+				.uuid
+				.is_some_and(|uuid| favorite_entry_uuids.contains(&uuid));
+			let mut file = File::from_entity_model(entry_model.clone(), sd_path, favorite);
 
 			// Add content identity, sidecars, and media data
 			file.content_identity = Some(content_identity_domain.clone());

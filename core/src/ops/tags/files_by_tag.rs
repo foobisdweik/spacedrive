@@ -143,6 +143,8 @@ impl LibraryQuery for GetFilesByTagQuery {
 		// Batch load tags (same logic as directory_listing)
 		let tags_by_entry =
 			load_tags_for_entries(conn, &entry_uuids, &content_uuids, &rows).await?;
+		let favorite_entry_uuids =
+			File::favorite_entry_uuids(conn, entry_uuids.iter().copied()).await?;
 
 		// Build File objects — skip rows where required fields can't be decoded
 		let mut files = Vec::new();
@@ -240,7 +242,8 @@ impl LibraryQuery for GetFilesByTagQuery {
 				volume_id: None,
 			};
 
-			let mut file = File::from_entity_model(entity_model, sd_path);
+			let favorite = entry_uuid.is_some_and(|uuid| favorite_entry_uuids.contains(&uuid));
+			let mut file = File::from_entity_model(entity_model, sd_path, favorite);
 
 			if let Some(kind_name) = content_kind_name {
 				file.content_kind = crate::domain::ContentKind::from(kind_name.as_str());

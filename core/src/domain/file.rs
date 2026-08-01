@@ -5,6 +5,8 @@
 //! The File struct is computed from pre-fetched data rather than fetching
 //! individual pieces on demand.
 
+use std::collections::HashSet;
+
 use crate::domain::{
 	addressing::SdPath,
 	content_identity::{ContentIdentity, ContentKind},
@@ -63,6 +65,9 @@ pub struct File {
 
 	/// The semantic tags associated with this file
 	pub tags: Vec<Tag>,
+
+	/// Whether the file is marked as a favorite
+	pub favorite: bool,
 
 	/// A list of sidecars associated with this file
 	pub sidecars: Vec<Sidecar>,
@@ -432,7 +437,15 @@ impl File {
 			Vec::new()
 		};
 
-		let mut file = File::from_entity_model(entry_model, sd_path);
+		let favorite = if let Some(entry_uuid) = entry_model.uuid {
+			Self::favorite_entry_uuids(db, [entry_uuid])
+				.await
+				.ok()
+				.is_some_and(|favorites| favorites.contains(&entry_uuid))
+		} else {
+			false
+		};
+		let mut file = File::from_entity_model(entry_model, sd_path, favorite);
 		file.content_identity = content_identity;
 		file.sidecars = sidecars;
 		if let Some(ref ci) = file.content_identity {
@@ -449,6 +462,7 @@ impl File {
 	pub fn from_entity_model(
 		model: crate::infra::db::entities::entry::Model,
 		sd_path: SdPath,
+		favorite: bool,
 	) -> Self {
 		let is_local = sd_path.is_local();
 
@@ -479,6 +493,7 @@ impl File {
 			content_identity: None,
 			alternate_paths: Vec::new(),
 			tags: Vec::new(),
+			favorite,
 			sidecars: Vec::new(),
 			image_media_data: None,
 			video_media_data: None,
@@ -492,6 +507,38 @@ impl File {
 			is_local,
 			duration_seconds: None,
 		}
+	}
+
+	/// Load entry-scoped favorites for a set of persisted entry UUIDs.
+	pub async fn favorite_entry_uuids(
+		db: &sea_orm::DatabaseConnection,
+		entry_uuids: impl IntoIterator<Item = Uuid>,
+	) -> Result<HashSet<Uuid>, sea_orm::DbErr> {
+		use crate::infra::db::entities::user_metadata;
+		use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+		let entry_uuids = entry_uuids.into_iter().collect::<Vec<_>>();
+		if entry_uuids.is_empty() {
+			return Ok(HashSet::new());
+		}
+
+		let mut favorites = HashSet::new();
+		for chunk in entry_uuids.chunks(900) {
+			favorites.extend(
+				user_metadata::Entity::find()
+					.select_only()
+					.column(user_metadata::Column::EntryUuid)
+					.filter(user_metadata::Column::EntryUuid.is_in(chunk.iter().copied()))
+					.filter(user_metadata::Column::Favorite.eq(true))
+					.into_tuple::<Option<Uuid>>()
+					.all(db)
+					.await?
+					.into_iter()
+					.flatten(),
+			);
+		}
+
+		Ok(favorites)
 	}
 
 	/// Construct a File from ephemeral indexing data (no database)
@@ -573,6 +620,7 @@ impl File {
 			content_identity: None,
 			alternate_paths: Vec::new(),
 			tags: Vec::new(),
+			favorite: false,
 			sidecars: Vec::new(),
 			image_media_data: None,
 			video_media_data: None,
@@ -920,8 +968,12 @@ impl File {
 				}
 			};
 
+			let favorite = metadata_records
+				.iter()
+				.any(|metadata| metadata.favorite && metadata.entry_uuid == Some(entry_uuid));
+
 			// Start with basic File from entity
-			let mut file = File::from_entity_model(entry_model.clone(), sd_path.clone());
+			let mut file = File::from_entity_model(entry_model.clone(), sd_path.clone(), favorite);
 
 			// ALWAYS populate alternate_paths with at least the current file's physical path
 			// This ensures server-side filtering works even for files without content_id
@@ -1003,7 +1055,6 @@ impl File {
 			if let Some(tags) = tags_by_entry.get(&entry_uuid) {
 				file.tags = tags.clone();
 			}
-
 			files.push(file);
 		}
 

@@ -166,6 +166,7 @@ impl UniqueToLocationQuery {
 		let files_query = r#"
 			SELECT
 				e.id as entry_id,
+				e.uuid as entry_uuid,
 				e.name,
 				e.size,
 				e.created_at,
@@ -215,12 +216,19 @@ impl UniqueToLocationQuery {
 				[location_root_entry_id.into()],
 			))
 			.await?;
+		let entry_uuids: Vec<Uuid> = file_rows
+			.iter()
+			.filter_map(|row| row.try_get::<Option<Uuid>>("", "entry_uuid").ok().flatten())
+			.collect();
+		let favorite_entry_uuids =
+			File::favorite_entry_uuids(db, entry_uuids.iter().copied()).await?;
 
 		let mut files = Vec::new();
 		let mut total_size = 0u64;
 
 		for row in file_rows {
 			let entry_id: i32 = row.try_get("", "entry_id").unwrap_or(0);
+			let entry_uuid: Option<Uuid> = row.try_get("", "entry_uuid").ok().flatten();
 			let name: String = row.try_get("", "name").unwrap_or_default();
 			let size: i64 = row.try_get("", "size").unwrap_or(0);
 			let content_hash: String = row.try_get("", "content_hash").unwrap_or_default();
@@ -230,7 +238,7 @@ impl UniqueToLocationQuery {
 			// Create entity model for conversion
 			let entity_model = entry::Model {
 				id: entry_id,
-				uuid: None,
+				uuid: entry_uuid,
 				name: name.clone(),
 				kind: 0, // File
 				extension: name.split('.').last().map(|s| s.to_string()),
@@ -256,7 +264,8 @@ impl UniqueToLocationQuery {
 				path: format!("/unknown/path/{}", name).into(),
 			};
 
-			let file = File::from_entity_model(entity_model, sd_path);
+			let favorite = entry_uuid.is_some_and(|uuid| favorite_entry_uuids.contains(&uuid));
+			let file = File::from_entity_model(entity_model, sd_path, favorite);
 			files.push(file);
 		}
 
