@@ -2222,6 +2222,10 @@ only_images: boolean };
  */
 export type IndexerStats = { files: number; dirs: number; bytes: number; symlinks: number; skipped: number; errors: number };
 
+export type InstallAdapterInput = { directory: string };
+
+export type InstallAdapterOutput = { adapter_id: string };
+
 /**
  * Represents a single integrity difference
  */
@@ -5399,7 +5403,8 @@ export type CoreAction =
 ;
 
 export type LibraryAction =
-     { type: 'adapters.update'; input: UpdateAdapterInput; output: UpdateAdapterOutput }
+     { type: 'adapters.install'; input: InstallAdapterInput; output: InstallAdapterOutput }
+  |  { type: 'adapters.update'; input: UpdateAdapterInput; output: UpdateAdapterOutput }
   |  { type: 'ai.ocr'; input: AiOcrInput; output: ExtractTextOutput }
   |  { type: 'config.library.update'; input: UpdateLibraryConfigInput; output: UpdateLibraryConfigOutput }
   |  { type: 'credentials.store'; input: StoreCredentialInput; output: StoreCredentialOutput }
@@ -5557,6 +5562,7 @@ export const WIRE_METHODS = {
   },
 
   libraryActions: {
+    'adapters.install': 'action:adapters.install.input',
     'adapters.update': 'action:adapters.update.input',
     'ai.ocr': 'action:ai.ocr.input',
     'config.library.update': 'action:config.library.update.input',

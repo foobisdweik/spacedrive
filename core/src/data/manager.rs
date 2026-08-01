@@ -163,6 +163,13 @@ impl SourceManager {
 			.list_adapters_with_updates(source_dir.as_deref())
 	}
 
+	/// Install an adapter from a local directory.
+	pub fn install_adapter(&self, source_dir: &std::path::Path) -> Result<String, String> {
+		self.engine
+			.install_adapter(source_dir)
+			.map_err(|e| format!("Failed to install adapter: {e}"))
+	}
+
 	/// Update an installed adapter from its source directory.
 	pub fn update_adapter(
 		&self,

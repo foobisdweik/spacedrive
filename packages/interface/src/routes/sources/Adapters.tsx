@@ -8,19 +8,22 @@ import {
 	useLibraryQuery,
 	useLibraryMutation,
 } from "../../contexts/SpacedriveContext";
+import { usePlatform } from "../../contexts/PlatformContext";
 import { TopBarPortal, TopBarItem } from "../../TopBar";
-import { CircleButton } from "@spacedrive/primitives";
+import { CircleButton, toast } from "@spacedrive/primitives";
 import { ExpandableSearchButton } from "../explorer/components/ExpandableSearchButton";
 import { SourceTypeIcon } from "../../components/Sources/SourceTypeIcon";
 
 export function AdaptersScreen() {
 	const navigate = useNavigate();
+	const platform = usePlatform();
 	const [searchValue, setSearchValue] = useState("");
 
-	const { data: adaptersRaw, isLoading } = useLibraryQuery({
+	const { data: adaptersRaw, isLoading, refetch } = useLibraryQuery({
 		type: "adapters.list",
 		input: {},
 	});
+	const installAdapter = useLibraryMutation("adapters.install");
 	const adapters = adaptersRaw as any[] | undefined;
 
 	const [selectedAdapter, setSelectedAdapter] = useState<string | null>(null);
@@ -36,6 +39,36 @@ export function AdaptersScreen() {
 				a.data_type.toLowerCase().includes(q),
 		);
 	}, [adapters, searchValue]);
+
+	const handleInstall = async () => {
+		if (!platform.openDirectoryPickerDialog) {
+			toast.error({
+				title: "Adapter Installation Unavailable",
+				body: "Directory selection is not available on this platform",
+			});
+			return;
+		}
+
+		const selected = await platform.openDirectoryPickerDialog({
+			title: "Choose an adapter directory",
+			multiple: false,
+		});
+		if (typeof selected !== "string") return;
+
+		try {
+			const result = await installAdapter.mutateAsync({ directory: selected });
+			await refetch();
+			toast.success({
+				title: "Adapter Installed",
+				body: result.adapter_id,
+			});
+		} catch (error) {
+			toast.error({
+				title: "Adapter Installation Failed",
+				body: String(error),
+			});
+		}
+	};
 
 	return (
 		<>
@@ -84,9 +117,8 @@ export function AdaptersScreen() {
 						>
 							<CircleButton
 								icon={FolderOpen}
-								onClick={() => {
-									/* TODO: Install from directory */
-								}}
+								onClick={handleInstall}
+								disabled={installAdapter.isPending}
 								title="Install adapter from directory"
 							/>
 						</TopBarItem>
