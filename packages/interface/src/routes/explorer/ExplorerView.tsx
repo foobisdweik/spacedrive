@@ -34,7 +34,11 @@ import {SearchView} from './views/SearchView';
 import {SizeView} from './views/SizeView';
 import {ViewSettings, ViewSettingsPanel} from './ViewSettings';
 
-export function ExplorerView() {
+interface ExplorerViewProps {
+	dedicatedSearch?: boolean;
+}
+
+export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
 	const {
 		sidebarVisible,
 		setSidebarVisible,
@@ -84,37 +88,68 @@ export function ExplorerView() {
 
 	const [searchValue, setSearchValue] = useState('');
 	const searchRef = useRef<ExpandableSearchButtonHandle>(null);
+	const searchScope = dedicatedSearch
+		? 'library'
+		: mode.type === 'search'
+			? mode.scope
+			: 'folder';
+	const activeSearchQuery = mode.type === 'search' ? mode.query : null;
 
 	useKeybind('global.focusSearchBar', () => {
 		searchRef.current?.focus();
 	});
 
-	const handleSearchChange = useCallback(
-		(value: string) => {
-			setSearchValue(value);
+	useEffect(() => {
+		if (!dedicatedSearch) return;
 
-			if (value.length >= 2) {
-				const timeoutId = setTimeout(() => {
-					enterSearchMode(value);
-				}, 300);
-				return () => clearTimeout(timeoutId);
-			} else if (value.length === 0 && mode.type === 'search') {
-				exitSearchMode();
-			}
-		},
-		[enterSearchMode, exitSearchMode, mode.type]
-	);
+		const frameId = requestAnimationFrame(() => searchRef.current?.focus());
+		return () => cancelAnimationFrame(frameId);
+	}, [dedicatedSearch]);
+
+	useEffect(() => {
+		if (activeSearchQuery === searchValue) return;
+
+		if (searchValue.length >= 2) {
+			const timeoutId = setTimeout(() => {
+				enterSearchMode(searchValue, searchScope);
+			}, 300);
+
+			return () => clearTimeout(timeoutId);
+		}
+
+		if (searchValue.length > 0 || dedicatedSearch) {
+			enterSearchMode(searchValue, searchScope);
+		} else if (mode.type === 'search') {
+			exitSearchMode();
+		}
+	}, [
+		activeSearchQuery,
+		dedicatedSearch,
+		enterSearchMode,
+		exitSearchMode,
+		mode.type,
+		searchScope,
+		searchValue
+	]);
+
+	const handleSearchChange = useCallback((value: string) => {
+		setSearchValue(value);
+	}, []);
 
 	const handleSearchClear = useCallback(() => {
 		setSearchValue('');
-		exitSearchMode();
-	}, [exitSearchMode]);
+		if (dedicatedSearch) {
+			enterSearchMode('', searchScope);
+		} else {
+			exitSearchMode();
+		}
+	}, [dedicatedSearch, enterSearchMode, exitSearchMode, searchScope]);
 
 	useEffect(() => {
-		if (mode.type !== 'search') {
+		if (mode.type !== 'search' && !dedicatedSearch) {
 			setSearchValue('');
 		}
-	}, [mode.type]);
+	}, [dedicatedSearch, mode.type]);
 
 	useEffect(() => {
 		return () => exitFilteredMode();
@@ -143,9 +178,13 @@ export function ExplorerView() {
 	useKeybind('explorer.setViewMedia', () => handleViewModeChange('media'));
 	useKeybind('explorer.setViewColumn', () => handleViewModeChange('column'));
 	useKeybind('explorer.setViewSize', () => handleViewModeChange('size'));
-	useKeybind('explorer.setViewKnowledge', () => handleViewModeChange('knowledge'), {
-		enabled: import.meta.env.DEV
-	});
+	useKeybind(
+		'explorer.setViewKnowledge',
+		() => handleViewModeChange('knowledge'),
+		{
+			enabled: import.meta.env.DEV
+		}
+	);
 
 	// Memoize submenu content to prevent infinite re-renders
 	const viewModeSubmenu = useMemo(
@@ -264,9 +303,11 @@ export function ExplorerView() {
 								<ExpandableSearchButton
 									ref={searchRef}
 									placeholder={
-										currentPath
-											? 'Search in current folder...'
-											: 'Search...'
+										dedicatedSearch
+											? 'Search this library...'
+											: currentPath
+												? 'Search in current folder...'
+												: 'Search...'
 									}
 									value={searchValue}
 									onChange={handleSearchChange}
@@ -348,7 +389,10 @@ export function ExplorerView() {
 				)}
 			>
 				{(mode.type === 'search' || mode.type === 'filtered') && (
-					<SearchToolbar />
+					<SearchToolbar
+						onClearSearch={handleSearchClear}
+						lockScope={dedicatedSearch}
+					/>
 				)}
 				<div
 					className={clsx(

@@ -22,6 +22,7 @@ import { TasksRoute } from "./Spacebot/routes/TasksRoute";
 import { MemoriesRoute } from "./Spacebot/routes/MemoriesRoute";
 import { AutonomyRoute } from "./Spacebot/routes/AutonomyRoute";
 import { ScheduleRoute } from "./Spacebot/routes/ScheduleRoute";
+import { SearchRoute } from "./routes/search/SearchRoute";
 
 /**
  * Spacebot wrapper component that provides the Spacebot context
@@ -105,11 +106,7 @@ export const explorerRoutes = [
 			},
 			{
 				path: "search",
-				element: (
-					<div className="flex items-center justify-center h-full text-ink">
-						Search (coming soon)
-					</div>
-				),
+				element: <SearchRoute />,
 			},
 			{
 				path: "spacebot",

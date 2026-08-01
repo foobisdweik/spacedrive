@@ -3,7 +3,15 @@ import clsx from 'clsx';
 import {useExplorer} from './context';
 import type {SearchScope} from './context';
 
-export function SearchToolbar() {
+interface SearchToolbarProps {
+	onClearSearch?: () => void;
+	lockScope?: boolean;
+}
+
+export function SearchToolbar({
+	onClearSearch,
+	lockScope = false
+}: SearchToolbarProps) {
 	const explorer = useExplorer();
 
 	if (explorer.mode.type !== 'search' && explorer.mode.type !== 'filtered') {
@@ -57,26 +65,32 @@ export function SearchToolbar() {
 				<span className="text-sidebar-inkDull text-xs font-medium">
 					Search in:
 				</span>
-				<div className="bg-sidebar-box/30 flex items-center gap-1 rounded-lg p-0.5">
-					<ScopeButton
-						active={scope === 'folder'}
-						onClick={() => handleScopeChange('folder')}
-					>
-						This Folder
-					</ScopeButton>
-					<ScopeButton
-						active={scope === 'location'}
-						onClick={() => handleScopeChange('location')}
-					>
-						Location
-					</ScopeButton>
-					<ScopeButton
-						active={scope === 'library'}
-						onClick={() => handleScopeChange('library')}
-					>
+				{lockScope ? (
+					<span className="text-sidebar-ink text-xs font-semibold">
 						Library
-					</ScopeButton>
-				</div>
+					</span>
+				) : (
+					<div className="bg-sidebar-box/30 flex items-center gap-1 rounded-lg p-0.5">
+						<ScopeButton
+							active={scope === 'folder'}
+							onClick={() => handleScopeChange('folder')}
+						>
+							This Folder
+						</ScopeButton>
+						<ScopeButton
+							active={scope === 'location'}
+							onClick={() => handleScopeChange('location')}
+						>
+							Location
+						</ScopeButton>
+						<ScopeButton
+							active={scope === 'library'}
+							onClick={() => handleScopeChange('library')}
+						>
+							Library
+						</ScopeButton>
+					</div>
+				)}
 			</div>
 
 			<div className="bg-sidebar-line/30 h-4 w-px" />
@@ -95,7 +109,7 @@ export function SearchToolbar() {
 			<div className="flex-1" />
 
 			<button
-				onClick={explorer.exitSearchMode}
+				onClick={onClearSearch ?? explorer.exitSearchMode}
 				className={clsx(
 					'flex items-center gap-1.5 rounded-md px-2 py-1',
 					'text-sidebar-inkDull text-xs font-medium',
