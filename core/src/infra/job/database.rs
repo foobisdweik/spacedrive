@@ -287,4 +287,136 @@ impl JobDb {
 
 		Ok(result.rows_affected)
 	}
+
+	/// Delete jobs that have reached a terminal state.
+	pub async fn clear_finished_jobs(&self) -> JobResult<u64> {
+		let txn = self.conn.begin().await?;
+		let terminal_jobs = jobs::Entity::find()
+			.filter(jobs::Column::Status.is_in([
+				JobStatus::Completed.to_string(),
+				JobStatus::Failed.to_string(),
+				JobStatus::Cancelled.to_string(),
+			]))
+			.all(&txn)
+			.await?;
+
+		if terminal_jobs.is_empty() {
+			txn.commit().await?;
+			return Ok(0);
+		}
+
+		let terminal_job_ids = terminal_jobs
+			.into_iter()
+			.map(|job| job.id)
+			.collect::<Vec<_>>();
+
+		let mut rows_affected = 0;
+		for job_ids in terminal_job_ids.chunks(900) {
+			checkpoint::Entity::delete_many()
+				.filter(checkpoint::Column::JobId.is_in(job_ids.iter().cloned()))
+				.exec(&txn)
+				.await?;
+
+			rows_affected += jobs::Entity::delete_many()
+				.filter(jobs::Column::Id.is_in(job_ids.iter().cloned()))
+				.exec(&txn)
+				.await?
+				.rows_affected;
+		}
+
+		txn.commit().await?;
+
+		Ok(rows_affected)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use sea_orm::{ActiveModelTrait, Database, EntityTrait};
+
+	use super::*;
+
+	async fn insert_job(conn: &DatabaseConnection, status: JobStatus) {
+		let now = Utc::now();
+		jobs::ActiveModel {
+			id: Set(status.to_string()),
+			name: Set("test".to_string()),
+			state: Set(Vec::new()),
+			status: Set(status.to_string()),
+			priority: Set(0),
+			progress_type: Set(None),
+			progress_data: Set(None),
+			parent_job_id: Set(None),
+			created_at: Set(now),
+			started_at: Set(None),
+			completed_at: Set(status.is_terminal().then_some(now)),
+			paused_at: Set(None),
+			error_message: Set(None),
+			warnings: Set(None),
+			non_critical_errors: Set(None),
+			metrics: Set(None),
+			action_context: Set(None),
+			action_type: Set(None),
+		}
+		.insert(conn)
+		.await
+		.unwrap();
+	}
+
+	async fn insert_checkpoint(conn: &DatabaseConnection, status: JobStatus) {
+		checkpoint::ActiveModel {
+			job_id: Set(status.to_string()),
+			checkpoint_data: Set(vec![1, 2, 3]),
+			created_at: Set(Utc::now()),
+		}
+		.insert(conn)
+		.await
+		.unwrap();
+	}
+
+	#[tokio::test]
+	async fn clear_finished_jobs_preserves_active_jobs() {
+		let conn = Database::connect("sqlite::memory:").await.unwrap();
+		create_tables(&conn).await.unwrap();
+
+		for status in [
+			JobStatus::Queued,
+			JobStatus::Running,
+			JobStatus::Paused,
+			JobStatus::Completed,
+			JobStatus::Failed,
+			JobStatus::Cancelled,
+		] {
+			insert_job(&conn, status).await;
+			insert_checkpoint(&conn, status).await;
+		}
+
+		let db = JobDb::new(conn);
+		assert_eq!(db.clear_finished_jobs().await.unwrap(), 3);
+
+		let remaining = jobs::Entity::find().all(db.conn()).await.unwrap();
+		let mut remaining_statuses = remaining
+			.into_iter()
+			.map(|job| job.status)
+			.collect::<Vec<_>>();
+		remaining_statuses.sort();
+		let mut expected_statuses = vec![
+			JobStatus::Queued.to_string(),
+			JobStatus::Running.to_string(),
+			JobStatus::Paused.to_string(),
+		];
+		expected_statuses.sort();
+
+		assert_eq!(remaining_statuses, expected_statuses);
+
+		let remaining_checkpoints = checkpoint::Entity::find().all(db.conn()).await.unwrap();
+		let mut remaining_checkpoint_ids = remaining_checkpoints
+			.into_iter()
+			.map(|checkpoint| checkpoint.job_id)
+			.collect::<Vec<_>>();
+		remaining_checkpoint_ids.sort();
+		expected_statuses.sort();
+
+		assert_eq!(remaining_checkpoint_ids, expected_statuses);
+	}
 }

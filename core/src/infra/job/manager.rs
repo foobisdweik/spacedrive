@@ -1231,6 +1231,11 @@ impl JobManager {
 		Ok(all_jobs)
 	}
 
+	/// Clear persisted jobs that have reached a terminal state.
+	pub async fn clear_finished_jobs(&self) -> JobResult<u64> {
+		self.db.clear_finished_jobs().await
+	}
+
 	/// Get detailed information about a specific job
 	pub async fn get_job_info(&self, id: Uuid) -> JobResult<Option<JobInfo>> {
 		let device_id = self
@@ -1782,7 +1787,7 @@ impl JobManager {
 		}
 	}
 
-	/// Cancel a running job and remove it from the database
+	/// Cancel a running job and preserve its terminal history.
 	/// Works on both in-memory jobs and stale database entries
 	pub async fn cancel_job(&self, job_id: JobId) -> JobResult<()> {
 		use database::jobs;
@@ -1826,18 +1831,9 @@ impl JobManager {
 			.one(self.db.conn())
 			.await?;
 
-		// Delete from database if it exists
+		// Preserve cancelled jobs so clients can display and clear their history.
 		if db_job.is_some() {
-			let result = jobs::Entity::delete_by_id(job_id.to_string())
-				.exec(self.db.conn())
-				.await?;
-
-			if result.rows_affected == 0 {
-				return Err(JobError::NotFound(format!(
-					"Job {} not found in database",
-					job_id
-				)));
-			}
+			self.db.update_status(job_id, JobStatus::Cancelled).await?;
 		}
 
 		// If job wasn't in memory OR database, it doesn't exist

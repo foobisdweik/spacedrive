@@ -71,17 +71,103 @@ export class TauriTransport implements Transport {
 			callback(tauriEvent.payload);
 		});
 
+		let active = true;
 		let subscriptionId: any;
+		const closedBeforeReady = new Set<any>();
+		const activeBeforeReady = new Set<any>();
+		let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+		let retryDelay = 250;
+
+		const establishSubscription = async () => {
+			const nextSubscriptionId = await this.invoke("subscribe_to_events", args);
+			subscriptionId = nextSubscriptionId;
+
+			if (activeBeforeReady.delete(nextSubscriptionId)) {
+				retryDelay = 250;
+			}
+			if (closedBeforeReady.delete(nextSubscriptionId)) {
+				scheduleReconnect();
+			}
+		};
+
+		const reconnect = async () => {
+			reconnectTimer = undefined;
+			if (!active) return;
+
+			const closedSubscriptionId = subscriptionId;
+			subscriptionId = undefined;
+			if (closedSubscriptionId !== undefined) {
+				try {
+					await this.invoke("unsubscribe_from_events", {
+						subscriptionId: closedSubscriptionId,
+					});
+				} catch {
+					// The daemon-side reader already closed this subscription.
+				}
+			}
+
+			if (!active) return;
+
+			try {
+				await establishSubscription();
+			} catch (error) {
+				console.warn("[TauriTransport] Failed to reconnect event stream:", error);
+				scheduleReconnect();
+			}
+		};
+
+		const scheduleReconnect = () => {
+			if (!active || reconnectTimer !== undefined) return;
+
+			reconnectTimer = setTimeout(() => {
+				void reconnect();
+			}, retryDelay);
+			retryDelay = Math.min(retryDelay * 2, 5000);
+		};
+
+		const unlistenDisconnected = await this.listen(
+			"daemon-disconnected",
+			(tauriEvent: any) => {
+				const closedSubscriptionId = tauriEvent.payload?.subscriptionId;
+				if (subscriptionId === undefined) {
+					closedBeforeReady.add(closedSubscriptionId);
+				} else if (closedSubscriptionId === subscriptionId) {
+					scheduleReconnect();
+				}
+			},
+		);
+		const unlistenActive = await this.listen(
+			"daemon-subscription-active",
+			(tauriEvent: any) => {
+				const activeSubscriptionId = tauriEvent.payload?.subscriptionId;
+				if (subscriptionId === undefined) {
+					activeBeforeReady.add(activeSubscriptionId);
+				} else if (activeSubscriptionId === subscriptionId) {
+					retryDelay = 250;
+				}
+			},
+		);
+
 		try {
-			subscriptionId = await this.invoke("subscribe_to_events", args);
+			await establishSubscription();
 		} catch (e) {
+			active = false;
 			unlisten();
+			unlistenDisconnected();
+			unlistenActive();
 			throw e;
 		}
 
 		// Return cleanup function that properly unsubscribes
 		return async () => {
+			active = false;
+			if (reconnectTimer !== undefined) {
+				clearTimeout(reconnectTimer);
+			}
 			unlisten();
+			unlistenDisconnected();
+			unlistenActive();
+			if (subscriptionId === undefined) return;
 			try {
 				await this.invoke("unsubscribe_from_events", {
 					subscriptionId,

@@ -9,6 +9,7 @@ interface JobsContextValue {
 	pause: (jobId: string) => Promise<void>;
 	resume: (jobId: string) => Promise<void>;
 	cancel: (jobId: string) => Promise<void>;
+	clearFinished: () => Promise<number>;
 	isLoading: boolean;
 	error: any;
 	getSpeedHistory: (jobId: string) => SpeedSample[];
