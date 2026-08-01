@@ -680,21 +680,39 @@ impl Engine {
 			return Err(Error::AlreadyExists(format!("adapter: {adapter_id}")));
 		}
 
-		let staging_dir = adapters_dir.join(format!(".install-{adapter_id}-{}", Uuid::new_v4()));
+		let staging_root = self.config.data_dir.join(".adapter-install-staging");
+		std::fs::create_dir_all(&staging_root)?;
+		let staging_dir = staging_root.join(format!("{adapter_id}-{}", Uuid::new_v4()));
+		let mut committed = false;
 		let install_result = (|| -> Result<ScriptAdapter> {
 			copy_dir_recursive(source_dir, &staging_dir)?;
-			ScriptAdapter::from_dir(&staging_dir)?;
+			let staged_adapter = ScriptAdapter::from_dir(&staging_dir)?;
+			if staged_adapter.id() != adapter_id {
+				return Err(Error::Other(format!(
+					"adapter ID changed while copying: expected {adapter_id}, found {}",
+					staged_adapter.id()
+				)));
+			}
 			std::fs::rename(&staging_dir, &dest)?;
-			ScriptAdapter::from_dir(&dest)
+			committed = true;
+			let installed_adapter = ScriptAdapter::from_dir(&dest)?;
+			if installed_adapter.id() != adapter_id {
+				return Err(Error::Other(format!(
+					"installed adapter ID does not match destination: expected {adapter_id}, found {}",
+					installed_adapter.id()
+				)));
+			}
+			Ok(installed_adapter)
 		})();
 
 		let adapter = match install_result {
 			Ok(adapter) => adapter,
 			Err(error) => {
-				if let Err(cleanup_error) = std::fs::remove_dir_all(&staging_dir) {
+				let cleanup_path = if committed { &dest } else { &staging_dir };
+				if let Err(cleanup_error) = std::fs::remove_dir_all(cleanup_path) {
 					if cleanup_error.kind() != std::io::ErrorKind::NotFound {
 						tracing::warn!(
-							path = %staging_dir.display(),
+							path = %cleanup_path.display(),
 							error = %cleanup_error,
 							"failed to clean up partial adapter installation"
 						);

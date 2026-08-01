@@ -18,9 +18,8 @@ impl LibraryAction for InstallAdapterAction {
 	type Input = InstallAdapterInput;
 	type Output = InstallAdapterOutput;
 
-	fn from_input(mut input: Self::Input) -> Result<Self, String> {
-		input.directory = input.directory.trim().to_string();
-		if input.directory.is_empty() {
+	fn from_input(input: Self::Input) -> Result<Self, String> {
+		if input.directory.trim().is_empty() {
 			return Err("Adapter directory cannot be empty".to_string());
 		}
 
