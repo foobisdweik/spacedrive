@@ -12,7 +12,7 @@ import {
 	FunnelSimple,
 	GearSix,
 	ListBullets,
-	Palette,
+	Palette
 } from '@phosphor-icons/react';
 import {useSidebarStore} from '@sd/ts-client';
 import type {
@@ -27,6 +27,7 @@ import {memo, useEffect, useState} from 'react';
 import {useNavigate} from 'react-router-dom';
 import {usePlatform} from '../../contexts/PlatformContext';
 import {useSpacedriveClient} from '../../contexts/SpacedriveContext';
+import {useDisplayState} from '../../hooks/useDisplayAsset';
 import {useLibraries} from '../../hooks/useLibraries';
 import {JobList} from '../JobManager/components/JobList';
 import {useJobsContext} from '../JobManager/hooks/JobsContext';
@@ -395,6 +396,7 @@ export function SpacesSidebar({isPreviewActive = false}: SpacesSidebarProps) {
 	const client = useSpacedriveClient();
 	const platform = usePlatform();
 	const navigate = useNavigate();
+	const {oled} = useDisplayState();
 	const {data: libraries} = useLibraries();
 	const [currentLibraryId, setCurrentLibraryId] = useState<string | null>(
 		() => client.getCurrentLibraryId()
@@ -459,22 +461,29 @@ export function SpacesSidebar({isPreviewActive = false}: SpacesSidebarProps) {
 	}, [currentSpace, currentSpaceId, setCurrentSpace]);
 
 	const {data: layoutData} = useSpaceLayout(currentSpace?.id ?? null);
-	const layout = layoutData as { space_items: SpaceItemType[]; groups: Array<{ group: SpaceGroupType; items: SpaceItemType[] }> } | undefined;
+	const layout = layoutData as
+		| {
+				space_items: SpaceItemType[];
+				groups: Array<{group: SpaceGroupType; items: SpaceItemType[]}>;
+		  }
+		| undefined;
 
 	return (
 		<div className="flex h-full w-[220px] min-w-[176px] max-w-[300px] flex-col bg-transparent p-2">
 			<div
 				className={clsx(
 					'flex h-full flex-col overflow-hidden rounded-2xl',
-					isPreviewActive
-						? 'bg-sidebar/80 backdrop-blur-2xl'
-						: 'bg-sidebar/65'
+					oled
+						? 'bg-sidebar'
+						: isPreviewActive
+							? 'bg-sidebar/80 backdrop-blur-2xl'
+							: 'bg-sidebar/65'
 				)}
 			>
 				<nav
 					className={clsx(
-						"relative z-[51] flex h-full flex-col gap-2.5 p-2.5 pb-2",
-						platform.platform === "tauri" && "pt-[43px]",
+						'relative z-[51] flex h-full flex-col gap-2.5 p-2.5 pb-2',
+						platform.platform === 'tauri' && 'pt-[43px]'
 					)}
 				>
 					{/* Space Switcher */}
