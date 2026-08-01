@@ -1093,17 +1093,6 @@ impl IndexerJob {
 				"Failed to load persistent entry UUIDs for favorite state: {error}"
 			))
 		})?;
-		let favorite_entry_uuids = File::favorite_entry_uuids(
-			ctx.library().db().conn(),
-			persistent_entry_uuids.values().copied(),
-		)
-		.await
-		.map_err(|error| {
-			JobError::execution(format!(
-				"Failed to load favorites for index events: {error}"
-			))
-		})?;
-
 		while let Some(batch) = state.entry_batches.pop() {
 			ctx.check_interrupt().await?;
 
@@ -1178,6 +1167,19 @@ impl IndexerJob {
 			// Volume indexing only needs job progress events (emitted above)
 			// Directory browsing needs ResourceChangedBatch events to populate UI
 			if !is_volume_indexing {
+				let favorite_entry_uuids = File::favorite_entry_uuids(
+					ctx.library().db().conn(),
+					batch
+						.iter()
+						.filter_map(|entry| persistent_entry_uuids.get(&entry.path).copied()),
+				)
+				.await
+				.map_err(|error| {
+					JobError::execution(format!(
+						"Failed to load favorites for index events: {error}"
+					))
+				})?;
+
 				// Build event files using the UUID map (no lock acquisitions)
 				let files_for_event: Vec<File> = batch
 					.iter()

@@ -522,17 +522,23 @@ impl File {
 			return Ok(HashSet::new());
 		}
 
-		Ok(user_metadata::Entity::find()
-			.select_only()
-			.column(user_metadata::Column::EntryUuid)
-			.filter(user_metadata::Column::EntryUuid.is_in(entry_uuids))
-			.filter(user_metadata::Column::Favorite.eq(true))
-			.into_tuple::<Option<Uuid>>()
-			.all(db)
-			.await?
-			.into_iter()
-			.flatten()
-			.collect())
+		let mut favorites = HashSet::new();
+		for chunk in entry_uuids.chunks(900) {
+			favorites.extend(
+				user_metadata::Entity::find()
+					.select_only()
+					.column(user_metadata::Column::EntryUuid)
+					.filter(user_metadata::Column::EntryUuid.is_in(chunk.iter().copied()))
+					.filter(user_metadata::Column::Favorite.eq(true))
+					.into_tuple::<Option<Uuid>>()
+					.all(db)
+					.await?
+					.into_iter()
+					.flatten(),
+			);
+		}
+
+		Ok(favorites)
 	}
 
 	/// Construct a File from ephemeral indexing data (no database)

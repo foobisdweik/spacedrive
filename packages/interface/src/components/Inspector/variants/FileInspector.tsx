@@ -30,7 +30,7 @@ import type {File, SdPath} from '@sd/ts-client';
 import {toast} from '@spacedrive/primitives';
 import clsx from 'clsx';
 import {LocationMap} from '../LocationMap';
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import {useJobsContext} from '../../../components/JobManager/hooks/JobsContext';
 import {TagSelectorButton} from '../../../components/Tags';
 import {usePlatform} from '../../../contexts/PlatformContext';
@@ -168,9 +168,11 @@ export function FileInspector({file}: FileInspectorProps) {
 function FileQuickActions({file}: {file: File}) {
 	const platform = usePlatform();
 	const [isFavorite, setIsFavorite] = useState(file.favorite);
+	const currentFileId = useRef(file.id);
 	const setFavorite = useLibraryMutation('metadata.set_favorite');
 
 	useEffect(() => {
+		currentFileId.current = file.id;
 		setIsFavorite(file.favorite);
 	}, [file.favorite, file.id]);
 
@@ -200,6 +202,7 @@ function FileQuickActions({file}: {file: File}) {
 	const canShare = !!physicalPath && !!platform.shareFiles;
 
 	const handleFavorite = async () => {
+		const requestFileId = file.id;
 		const nextFavorite = !isFavorite;
 		setIsFavorite(nextFavorite);
 
@@ -209,6 +212,7 @@ function FileQuickActions({file}: {file: File}) {
 				favorite: nextFavorite
 			});
 		} catch (error) {
+			if (currentFileId.current !== requestFileId) return;
 			setIsFavorite(isFavorite);
 			toast.error({
 				title: 'Favorite Update Failed',

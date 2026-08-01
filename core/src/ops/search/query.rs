@@ -881,6 +881,7 @@ impl FileSearchQuery {
 		entry_model: entry::Model,
 		db: &DatabaseConnection,
 		score: f32,
+		favorite: bool,
 	) -> QueryResult<Option<crate::ops::search::output::FileSearchResult>> {
 		// Skip entries without volume_id (can't determine device slug)
 		let Some(volume_id) = entry_model.volume_id else {
@@ -911,14 +912,6 @@ impl FileSearchQuery {
 		let sd_path = crate::domain::addressing::SdPath::Physical {
 			device_slug: device.slug,
 			path: full_path.into(),
-		};
-
-		let favorite = if let Some(entry_uuid) = entry_model.uuid {
-			crate::domain::File::favorite_entry_uuids(db, [entry_uuid])
-				.await?
-				.contains(&entry_uuid)
-		} else {
-			false
 		};
 
 		// Use File::from_entity_model to properly construct the file
@@ -1073,12 +1066,20 @@ impl FileSearchQuery {
 		// Index content identities by entry content_id for per-entry lookup
 		let identities_by_content_id: std::collections::HashMap<i32, &content_identity::Model> =
 			content_identities.iter().map(|ci| (ci.id, ci)).collect();
+		let favorite_entry_uuids =
+			File::favorite_entry_uuids(db, entries.iter().filter_map(|entry| entry.uuid)).await?;
 
 		// Convert entries to FileSearchResult, hydrating each with content_identity
 		let mut results = Vec::new();
 		for entry_model in entries {
 			let content_id = entry_model.content_id;
-			if let Some(mut result) = self.entry_to_search_result(entry_model, db, 1.0).await? {
+			let favorite = entry_model
+				.uuid
+				.is_some_and(|uuid| favorite_entry_uuids.contains(&uuid));
+			if let Some(mut result) = self
+				.entry_to_search_result(entry_model, db, 1.0, favorite)
+				.await?
+			{
 				if let Some(cid) = content_id {
 					if let Some(ci) = identities_by_content_id.get(&cid) {
 						let kind = kinds_by_id

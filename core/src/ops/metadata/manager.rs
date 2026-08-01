@@ -520,23 +520,10 @@ impl UserMetadataManager {
 		let canonical_index = existing
 			.iter()
 			.position(|metadata| metadata.uuid == canonical_uuid);
-		let mut removed_for_sync = Vec::new();
+		let mut updated_for_sync = Vec::new();
 		let (persisted, created) = if let Some(index) = canonical_index {
 			let metadata_model = existing.swap_remove(index);
 			let mut active_model: user_metadata::ActiveModel = metadata_model.into();
-			active_model.favorite = Set(is_favorite);
-			active_model.updated_at = Set(Utc::now());
-
-			let updated = active_model
-				.update(&*db)
-				.await
-				.map_err(|e| TagError::DatabaseError(e.to_string()))?;
-
-			(updated, false)
-		} else if let Some(metadata_model) = existing.pop() {
-			removed_for_sync.push(metadata_model.clone());
-			let mut active_model: user_metadata::ActiveModel = metadata_model.into();
-			active_model.uuid = Set(canonical_uuid);
 			active_model.favorite = Set(is_favorite);
 			active_model.updated_at = Set(Utc::now());
 
@@ -567,15 +554,18 @@ impl UserMetadataManager {
 			(created, true)
 		};
 
-		for duplicate in existing {
-			user_metadata::Entity::delete_by_id(duplicate.id)
-				.exec(&*db)
+		for metadata in existing.into_iter().filter(|metadata| metadata.favorite) {
+			let mut active_model: user_metadata::ActiveModel = metadata.into();
+			active_model.favorite = Set(false);
+			active_model.updated_at = Set(Utc::now());
+			let updated = active_model
+				.update(&*db)
 				.await
 				.map_err(|e| TagError::DatabaseError(e.to_string()))?;
-			removed_for_sync.push(duplicate);
+			updated_for_sync.push(updated);
 		}
 
-		Ok((persisted, created, removed_for_sync))
+		Ok((persisted, created, updated_for_sync))
 	}
 
 	/// Apply a single semantic tag to an entry
@@ -750,12 +740,12 @@ mod tests {
 		let manager = UserMetadataManager::new(Arc::new(db.conn().clone()));
 		let entry_uuid = Uuid::new_v4();
 
-		let (created, was_created, removed) = manager
+		let (created, was_created, updated) = manager
 			.set_favorite(entry_uuid, true)
 			.await
 			.expect("favorite entry");
 		assert!(was_created);
-		assert!(removed.is_empty());
+		assert!(updated.is_empty());
 		assert!(created.favorite);
 		assert_eq!(created.entry_uuid, Some(entry_uuid));
 		assert_eq!(
@@ -763,13 +753,61 @@ mod tests {
 			Uuid::new_v5(&Uuid::NAMESPACE_OID, entry_uuid.as_bytes())
 		);
 
-		let (updated, was_created, removed) = manager
+		let (updated, was_created, secondary_updates) = manager
 			.set_favorite(entry_uuid, false)
 			.await
 			.expect("unfavorite entry");
 		assert!(!was_created);
-		assert!(removed.is_empty());
+		assert!(secondary_updates.is_empty());
 		assert_eq!(updated.uuid, created.uuid);
 		assert!(!updated.favorite);
+	}
+
+	#[tokio::test]
+	async fn set_favorite_preserves_existing_metadata_identity() {
+		let temp = tempfile::tempdir().expect("create temp directory");
+		let db = crate::infra::db::Database::create(&temp.path().join("tagged-favorite.db"))
+			.await
+			.expect("create database");
+		db.migrate().await.expect("migrate database");
+
+		let entry_uuid = Uuid::new_v4();
+		let existing_uuid = Uuid::new_v4();
+		let now = Utc::now();
+		user_metadata::ActiveModel {
+			id: NotSet,
+			uuid: Set(existing_uuid),
+			entry_uuid: Set(Some(entry_uuid)),
+			content_identity_uuid: Set(None),
+			notes: Set(Some("metadata with dependent state".to_string())),
+			favorite: Set(false),
+			hidden: Set(false),
+			custom_data: Set(serde_json::json!({})),
+			created_at: Set(now),
+			updated_at: Set(now),
+		}
+		.insert(db.conn())
+		.await
+		.expect("insert existing metadata");
+
+		let manager = UserMetadataManager::new(Arc::new(db.conn().clone()));
+		let (favorite, was_created, secondary_updates) = manager
+			.set_favorite(entry_uuid, true)
+			.await
+			.expect("favorite entry");
+
+		assert!(was_created);
+		assert!(secondary_updates.is_empty());
+		assert_ne!(favorite.uuid, existing_uuid);
+		let existing = user_metadata::Entity::find()
+			.filter(user_metadata::Column::Uuid.eq(existing_uuid))
+			.one(db.conn())
+			.await
+			.expect("query existing metadata")
+			.expect("existing metadata remains");
+		assert_eq!(
+			existing.notes.as_deref(),
+			Some("metadata with dependent state")
+		);
 	}
 }

@@ -49,18 +49,18 @@ impl LibraryAction for SetFavoriteAction {
 		}
 
 		let manager = UserMetadataManager::new(Arc::new(db.clone()));
-		let (metadata, created, removed_duplicates) = manager
+		let (metadata, created, updated_metadata) = manager
 			.set_favorite(self.input.entry_uuid, self.input.favorite)
 			.await
 			.map_err(|error| ActionError::Internal(error.to_string()))?;
 
-		for duplicate in removed_duplicates {
+		for updated in updated_metadata {
 			library
-				.sync_model(&duplicate, ChangeType::Delete)
+				.sync_model(&updated, ChangeType::Update)
 				.await
 				.map_err(|error| {
 					ActionError::Internal(format!(
-						"Failed to sync duplicate favorite metadata deletion: {error}"
+						"Failed to sync existing favorite metadata update: {error}"
 					))
 				})?;
 		}
