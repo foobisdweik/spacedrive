@@ -29,7 +29,7 @@ use sea_orm::ConnectionTrait;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock as StdRwLock};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OnceCell as AsyncOnceCell, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -66,7 +66,7 @@ pub struct Library {
 	file_sync_service: OnceCell<Arc<crate::service::file_sync::FileSyncService>>,
 
 	/// Source manager for archive data (emails, notes, etc.) - initialized lazily
-	source_manager: OnceCell<Arc<crate::data::manager::SourceManager>>,
+	source_manager: AsyncOnceCell<Arc<crate::data::manager::SourceManager>>,
 
 	/// Library-specific device cache (slug → UUID)
 	/// Loaded from this library's devices table for per-library device resolution
@@ -138,21 +138,16 @@ impl Library {
 
 	/// Initialize the source manager (called during library setup)
 	pub async fn init_source_manager(self: &Arc<Self>) -> Result<()> {
-		if self.source_manager.get().is_some() {
-			warn!(
-				"Source manager already initialized for library {}",
-				self.id()
-			);
-			return Ok(());
-		}
-
-		let source_manager = crate::data::manager::SourceManager::new(self.path.clone())
-			.await
-			.map_err(|e| LibraryError::Other(format!("Failed to create source manager: {e}")))?;
-
 		self.source_manager
-			.set(Arc::new(source_manager))
-			.map_err(|_| LibraryError::Other("Source manager already initialized".to_string()))?;
+			.get_or_try_init(|| async {
+				crate::data::manager::SourceManager::new(self.path.clone())
+					.await
+					.map(Arc::new)
+					.map_err(|e| {
+						LibraryError::Other(format!("Failed to create source manager: {e}"))
+					})
+			})
+			.await?;
 
 		debug!("Source manager initialized for library {}", self.id());
 

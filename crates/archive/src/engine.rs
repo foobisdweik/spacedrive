@@ -6,6 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use uuid::Uuid;
+
 use crate::adapter::script::ScriptAdapter;
 use crate::adapter::{Adapter, AdapterRegistry, SyncReport};
 use crate::embed::EmbeddingModel;
@@ -666,21 +668,76 @@ impl Engine {
 	pub fn install_adapter(&self, source_dir: &std::path::Path) -> Result<String> {
 		let adapter = ScriptAdapter::from_dir(source_dir)?;
 		let adapter_id = adapter.id().to_string();
+		if !is_safe_adapter_id(&adapter_id) {
+			return Err(Error::Other(format!(
+				"adapter ID must be a single filename component: {adapter_id}"
+			)));
+		}
 
-		let dest = self.config.data_dir.join("adapters").join(&adapter_id);
+		let adapters_dir = self.config.data_dir.join("adapters");
+		let dest = adapters_dir.join(&adapter_id);
 		if dest.exists() {
 			return Err(Error::AlreadyExists(format!("adapter: {adapter_id}")));
 		}
 
-		copy_dir_recursive(source_dir, &dest)?;
+		let staging_root = self.config.data_dir.join(".adapter-install-staging");
+		std::fs::create_dir_all(&staging_root)?;
+		let staging_dir = staging_root.join(format!("{adapter_id}-{}", Uuid::new_v4()));
+		let mut committed = false;
+		let install_result = (|| -> Result<ScriptAdapter> {
+			copy_dir_recursive(source_dir, &staging_dir)?;
+			let staged_adapter = ScriptAdapter::from_dir(&staging_dir)?;
+			if staged_adapter.id() != adapter_id {
+				return Err(Error::Other(format!(
+					"adapter ID changed while copying: expected {adapter_id}, found {}",
+					staged_adapter.id()
+				)));
+			}
+			std::fs::rename(&staging_dir, &dest)?;
+			committed = true;
+			let installed_adapter = ScriptAdapter::from_dir(&dest)?;
+			if installed_adapter.id() != adapter_id {
+				return Err(Error::Other(format!(
+					"installed adapter ID does not match destination: expected {adapter_id}, found {}",
+					installed_adapter.id()
+				)));
+			}
+			Ok(installed_adapter)
+		})();
 
-		let adapter = ScriptAdapter::from_dir(&dest)?;
+		let adapter = match install_result {
+			Ok(adapter) => adapter,
+			Err(error) => {
+				let cleanup_path = if committed { &dest } else { &staging_dir };
+				if let Err(cleanup_error) = std::fs::remove_dir_all(cleanup_path) {
+					if cleanup_error.kind() != std::io::ErrorKind::NotFound {
+						tracing::warn!(
+							path = %cleanup_path.display(),
+							error = %cleanup_error,
+							"failed to clean up partial adapter installation"
+						);
+					}
+				}
+				return Err(error);
+			}
+		};
 		self.adapters.register(Arc::new(adapter));
 
 		tracing::info!(adapter_id = %adapter_id, "installed adapter");
 
 		Ok(adapter_id)
 	}
+}
+
+fn is_safe_adapter_id(adapter_id: &str) -> bool {
+	!adapter_id.is_empty()
+		&& adapter_id != "."
+		&& adapter_id != ".."
+		&& !adapter_id.contains(['/', '\\'])
+		&& matches!(
+			std::path::Path::new(adapter_id).components().next(),
+			Some(std::path::Component::Normal(_))
+		)
 }
 
 /// Recursively copy a directory.
@@ -698,4 +755,26 @@ fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<(
 		}
 	}
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::is_safe_adapter_id;
+
+	#[test]
+	fn adapter_ids_are_single_safe_filename_components() {
+		assert!(is_safe_adapter_id("github"));
+		assert!(is_safe_adapter_id("my-adapter"));
+
+		for adapter_id in [
+			"",
+			".",
+			"..",
+			"../escape",
+			"nested/adapter",
+			r"nested\adapter",
+		] {
+			assert!(!is_safe_adapter_id(adapter_id), "{adapter_id}");
+		}
+	}
 }
