@@ -509,11 +509,15 @@ impl UserMetadataManager {
 		entry_uuid: Uuid,
 		is_favorite: bool,
 	) -> Result<(user_metadata::Model, bool, Vec<user_metadata::Model>), TagError> {
-		let db = &*self.db;
+		let txn = self
+			.db
+			.begin()
+			.await
+			.map_err(|e| TagError::DatabaseError(e.to_string()))?;
 		let canonical_uuid = Uuid::new_v5(&Uuid::NAMESPACE_OID, entry_uuid.as_bytes());
 		let mut existing = user_metadata::Entity::find()
 			.filter(user_metadata::Column::EntryUuid.eq(entry_uuid))
-			.all(&*db)
+			.all(&txn)
 			.await
 			.map_err(|e| TagError::DatabaseError(e.to_string()))?;
 
@@ -528,7 +532,7 @@ impl UserMetadataManager {
 			active_model.updated_at = Set(Utc::now());
 
 			let updated = active_model
-				.update(&*db)
+				.update(&txn)
 				.await
 				.map_err(|e| TagError::DatabaseError(e.to_string()))?;
 
@@ -547,7 +551,7 @@ impl UserMetadataManager {
 				created_at: Set(now),
 				updated_at: Set(now),
 			}
-			.insert(&*db)
+			.insert(&txn)
 			.await
 			.map_err(|e| TagError::DatabaseError(e.to_string()))?;
 
@@ -559,11 +563,15 @@ impl UserMetadataManager {
 			active_model.favorite = Set(false);
 			active_model.updated_at = Set(Utc::now());
 			let updated = active_model
-				.update(&*db)
+				.update(&txn)
 				.await
 				.map_err(|e| TagError::DatabaseError(e.to_string()))?;
 			updated_for_sync.push(updated);
 		}
+
+		txn.commit()
+			.await
+			.map_err(|e| TagError::DatabaseError(e.to_string()))?;
 
 		Ok((persisted, created, updated_for_sync))
 	}

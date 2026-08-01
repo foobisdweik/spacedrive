@@ -1330,7 +1330,7 @@ async fn reconcile_ephemeral_uuids_with_libraries(
 					path = %root_path.display(),
 					"reconciled UUIDs for ephemeral path"
 				);
-				emit_uuid_reconciliation_events(&cache, &event_bus, &changes).await;
+				emit_uuid_reconciliation_events(&cache, &event_bus, &db, &changes).await;
 			}
 			Ok(_) => {}
 			Err(e) => {
@@ -1349,6 +1349,7 @@ async fn reconcile_ephemeral_uuids_with_libraries(
 async fn emit_uuid_reconciliation_events(
 	cache: &crate::ops::indexing::ephemeral::EphemeralIndexCache,
 	event_bus: &crate::infra::event::EventBus,
+	db: &sea_orm::DatabaseConnection,
 	changes: &[crate::ops::indexing::reconciliation::ReconciledUuid],
 ) {
 	// Only entries that previously had a different UUID can be cached by the
@@ -1357,6 +1358,20 @@ async fn emit_uuid_reconciliation_events(
 	if stale.is_empty() {
 		return;
 	}
+
+	let favorite_entry_uuids =
+		match crate::domain::File::favorite_entry_uuids(db, stale.iter().map(|change| change.uuid))
+			.await
+		{
+			Ok(favorites) => favorites,
+			Err(error) => {
+				tracing::warn!(
+					error = %error,
+					"failed to load favorites for UUID reconciliation events"
+				);
+				Default::default()
+			}
+		};
 
 	let index = cache.get_global_index();
 	let index = index.read().await;
@@ -1370,6 +1385,7 @@ async fn emit_uuid_reconciliation_events(
 		let sd_path = crate::domain::addressing::SdPath::local(change.path.clone());
 		let mut file = crate::domain::File::from_ephemeral(change.uuid, &metadata, sd_path);
 		file.content_kind = index.get_content_kind(&change.path);
+		file.favorite = favorite_entry_uuids.contains(&change.uuid);
 		files.push(file);
 		if let Some(previous) = change.previous {
 			alternate_ids.push(previous);

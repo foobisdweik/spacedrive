@@ -55,17 +55,16 @@ impl LibraryAction for SetFavoriteAction {
 			.map_err(|error| ActionError::Internal(error.to_string()))?;
 
 		for updated in updated_metadata {
-			library
-				.sync_model(&updated, ChangeType::Update)
-				.await
-				.map_err(|error| {
-					ActionError::Internal(format!(
-						"Failed to sync existing favorite metadata update: {error}"
-					))
-				})?;
+			if let Err(error) = library.sync_model(&updated, ChangeType::Update).await {
+				tracing::warn!(
+					error = %error,
+					metadata_uuid = %updated.uuid,
+					"favorite metadata persisted but its sync update could not be queued"
+				);
+			}
 		}
 
-		library
+		if let Err(error) = library
 			.sync_model(
 				&metadata,
 				if created {
@@ -75,17 +74,25 @@ impl LibraryAction for SetFavoriteAction {
 				},
 			)
 			.await
-			.map_err(|error| {
-				ActionError::Internal(format!("Failed to sync favorite metadata: {error}"))
-			})?;
+		{
+			tracing::warn!(
+				error = %error,
+				metadata_uuid = %metadata.uuid,
+				"favorite metadata persisted but its sync change could not be queued"
+			);
+		}
 
 		let resource_manager = ResourceManager::new(Arc::new(db.clone()), context.events.clone());
-		resource_manager
+		if let Err(error) = resource_manager
 			.emit_resource_events("file", vec![self.input.entry_uuid])
 			.await
-			.map_err(|error| {
-				ActionError::Internal(format!("Failed to emit favorite update: {error}"))
-			})?;
+		{
+			tracing::warn!(
+				error = %error,
+				entry_uuid = %self.input.entry_uuid,
+				"favorite metadata persisted but its resource update could not be emitted"
+			);
+		}
 
 		Ok(SetFavoriteOutput {
 			entry_uuid: self.input.entry_uuid,

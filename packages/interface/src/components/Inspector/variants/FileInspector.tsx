@@ -35,7 +35,7 @@ import {useJobsContext} from '../../../components/JobManager/hooks/JobsContext';
 import {TagSelectorButton} from '../../../components/Tags';
 import {usePlatform} from '../../../contexts/PlatformContext';
 import {useServer} from '../../../contexts/ServerContext';
-import { getContentKind } from "@sd/ts-client";
+import {getContentKind, isVirtualFile} from '@sd/ts-client';
 import {
 	getDeviceIcon,
 	useLibraryMutation,
@@ -189,6 +189,7 @@ function FileQuickActions({file}: {file: File}) {
 	const isVideo = getContentKind(file) === 'video';
 	const isAudio = getContentKind(file) === 'audio';
 	const showJobsButton = isImage || isVideo || isAudio;
+	const canFavorite = !isVirtualFile(file);
 
 	// Get physical path for sharing
 	const getPhysicalPath = (): string | null => {
@@ -326,22 +327,23 @@ function FileQuickActions({file}: {file: File}) {
 
 	return (
 		<div className="flex items-center gap-1.5">
-			{/* Favorite Button */}
-			<button
-				type="button"
-				onClick={handleFavorite}
-				disabled={setFavorite.isPending}
-				className={clsx(
-					'flex size-7 items-center justify-center rounded-full border transition-all active:scale-95',
-					setFavorite.isPending && 'cursor-wait opacity-60',
-					isFavorite
-						? 'border-accent/30 bg-accent/20 text-accent'
-						: 'border-sidebar-line/30 bg-sidebar-box/20 text-sidebar-inkDull hover:bg-sidebar-box/30 hover:text-sidebar-ink'
-				)}
-				title={isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-			>
-				<Heart size={14} weight={isFavorite ? 'fill' : 'bold'} />
-			</button>
+			{canFavorite && (
+				<button
+					type="button"
+					onClick={handleFavorite}
+					disabled={setFavorite.isPending}
+					className={clsx(
+						'flex size-7 items-center justify-center rounded-full border transition-all active:scale-95',
+						setFavorite.isPending && 'cursor-wait opacity-60',
+						isFavorite
+							? 'border-accent/30 bg-accent/20 text-accent'
+							: 'border-sidebar-line/30 bg-sidebar-box/20 text-sidebar-inkDull hover:bg-sidebar-box/30 hover:text-sidebar-ink'
+					)}
+					title={isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+				>
+					<Heart size={14} weight={isFavorite ? 'fill' : 'bold'} />
+				</button>
+			)}
 
 			{/* Share Button */}
 			{canShare && (
