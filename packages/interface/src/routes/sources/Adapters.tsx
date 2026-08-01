@@ -57,7 +57,10 @@ export function AdaptersScreen() {
 			if (typeof selected !== "string") return;
 
 			const result = await installAdapter.mutateAsync({ directory: selected });
-			await refetch();
+			const refresh = await refetch();
+			if (refresh.isError) {
+				throw refresh.error ?? new Error("Failed to refresh installed adapters");
+			}
 			toast.success({
 				title: "Adapter Installed",
 				body: result.adapter_id,
