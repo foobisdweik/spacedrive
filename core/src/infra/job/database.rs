@@ -310,19 +310,23 @@ impl JobDb {
 			.map(|job| job.id)
 			.collect::<Vec<_>>();
 
-		checkpoint::Entity::delete_many()
-			.filter(checkpoint::Column::JobId.is_in(terminal_job_ids.clone()))
-			.exec(&txn)
-			.await?;
+		let mut rows_affected = 0;
+		for job_ids in terminal_job_ids.chunks(900) {
+			checkpoint::Entity::delete_many()
+				.filter(checkpoint::Column::JobId.is_in(job_ids.iter().cloned()))
+				.exec(&txn)
+				.await?;
 
-		let result = jobs::Entity::delete_many()
-			.filter(jobs::Column::Id.is_in(terminal_job_ids))
-			.exec(&txn)
-			.await?;
+			rows_affected += jobs::Entity::delete_many()
+				.filter(jobs::Column::Id.is_in(job_ids.iter().cloned()))
+				.exec(&txn)
+				.await?
+				.rows_affected;
+		}
 
 		txn.commit().await?;
 
-		Ok(result.rows_affected)
+		Ok(rows_affected)
 	}
 }
 

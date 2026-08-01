@@ -74,6 +74,7 @@ export class TauriTransport implements Transport {
 		let active = true;
 		let subscriptionId: any;
 		let closedBeforeReady: any;
+		const activeBeforeReady = new Set<any>();
 		let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 		let retryDelay = 250;
 
@@ -81,11 +82,12 @@ export class TauriTransport implements Transport {
 			const nextSubscriptionId = await this.invoke("subscribe_to_events", args);
 			subscriptionId = nextSubscriptionId;
 
+			if (activeBeforeReady.delete(nextSubscriptionId)) {
+				retryDelay = 250;
+			}
 			if (closedBeforeReady === nextSubscriptionId) {
 				closedBeforeReady = undefined;
 				scheduleReconnect();
-			} else {
-				retryDelay = 250;
 			}
 		};
 
@@ -135,6 +137,17 @@ export class TauriTransport implements Transport {
 				}
 			},
 		);
+		const unlistenActive = await this.listen(
+			"daemon-subscription-active",
+			(tauriEvent: any) => {
+				const activeSubscriptionId = tauriEvent.payload?.subscriptionId;
+				if (subscriptionId === undefined) {
+					activeBeforeReady.add(activeSubscriptionId);
+				} else if (activeSubscriptionId === subscriptionId) {
+					retryDelay = 250;
+				}
+			},
+		);
 
 		try {
 			await establishSubscription();
@@ -142,6 +155,7 @@ export class TauriTransport implements Transport {
 			active = false;
 			unlisten();
 			unlistenDisconnected();
+			unlistenActive();
 			throw e;
 		}
 
@@ -153,6 +167,7 @@ export class TauriTransport implements Transport {
 			}
 			unlisten();
 			unlistenDisconnected();
+			unlistenActive();
 			if (subscriptionId === undefined) return;
 			try {
 				await this.invoke("unsubscribe_from_events", {

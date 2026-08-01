@@ -758,6 +758,10 @@ async fn subscribe_to_events(
 			);
 			return;
 		}
+		let _ = app.emit(
+			"daemon-subscription-active",
+			json!({ "subscriptionId": subscription_id }),
+		);
 
 		tracing::info!(
 			subscription_id = subscription_id,
