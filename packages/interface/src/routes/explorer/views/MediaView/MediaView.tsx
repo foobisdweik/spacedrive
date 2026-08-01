@@ -371,7 +371,7 @@ export function MediaView() {
 	}
 
 	// Show empty state
-	if (!currentPath) {
+	if (!currentPath && !isSearchMode) {
 		return (
 			<div className="flex flex-col items-center justify-center h-full text-ink-dull gap-2">
 				<div className="text-lg">No location selected</div>

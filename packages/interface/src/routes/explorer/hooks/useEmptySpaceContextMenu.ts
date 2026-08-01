@@ -6,14 +6,16 @@ import { useClipboard } from "../../../hooks/useClipboard";
 import { useFileOperationDialog } from "../../../components/modals/FileOperationModal";
 
 export function useEmptySpaceContextMenu() {
-	const { currentPath } = useExplorer();
+	const { currentPath, mode } = useExplorer();
 	const createFolder = useLibraryMutation("files.createFolder");
 	const createFile = useLibraryMutation("files.createFile");
 	const clipboard = useClipboard();
 	const openFileOperation = useFileOperationDialog();
+	const canMutateCurrentDirectory =
+		!!currentPath && !(mode.type === "search" && mode.scope === "library");
 
 	const createFolderWithUniqueName = async () => {
-		if (!currentPath) return;
+		if (!canMutateCurrentDirectory || !currentPath) return;
 
 		for (let index = 0; index < 100; index++) {
 			const name = uniqueName("Untitled Folder", index);
@@ -35,7 +37,7 @@ export function useEmptySpaceContextMenu() {
 	};
 
 	const createFileWithUniqueName = async () => {
-		if (!currentPath) return;
+		if (!canMutateCurrentDirectory || !currentPath) return;
 
 		for (let index = 0; index < 100; index++) {
 			const name = uniqueName("Untitled", index);
@@ -61,7 +63,7 @@ export function useEmptySpaceContextMenu() {
 				icon: FolderPlus,
 				label: "New Folder",
 				onClick: async () => {
-					if (!currentPath) return;
+					if (!canMutateCurrentDirectory || !currentPath) return;
 					try {
 						await createFolderWithUniqueName();
 					} catch (err) {
@@ -69,13 +71,13 @@ export function useEmptySpaceContextMenu() {
 						alert(`Failed to create folder: ${err}`);
 					}
 				},
-				condition: () => !!currentPath,
+				condition: () => canMutateCurrentDirectory,
 			},
 			{
 				icon: FilePlus,
 				label: "New File",
 				onClick: async () => {
-					if (!currentPath) return;
+					if (!canMutateCurrentDirectory || !currentPath) return;
 					try {
 						await createFileWithUniqueName();
 					} catch (err) {
@@ -83,13 +85,17 @@ export function useEmptySpaceContextMenu() {
 						alert(`Failed to create file: ${err}`);
 					}
 				},
-				condition: () => !!currentPath,
+				condition: () => canMutateCurrentDirectory,
 			},
 			{
 				icon: Copy,
 				label: "Paste",
 				onClick: () => {
-					if (!clipboard.hasClipboard() || !currentPath) {
+					if (
+						!canMutateCurrentDirectory ||
+						!clipboard.hasClipboard() ||
+						!currentPath
+					) {
 						console.log("[Clipboard] Nothing to paste or no destination");
 						return;
 					}
@@ -125,7 +131,8 @@ export function useEmptySpaceContextMenu() {
 					});
 				},
 				keybindId: "explorer.paste",
-				condition: () => clipboard.hasClipboard(),
+				condition: () =>
+					canMutateCurrentDirectory && clipboard.hasClipboard(),
 			},
 		],
 	});

@@ -50,6 +50,9 @@ pub(crate) async fn emit_location_changed_batch(
 	let mut locations = Location::from_ids(db, ids).await?;
 	for location in &mut locations {
 		location.library_id = library_id;
+		if let crate::domain::addressing::SdPath::Physical { path, .. } = &location.sd_path {
+			location.is_available = tokio::fs::try_exists(path).await.unwrap_or(false);
+		}
 	}
 
 	if locations.is_empty() {

@@ -36,9 +36,15 @@ import {ViewSettings, ViewSettingsPanel} from './ViewSettings';
 
 interface ExplorerViewProps {
 	dedicatedSearch?: boolean;
+	searchQuery?: string;
+	onSearchQueryChange?: (query: string) => void;
 }
 
-export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
+export function ExplorerView({
+	dedicatedSearch = false,
+	searchQuery,
+	onSearchQueryChange
+}: ExplorerViewProps) {
 	const {
 		sidebarVisible,
 		setSidebarVisible,
@@ -86,7 +92,7 @@ export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
 		return currentPath;
 	}, [viewMode, columnStack, currentPath]);
 
-	const [searchValue, setSearchValue] = useState('');
+	const [searchValue, setSearchValue] = useState(searchQuery ?? '');
 	const searchRef = useRef<ExpandableSearchButtonHandle>(null);
 	const searchScope = dedicatedSearch
 		? 'library'
@@ -105,6 +111,12 @@ export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
 		const frameId = requestAnimationFrame(() => searchRef.current?.focus());
 		return () => cancelAnimationFrame(frameId);
 	}, [dedicatedSearch]);
+
+	useEffect(() => {
+		if (searchQuery !== undefined) {
+			setSearchValue(searchQuery);
+		}
+	}, [searchQuery]);
 
 	useEffect(() => {
 		if (activeSearchQuery === searchValue) return;
@@ -132,18 +144,29 @@ export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
 		searchValue
 	]);
 
-	const handleSearchChange = useCallback((value: string) => {
-		setSearchValue(value);
-	}, []);
+	const handleSearchChange = useCallback(
+		(value: string) => {
+			setSearchValue(value);
+			onSearchQueryChange?.(value);
+		},
+		[onSearchQueryChange]
+	);
 
 	const handleSearchClear = useCallback(() => {
 		setSearchValue('');
+		onSearchQueryChange?.('');
 		if (dedicatedSearch) {
 			enterSearchMode('', searchScope);
 		} else {
 			exitSearchMode();
 		}
-	}, [dedicatedSearch, enterSearchMode, exitSearchMode, searchScope]);
+	}, [
+		dedicatedSearch,
+		enterSearchMode,
+		exitSearchMode,
+		onSearchQueryChange,
+		searchScope
+	]);
 
 	useEffect(() => {
 		if (mode.type !== 'search' && !dedicatedSearch) {
@@ -160,6 +183,7 @@ export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
 	const handleViewModeChange = useCallback(
 		(newMode: string) => {
 			if (
+				!dedicatedSearch &&
 				viewMode === 'column' &&
 				newMode !== 'column' &&
 				columnStack.length > 1
@@ -168,7 +192,7 @@ export function ExplorerView({dedicatedSearch = false}: ExplorerViewProps) {
 			}
 			setViewMode(newMode as ViewMode);
 		},
-		[viewMode, columnStack, navigateToPath, setViewMode]
+		[dedicatedSearch, viewMode, columnStack, navigateToPath, setViewMode]
 	);
 
 	// View-mode shortcuts (Cmd+Alt+1..6). Kept off Cmd+1..6 so they don't
