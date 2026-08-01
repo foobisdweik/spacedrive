@@ -2328,7 +2328,9 @@ impl PeerSync {
 	}
 
 	/// Apply shared change to database with conflict resolution
-	async fn apply_shared_change(&self, entry: SharedChangeEntry) -> Result<()> {
+	async fn apply_shared_change(&self, mut entry: SharedChangeEntry) -> Result<()> {
+		crate::infra::db::entities::sidecar::normalize_sync_identity(&mut entry)?;
+
 		// Record start time for latency tracking
 		let start_time = std::time::Instant::now();
 

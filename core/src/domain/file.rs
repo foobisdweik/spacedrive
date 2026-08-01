@@ -998,28 +998,45 @@ impl Sidecar {
 		models: Vec<crate::infra::db::entities::sidecar::Model>,
 	) -> Result<Vec<Self>, sea_orm::DbErr> {
 		use crate::infra::db::entities::sidecar_availability;
-		use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+		use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter};
 
-		let locally_available = sidecar_availability::Entity::find()
-			.filter(
-				sidecar_availability::Column::DeviceUuid.eq(crate::device::get_current_device_id()),
-			)
-			.filter(sidecar_availability::Column::Has.eq(true))
-			.all(db)
-			.await?
+		let models = models
 			.into_iter()
-			.map(|availability| {
-				(
-					availability.content_uuid,
-					availability.kind,
-					availability.variant,
+			.filter(|model| model.status != "deleted")
+			.collect::<Vec<_>>();
+		let mut locally_available = HashSet::new();
+		for chunk in models.chunks(250) {
+			let logical_keys = chunk.iter().fold(Condition::any(), |condition, model| {
+				condition.add(
+					Condition::all()
+						.add(sidecar_availability::Column::ContentUuid.eq(model.content_uuid))
+						.add(sidecar_availability::Column::Kind.eq(&model.kind))
+						.add(sidecar_availability::Column::Variant.eq(&model.variant)),
 				)
-			})
-			.collect::<HashSet<_>>();
+			});
+			locally_available.extend(
+				sidecar_availability::Entity::find()
+					.filter(
+						sidecar_availability::Column::DeviceUuid
+							.eq(crate::device::get_current_device_id()),
+					)
+					.filter(sidecar_availability::Column::Has.eq(true))
+					.filter(logical_keys)
+					.all(db)
+					.await?
+					.into_iter()
+					.map(|availability| {
+						(
+							availability.content_uuid,
+							availability.kind,
+							availability.variant,
+						)
+					}),
+			);
+		}
 
 		Ok(models
 			.into_iter()
-			.filter(|model| model.status != "deleted")
 			.map(|model| {
 				let is_local = locally_available.contains(&(
 					model.content_uuid,

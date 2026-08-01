@@ -71,6 +71,46 @@ impl Related<super::entry::Entity> for Entity {
 
 impl ActiveModelBehavior for ActiveModel {}
 
+pub fn logical_sync_uuid(content_uuid: Uuid, kind: &str, variant: &str) -> Uuid {
+	let mut identity = Vec::with_capacity(16 + kind.len() + variant.len() + 2);
+	identity.extend_from_slice(content_uuid.as_bytes());
+	identity.push(0);
+	identity.extend_from_slice(kind.as_bytes());
+	identity.push(0);
+	identity.extend_from_slice(variant.as_bytes());
+	Uuid::new_v5(&Uuid::NAMESPACE_OID, &identity)
+}
+
+pub fn normalize_sync_identity(
+	entry: &mut crate::infra::sync::SharedChangeEntry,
+) -> Result<(), DbErr> {
+	if entry.model_type != "sidecar" {
+		return Ok(());
+	}
+
+	let content_uuid = entry
+		.data
+		.get("content_uuid")
+		.cloned()
+		.ok_or_else(|| DbErr::Custom("Sidecar sync change is missing content_uuid".to_string()))
+		.and_then(|value| {
+			serde_json::from_value::<Uuid>(value)
+				.map_err(|error| DbErr::Custom(format!("Invalid sidecar content UUID: {error}")))
+		})?;
+	let kind = entry
+		.data
+		.get("kind")
+		.and_then(serde_json::Value::as_str)
+		.ok_or_else(|| DbErr::Custom("Sidecar sync change is missing kind".to_string()))?;
+	let variant = entry
+		.data
+		.get("variant")
+		.and_then(serde_json::Value::as_str)
+		.ok_or_else(|| DbErr::Custom("Sidecar sync change is missing variant".to_string()))?;
+	entry.record_uuid = logical_sync_uuid(content_uuid, kind, variant);
+	Ok(())
+}
+
 pub async fn affected_entry_uuids_for_change(
 	entry: &crate::infra::sync::SharedChangeEntry,
 	db: &DatabaseConnection,
@@ -174,9 +214,11 @@ impl crate::infra::sync::Syncable for Model {
 					serde_json::from_value(entry.data).map_err(|error| {
 						sea_orm::DbErr::Custom(format!("Invalid sidecar sync data: {error}"))
 					})?;
+				let logical_uuid =
+					logical_sync_uuid(sidecar.content_uuid, &sidecar.kind, &sidecar.variant);
 				let active = ActiveModel {
 					id: NotSet,
-					uuid: Set(sidecar.uuid),
+					uuid: Set(logical_uuid),
 					content_uuid: Set(sidecar.content_uuid),
 					kind: Set(sidecar.kind),
 					variant: Set(sidecar.variant),
@@ -196,6 +238,7 @@ impl crate::infra::sync::Syncable for Model {
 					.on_conflict(
 						OnConflict::columns([Column::ContentUuid, Column::Kind, Column::Variant])
 							.update_columns([
+								Column::Uuid,
 								Column::Format,
 								Column::RelPath,
 								Column::Size,

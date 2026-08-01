@@ -45,7 +45,9 @@ impl LogSyncHandler {
 	/// Handle incoming SharedChange message
 	///
 	/// Uses the Syncable registry with conflict resolution strategies.
-	pub async fn handle_shared_change(&self, entry: SharedChangeEntry) -> Result<()> {
+	pub async fn handle_shared_change(&self, mut entry: SharedChangeEntry) -> Result<()> {
+		crate::infra::db::entities::sidecar::normalize_sync_identity(&mut entry)?;
+
 		debug!(
 			hlc = %entry.hlc,
 			model_type = %entry.model_type,

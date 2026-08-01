@@ -132,7 +132,11 @@ async fn resolve_managed_sidecar_path(base: &Path, relative_path: &str) -> Resul
 	let Some(parent) = target.parent() else {
 		anyhow::bail!("Invalid managed sidecar path");
 	};
-	let canonical_base = tokio::fs::canonicalize(base).await?;
+	let canonical_base = match tokio::fs::canonicalize(base).await {
+		Ok(base) => base,
+		Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+		Err(error) => return Err(error.into()),
+	};
 	let canonical_parent = match tokio::fs::canonicalize(parent).await {
 		Ok(parent) => parent,
 		Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -389,17 +393,8 @@ impl SidecarManager {
 		variant: &SidecarVariant,
 		format: &SidecarFormat,
 	) -> Result<SidecarResult> {
-		let library_scope = normalize_library_scope(library.path()).await;
-		{
-			let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
-			clear_synced_sidecar_deletion(
-				&library_scope,
-				*content_uuid,
-				kind.as_str(),
-				variant.as_str(),
-			)
+		self.begin_generation(library, content_uuid, kind, variant)
 			.await;
-		}
 
 		let path = self
 			.compute_path(&library.id(), content_uuid, kind, variant, format)
@@ -437,6 +432,24 @@ impl SidecarManager {
 				.await?;
 			Ok(SidecarResult::Pending)
 		}
+	}
+
+	pub async fn begin_generation(
+		&self,
+		library: &Library,
+		content_uuid: &Uuid,
+		kind: &SidecarKind,
+		variant: &SidecarVariant,
+	) {
+		let library_scope = normalize_library_scope(library.path()).await;
+		let _lifecycle_guard = SIDECAR_LIFECYCLE_LOCK.lock().await;
+		clear_synced_sidecar_deletion(
+			&library_scope,
+			*content_uuid,
+			kind.as_str(),
+			variant.as_str(),
+		)
+		.await;
 	}
 
 	/// Enqueue sidecar generation
@@ -738,7 +751,11 @@ impl SidecarManager {
 
 		// Upsert sidecar record
 		let sidecar = sidecar::ActiveModel {
-			uuid: ActiveValue::Set(Uuid::new_v4()),
+			uuid: ActiveValue::Set(sidecar::logical_sync_uuid(
+				*content_uuid,
+				kind.as_str(),
+				variant.as_str(),
+			)),
 			content_uuid: ActiveValue::Set(*content_uuid),
 			kind: ActiveValue::Set(kind.as_str().to_string()),
 			variant: ActiveValue::Set(variant.as_str().to_string()),
@@ -763,6 +780,11 @@ impl SidecarManager {
 
 		if let Some(existing) = result {
 			let mut active: sidecar::ActiveModel = existing.into();
+			active.uuid = ActiveValue::Set(sidecar::logical_sync_uuid(
+				*content_uuid,
+				kind.as_str(),
+				variant.as_str(),
+			));
 			active.format = ActiveValue::Set(format.as_str().to_string());
 			active.rel_path = ActiveValue::Set(path.relative_path.to_string_lossy().to_string());
 			active.source_entry_id = ActiveValue::Set(None);
