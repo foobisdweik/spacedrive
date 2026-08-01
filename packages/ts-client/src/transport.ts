@@ -71,17 +71,89 @@ export class TauriTransport implements Transport {
 			callback(tauriEvent.payload);
 		});
 
+		let active = true;
 		let subscriptionId: any;
+		let closedBeforeReady: any;
+		let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+		let retryDelay = 250;
+
+		const establishSubscription = async () => {
+			const nextSubscriptionId = await this.invoke("subscribe_to_events", args);
+			subscriptionId = nextSubscriptionId;
+
+			if (closedBeforeReady === nextSubscriptionId) {
+				closedBeforeReady = undefined;
+				scheduleReconnect();
+			} else {
+				retryDelay = 250;
+			}
+		};
+
+		const reconnect = async () => {
+			reconnectTimer = undefined;
+			if (!active) return;
+
+			const closedSubscriptionId = subscriptionId;
+			subscriptionId = undefined;
+			if (closedSubscriptionId !== undefined) {
+				try {
+					await this.invoke("unsubscribe_from_events", {
+						subscriptionId: closedSubscriptionId,
+					});
+				} catch {
+					// The daemon-side reader already closed this subscription.
+				}
+			}
+
+			if (!active) return;
+
+			try {
+				await establishSubscription();
+			} catch (error) {
+				console.warn("[TauriTransport] Failed to reconnect event stream:", error);
+				scheduleReconnect();
+			}
+		};
+
+		const scheduleReconnect = () => {
+			if (!active || reconnectTimer !== undefined) return;
+
+			reconnectTimer = setTimeout(() => {
+				void reconnect();
+			}, retryDelay);
+			retryDelay = Math.min(retryDelay * 2, 5000);
+		};
+
+		const unlistenDisconnected = await this.listen(
+			"daemon-disconnected",
+			(tauriEvent: any) => {
+				const closedSubscriptionId = tauriEvent.payload?.subscriptionId;
+				if (subscriptionId === undefined) {
+					closedBeforeReady = closedSubscriptionId;
+				} else if (closedSubscriptionId === subscriptionId) {
+					scheduleReconnect();
+				}
+			},
+		);
+
 		try {
-			subscriptionId = await this.invoke("subscribe_to_events", args);
+			await establishSubscription();
 		} catch (e) {
+			active = false;
 			unlisten();
+			unlistenDisconnected();
 			throw e;
 		}
 
 		// Return cleanup function that properly unsubscribes
 		return async () => {
+			active = false;
+			if (reconnectTimer !== undefined) {
+				clearTimeout(reconnectTimer);
+			}
 			unlisten();
+			unlistenDisconnected();
+			if (subscriptionId === undefined) return;
 			try {
 				await this.invoke("unsubscribe_from_events", {
 					subscriptionId,

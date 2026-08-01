@@ -121,7 +121,12 @@ export function useJobs(options: UseJobsOptions = {}): UseJobsReturn {
 		let isCancelled = false;
 
 		const handleEvent = (event: any) => {
-			if ('JobStarted' in event) {
+			if (
+				'Custom' in event &&
+				event.Custom?.event_type === 'jobs.history_cleared'
+			) {
+				refetchRef.current();
+			} else if ('JobStarted' in event) {
 				refetchRef.current();
 			} else if (
 				'JobQueued' in event ||
@@ -226,7 +231,8 @@ export function useJobs(options: UseJobsOptions = {}): UseJobsReturn {
 				'JobFailed',
 				'JobPaused',
 				'JobResumed',
-				'JobCancelled'
+				'JobCancelled',
+				'Custom'
 			]
 		};
 

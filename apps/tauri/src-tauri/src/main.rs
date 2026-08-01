@@ -722,6 +722,10 @@ async fn subscribe_to_events(
 			Ok(s) => s,
 			Err(e) => {
 				tracing::error!("Failed to connect for events: {}", e);
+				let _ = app.emit(
+					"daemon-disconnected",
+					json!({ "subscriptionId": subscription_id }),
+				);
 				return;
 			}
 		};
@@ -748,6 +752,10 @@ async fn subscribe_to_events(
 		let request_line = format!("{}\n", serde_json::to_string(&subscribe_request).unwrap());
 		if let Err(e) = writer.write_all(request_line.as_bytes()).await {
 			tracing::error!("Failed to send subscription: {}", e);
+			let _ = app.emit(
+				"daemon-disconnected",
+				json!({ "subscriptionId": subscription_id }),
+			);
 			return;
 		}
 
@@ -759,6 +767,7 @@ async fn subscribe_to_events(
 		// Listen for events and emit to frontend
 		let mut reader = BufReader::new(reader);
 		let mut buffer = String::new();
+		let mut cancelled_by_frontend = false;
 
 		loop {
 			buffer.clear();
@@ -767,6 +776,7 @@ async fn subscribe_to_events(
 				// Check for cancellation
 				_ = &mut cancel_rx => {
 					tracing::info!(subscription_id = subscription_id, "Subscription cancelled by frontend");
+					cancelled_by_frontend = true;
 					break;
 				}
 
@@ -804,6 +814,13 @@ async fn subscribe_to_events(
 					}
 				}
 			}
+		}
+
+		if !cancelled_by_frontend {
+			let _ = app.emit(
+				"daemon-disconnected",
+				json!({ "subscriptionId": subscription_id }),
+			);
 		}
 
 		tracing::info!(

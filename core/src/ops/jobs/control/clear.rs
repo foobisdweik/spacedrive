@@ -39,6 +39,17 @@ impl LibraryAction for JobClearAction {
 		_context: Arc<CoreContext>,
 	) -> ActionResult<Self::Output> {
 		let cleared = library.jobs().clear_finished_jobs().await?;
+		if cleared > 0 {
+			library
+				.event_bus()
+				.emit(crate::infra::event::Event::Custom {
+					event_type: "jobs.history_cleared".to_string(),
+					data: serde_json::json!({
+						"library_id": library.id(),
+						"cleared": cleared,
+					}),
+				});
+		}
 		Ok(JobClearOutput { cleared })
 	}
 }
