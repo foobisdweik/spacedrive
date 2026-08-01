@@ -36,13 +36,13 @@ import {ViewSettings, ViewSettingsPanel} from './ViewSettings';
 
 interface ExplorerViewProps {
 	dedicatedSearch?: boolean;
-	initialSearchQuery?: string;
+	searchQuery?: string;
 	onSearchQueryChange?: (query: string) => void;
 }
 
 export function ExplorerView({
 	dedicatedSearch = false,
-	initialSearchQuery = '',
+	searchQuery,
 	onSearchQueryChange
 }: ExplorerViewProps) {
 	const {
@@ -92,7 +92,7 @@ export function ExplorerView({
 		return currentPath;
 	}, [viewMode, columnStack, currentPath]);
 
-	const [searchValue, setSearchValue] = useState(initialSearchQuery);
+	const [searchValue, setSearchValue] = useState(searchQuery ?? '');
 	const searchRef = useRef<ExpandableSearchButtonHandle>(null);
 	const searchScope = dedicatedSearch
 		? 'library'
@@ -111,6 +111,12 @@ export function ExplorerView({
 		const frameId = requestAnimationFrame(() => searchRef.current?.focus());
 		return () => cancelAnimationFrame(frameId);
 	}, [dedicatedSearch]);
+
+	useEffect(() => {
+		if (searchQuery !== undefined) {
+			setSearchValue(searchQuery);
+		}
+	}, [searchQuery]);
 
 	useEffect(() => {
 		if (activeSearchQuery === searchValue) return;

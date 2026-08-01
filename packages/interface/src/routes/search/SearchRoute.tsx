@@ -1,18 +1,16 @@
-import {useCallback, useEffect, useRef} from 'react';
+import {useCallback, useEffect} from 'react';
 import {useSearchParams} from 'react-router-dom';
 import {useExplorer} from '../explorer';
 import {ExplorerView} from '../explorer/ExplorerView';
 
 export function SearchRoute() {
-	const {enterSearchMode, exitSearchMode} = useExplorer();
+	const {exitSearchMode} = useExplorer();
 	const [searchParams, setSearchParams] = useSearchParams();
-	const initialSearchQuery = useRef(searchParams.get('q') ?? '').current;
+	const searchQuery = searchParams.get('q') ?? '';
 
 	useEffect(() => {
-		enterSearchMode(initialSearchQuery, 'library');
-
 		return exitSearchMode;
-	}, [enterSearchMode, exitSearchMode, initialSearchQuery]);
+	}, [exitSearchMode]);
 
 	const handleSearchQueryChange = useCallback(
 		(query: string) => {
@@ -35,7 +33,7 @@ export function SearchRoute() {
 	return (
 		<ExplorerView
 			dedicatedSearch
-			initialSearchQuery={initialSearchQuery}
+			searchQuery={searchQuery}
 			onSearchQueryChange={handleSearchQueryChange}
 		/>
 	);
