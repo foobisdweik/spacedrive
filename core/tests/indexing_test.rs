@@ -9,10 +9,243 @@
 
 mod helpers;
 
-use anyhow::Result;
-use helpers::IndexingHarnessBuilder;
-use sd_core::{infra::db::entities, location::IndexMode};
+use anyhow::{anyhow, Result};
+use helpers::{wait_for_indexing, IndexingHarnessBuilder};
+use sd_core::{
+	domain::{addressing::SdPath, Location, ScanState},
+	infra::{
+		action::LibraryAction,
+		api::SessionContext,
+		db::entities,
+		event::{Event, EventBus, EventSubscriber, SubscriptionFilter},
+		query::LibraryQuery,
+	},
+	location::{IndexMode, LocationManager},
+	ops::locations::{
+		enable_indexing::{EnableIndexingAction, EnableIndexingInput},
+		list::{LocationsListQuery, LocationsListQueryInput},
+	},
+};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use tokio::time::{timeout, Duration, Instant};
+use uuid::Uuid;
+
+fn subscribe_to_location_events(event_bus: &EventBus) -> EventSubscriber {
+	event_bus.subscribe_filtered(vec![SubscriptionFilter::Global {
+		resource_type: "location".to_string(),
+	}])
+}
+
+async fn collect_location_events_until<F>(
+	subscriber: &mut EventSubscriber,
+	location_id: Uuid,
+	timeout_duration: Duration,
+	done: F,
+) -> Result<Vec<Location>>
+where
+	F: Fn(&Location) -> bool,
+{
+	let mut locations = Vec::new();
+	let deadline = Instant::now() + timeout_duration;
+
+	loop {
+		let remaining = deadline.saturating_duration_since(Instant::now());
+		let event = timeout(remaining, subscriber.recv())
+			.await
+			.map_err(|_| anyhow!("timed out waiting for location {location_id} events"))?
+			.map_err(|error| anyhow!("location event subscription failed: {error}"))?;
+
+		let Event::ResourceChangedBatch { resources, .. } = event else {
+			continue;
+		};
+
+		let matching_locations = resources
+			.as_array()
+			.into_iter()
+			.flatten()
+			.filter_map(|resource| serde_json::from_value::<Location>(resource.clone()).ok())
+			.filter(|location| location.id == location_id)
+			.collect::<Vec<_>>();
+		let reached_done = matching_locations.iter().any(&done);
+		locations.extend(matching_locations);
+
+		if reached_done {
+			return Ok(locations);
+		}
+	}
+}
+
+#[tokio::test]
+async fn test_enable_indexing_emits_mode_before_single_scanning_transition() -> Result<()> {
+	let harness = IndexingHarnessBuilder::new("enable_indexing_events")
+		.build()
+		.await?;
+	let test_location = harness
+		.create_test_location("enable_indexing_location")
+		.await?;
+	test_location.write_file("test.txt", "indexed").await?;
+
+	let location_manager = LocationManager::new((*harness.core.events).clone());
+	let location_path = SdPath::new(
+		sd_core::device::get_current_device_slug(),
+		test_location.path().to_path_buf(),
+	);
+	let (location_id, _) = location_manager
+		.add_location(
+			harness.library.clone(),
+			location_path,
+			Some("Enable Indexing".to_string()),
+			harness.device_db_id,
+			IndexMode::None,
+			None,
+			None,
+			&harness.core.context.volume_manager,
+		)
+		.await?;
+	let location_record = entities::location::Entity::find()
+		.filter(entities::location::Column::Uuid.eq(location_id))
+		.one(harness.library.db().conn())
+		.await?
+		.expect("location should exist before enabling indexing");
+
+	let mut event_subscriber = subscribe_to_location_events(harness.library.event_bus());
+	EnableIndexingAction::new(EnableIndexingInput {
+		id: location_id,
+		index_mode: "deep".to_string(),
+	})
+	.execute(harness.library.clone(), harness.core.context.clone())
+	.await?;
+	wait_for_indexing(
+		&harness.library,
+		location_record.id,
+		Duration::from_secs(30),
+	)
+	.await?;
+
+	let location_events = collect_location_events_until(
+		&mut event_subscriber,
+		location_id,
+		Duration::from_secs(5),
+		|location| location.scan_state == ScanState::Completed,
+	)
+	.await?;
+	assert!(
+		location_events
+			.iter()
+			.all(|location| location.library_id == harness.library.id()),
+		"location events must preserve the owning library ID"
+	);
+
+	let mode_event_position = location_events
+		.iter()
+		.position(|location| {
+			location.index_mode == sd_core::domain::IndexMode::Deep
+				&& location.scan_state == ScanState::Idle
+		})
+		.expect("index-mode update should be emitted before dispatch");
+	let scanning_positions: Vec<_> = location_events
+		.iter()
+		.enumerate()
+		.filter_map(|(position, location)| {
+			matches!(location.scan_state, ScanState::Scanning { .. }).then_some(position)
+		})
+		.collect();
+	assert_eq!(
+		scanning_positions.len(),
+		1,
+		"the indexer job should own the only scanning transition"
+	);
+	assert!(
+		mode_event_position < scanning_positions[0],
+		"the durable index-mode event must precede scanning"
+	);
+	let completed_position = location_events
+		.iter()
+		.position(|location| location.scan_state == ScanState::Completed)
+		.expect("completed indexing should emit the final location state");
+	assert!(scanning_positions[0] < completed_position);
+
+	harness.shutdown().await?;
+
+	let failure_harness = IndexingHarnessBuilder::new("enable_indexing_dispatch_failure")
+		.build()
+		.await?;
+	let failure_location = failure_harness
+		.create_test_location("dispatch_failure_location")
+		.await?;
+	let failure_manager = LocationManager::new((*failure_harness.core.events).clone());
+	let failure_path = SdPath::new(
+		sd_core::device::get_current_device_slug(),
+		failure_location.path().to_path_buf(),
+	);
+	let (failure_location_id, _) = failure_manager
+		.add_location(
+			failure_harness.library.clone(),
+			failure_path,
+			Some("Dispatch Failure".to_string()),
+			failure_harness.device_db_id,
+			IndexMode::None,
+			None,
+			None,
+			&failure_harness.core.context.volume_manager,
+		)
+		.await?;
+	let mut failure_events = subscribe_to_location_events(failure_harness.library.event_bus());
+
+	failure_harness
+		.library
+		.jobs()
+		.database()
+		.conn()
+		.clone()
+		.close()
+		.await?;
+	let dispatch_result = EnableIndexingAction::new(EnableIndexingInput {
+		id: failure_location_id,
+		index_mode: "quick".to_string(),
+	})
+	.execute(
+		failure_harness.library.clone(),
+		failure_harness.core.context.clone(),
+	)
+	.await;
+	assert!(
+		dispatch_result.is_err(),
+		"closed job database should make dispatch fail"
+	);
+
+	let persisted_location = entities::location::Entity::find()
+		.filter(entities::location::Column::Uuid.eq(failure_location_id))
+		.one(failure_harness.library.db().conn())
+		.await?
+		.expect("location should remain after dispatch failure");
+	assert_eq!(persisted_location.index_mode, "content");
+	assert_eq!(
+		persisted_location.scan_state, "pending",
+		"dispatch failure must not persist a scanning transition"
+	);
+
+	let failure_location_events = collect_location_events_until(
+		&mut failure_events,
+		failure_location_id,
+		Duration::from_secs(5),
+		|location| {
+			location.index_mode == sd_core::domain::IndexMode::Content
+				&& location.scan_state == ScanState::Idle
+		},
+	)
+	.await?;
+	assert!(
+		failure_location_events.iter().any(|location| {
+			location.index_mode == sd_core::domain::IndexMode::Content
+				&& location.scan_state == ScanState::Idle
+		}),
+		"dispatch failure must not hide the durable index-mode update"
+	);
+
+	failure_harness.shutdown().await?;
+	Ok(())
+}
 
 #[tokio::test]
 async fn test_basic_indexing() -> Result<()> {
@@ -29,6 +262,8 @@ async fn test_basic_indexing() -> Result<()> {
 
 	// Create files that should be filtered
 	location.create_filtered_files().await?;
+
+	let mut event_subscriber = subscribe_to_location_events(harness.library.event_bus());
 
 	// Index the location
 	let handle = location.index("Test Location", IndexMode::Deep).await?;
@@ -47,6 +282,37 @@ async fn test_basic_indexing() -> Result<()> {
 		.expect("indexed location should still exist");
 	assert_eq!(location_record.scan_state, "completed");
 	assert_eq!(location_record.total_file_count, 3);
+
+	let emitted_location = collect_location_events_until(
+		&mut event_subscriber,
+		handle.uuid,
+		Duration::from_secs(5),
+		|location| location.scan_state == ScanState::Completed,
+	)
+	.await?
+	.into_iter()
+	.find(|location| location.scan_state == ScanState::Completed)
+	.expect("completed indexing should emit the persisted location");
+
+	let mut session = SessionContext::device_session(
+		harness.device_id,
+		sd_core::device::get_current_device_slug(),
+	);
+	session.current_library_id = Some(harness.library.id());
+	let listed_locations = LocationsListQuery::from_input(LocationsListQueryInput)?
+		.execute(harness.core.context.clone(), session)
+		.await?;
+	let listed_location = listed_locations
+		.locations
+		.into_iter()
+		.find(|location| location.id == handle.uuid)
+		.expect("indexed location should be returned by locations.list");
+
+	assert_eq!(emitted_location.file_count, listed_location.file_count);
+	assert_eq!(emitted_location.total_size, listed_location.total_size);
+	assert_eq!(emitted_location.scan_state, listed_location.scan_state);
+	assert_eq!(emitted_location.library_id, harness.library.id());
+	assert_eq!(emitted_location.library_id, listed_location.library_id);
 
 	// Verify smart filtering worked
 	handle.verify_no_filtered_entries().await?;

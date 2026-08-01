@@ -452,9 +452,8 @@ impl LocationManager {
 			location.name, location_sd_path, location.index_mode
 		);
 
-		// Update scan state to "scanning"
-		self.update_scan_state(&library, location.id, "scanning", None)
-			.await?;
+		// IndexerJob owns durable scan-state transitions. Keeping the current state
+		// until dispatch succeeds ensures a dispatch failure remains retryable.
 
 		// Create indexer job using new configuration pattern
 		let config = IndexerJobConfig::new(
@@ -482,38 +481,10 @@ impl LocationManager {
 
 		// The job system will handle:
 		// - Progress updates via the event bus
-		// - Updating scan state when complete/failed
+		// - All durable scan-state transitions
 		// - Emitting appropriate events
 
 		Ok(job_id.to_string())
-	}
-
-	/// Update scan state for a location
-	async fn update_scan_state(
-		&self,
-		library: &Library,
-		location_id: Uuid,
-		scan_state: &str,
-		error_message: Option<String>,
-	) -> LocationResult<()> {
-		use sea_orm::ActiveValue::Set;
-
-		let location = entities::location::Entity::find()
-			.filter(entities::location::Column::Uuid.eq(location_id))
-			.one(library.db().conn())
-			.await?
-			.ok_or_else(|| LocationError::LocationNotFound { id: location_id })?;
-
-		let mut active_location: entities::location::ActiveModel = location.into();
-		active_location.scan_state = Set(scan_state.to_string());
-		active_location.error_message = Set(error_message);
-		if scan_state == "completed" {
-			active_location.last_scan_at = Set(Some(chrono::Utc::now()));
-		}
-		active_location.updated_at = Set(chrono::Utc::now());
-
-		active_location.update(library.db().conn()).await?;
-		Ok(())
 	}
 
 	/// Update location statistics
