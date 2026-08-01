@@ -64,6 +64,7 @@ export interface UseJobsReturn {
 	pause: (jobId: string) => Promise<void>;
 	resume: (jobId: string) => Promise<void>;
 	cancel: (jobId: string) => Promise<void>;
+	clearFinished: () => Promise<number>;
 	isLoading: boolean;
 	error: any;
 	getSpeedHistory: (jobId: string) => SpeedSample[];
@@ -92,6 +93,7 @@ export function useJobs(options: UseJobsOptions = {}): UseJobsReturn {
 	const pauseMutation = useLibraryMutation('jobs.pause');
 	const resumeMutation = useLibraryMutation('jobs.resume');
 	const cancelMutation = useLibraryMutation('jobs.cancel');
+	const clearMutation = useLibraryMutation('jobs.clear');
 
 	// Ref for stable refetch access
 	const refetchRef = useRef(refetch);
@@ -275,6 +277,12 @@ export function useJobs(options: UseJobsOptions = {}): UseJobsReturn {
 		}
 	};
 
+	const clearFinished = async () => {
+		const result = await clearMutation.mutateAsync({});
+		await refetchRef.current();
+		return result.cleared;
+	};
+
 	const runningCount = jobs.filter((j) => j.status === 'running').length;
 	const pausedCount = jobs.filter((j) => j.status === 'paused').length;
 
@@ -290,6 +298,7 @@ export function useJobs(options: UseJobsOptions = {}): UseJobsReturn {
 		pause,
 		resume,
 		cancel,
+		clearFinished,
 		isLoading,
 		error,
 		getSpeedHistory

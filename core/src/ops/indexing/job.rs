@@ -228,11 +228,9 @@ impl DynJob for IndexerJob {
 	}
 
 	fn should_emit_events(&self) -> bool {
-		// Emit events for persistent jobs AND volume indexing jobs
-		if self.config.is_volume_indexing {
-			return true;
-		}
-		self.should_persist()
+		// Background indexers are ephemeral, but their lifecycle must remain
+		// visible so clients can show progress and completion reliably.
+		true
 	}
 }
 

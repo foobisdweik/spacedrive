@@ -79,18 +79,11 @@ export function useDaemonStatus() {
 
 			const unlistenDisconnected = await platform.onDaemonDisconnected?.(() => {
 				console.log('[useDaemonStatus] daemon-disconnected event received');
-				if (mounted) {
-				setStatus(prev => ({
-					...prev,
-					isConnected: false,
-					isChecking: false,
-					// If we were ever connected before, this is a disconnection, not startup
-					// Keep isStarting as is - only clear it on connect
-					isStarting: hasEverConnected.current ? false : prev.isStarting,
-				}));
 
-				// Don't create additional polling - fallback interval already running
-				}
+				// A subscription socket can close after an operation error while the
+				// daemon itself remains healthy. Confirm process reachability before
+				// showing the global disconnected overlay.
+				void checkDaemonStatus();
 			});
 
 			const unlistenStarting = await platform.onDaemonStarting?.(() => {

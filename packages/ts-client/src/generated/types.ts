@@ -2353,6 +2353,10 @@ export type JobCancelInput = { job_id: string };
 
 export type JobCancelOutput = { job_id: string; success: boolean };
 
+export type JobClearInput = Record<string, never>;
+
+export type JobClearOutput = { cleared: number };
+
 /**
  * Unique identifier for a job
  */
@@ -5420,6 +5424,7 @@ export type LibraryAction =
   |  { type: 'indexing.start'; input: IndexInput; output: JobReceipt }
   |  { type: 'indexing.verify'; input: IndexVerifyInput; output: IndexVerifyOutput }
   |  { type: 'jobs.cancel'; input: JobCancelInput; output: JobCancelOutput }
+  |  { type: 'jobs.clear'; input: JobClearInput; output: JobClearOutput }
   |  { type: 'jobs.pause'; input: JobPauseInput; output: JobPauseOutput }
   |  { type: 'jobs.resume'; input: JobResumeInput; output: JobResumeOutput }
   |  { type: 'libraries.export'; input: LibraryExportInput; output: LibraryExportOutput }
@@ -5578,6 +5583,7 @@ export const WIRE_METHODS = {
     'indexing.start': 'action:indexing.start.input',
     'indexing.verify': 'action:indexing.verify.input',
     'jobs.cancel': 'action:jobs.cancel.input',
+    'jobs.clear': 'action:jobs.clear.input',
     'jobs.pause': 'action:jobs.pause.input',
     'jobs.resume': 'action:jobs.resume.input',
     'libraries.export': 'action:libraries.export.input',

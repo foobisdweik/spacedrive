@@ -1231,6 +1231,11 @@ impl JobManager {
 		Ok(all_jobs)
 	}
 
+	/// Clear persisted jobs that have reached a terminal state.
+	pub async fn clear_finished_jobs(&self) -> JobResult<u64> {
+		self.db.clear_finished_jobs().await
+	}
+
 	/// Get detailed information about a specific job
 	pub async fn get_job_info(&self, id: Uuid) -> JobResult<Option<JobInfo>> {
 		let device_id = self

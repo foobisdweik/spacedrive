@@ -1,5 +1,5 @@
-import { X, FunnelSimple } from "@phosphor-icons/react";
-import { CircleButton } from "@spacedrive/primitives";
+import { CircleNotch, FunnelSimple, Trash, X } from "@phosphor-icons/react";
+import { CircleButton, toast } from "@spacedrive/primitives";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useJobsContext } from "../hooks/JobsContext";
@@ -7,8 +7,9 @@ import { JobRow } from "./JobRow";
 
 export function JobsScreen() {
 	const navigate = useNavigate();
-	const { jobs, pause, resume, cancel } = useJobsContext();
+	const { jobs, pause, resume, cancel, clearFinished } = useJobsContext();
 	const [showOnlyRunning, setShowOnlyRunning] = useState(false);
+	const [isClearing, setIsClearing] = useState(false);
 
 	// Filter jobs based on toggle
 	const filteredJobs = showOnlyRunning
@@ -23,6 +24,27 @@ export function JobsScreen() {
 	const queuedJobs = filteredJobs.filter((j) => j.status === "queued");
 	const completedJobs = filteredJobs.filter((j) => j.status === "completed");
 	const failedJobs = filteredJobs.filter((j) => j.status === "failed");
+	const cancelledJobs = filteredJobs.filter((j) => j.status === "cancelled");
+	const finishedJobCount =
+		completedJobs.length + failedJobs.length + cancelledJobs.length;
+
+	const handleClearFinished = async () => {
+		setIsClearing(true);
+		try {
+			const cleared = await clearFinished();
+			toast.success({
+				title: "Finished jobs cleared",
+				body: `Removed ${cleared} ${cleared === 1 ? "job" : "jobs"} from history.`,
+			});
+		} catch (error) {
+			toast.error({
+				title: "Couldn't clear finished jobs",
+				body: String(error).replace(/^Error:\s*/, ""),
+			});
+		} finally {
+			setIsClearing(false);
+		}
+	};
 
 	return (
 		<div className="flex flex-col h-screen bg-app">
@@ -43,6 +65,22 @@ export function JobsScreen() {
 					</div>
 
 					<div className="flex items-center gap-2">
+						{finishedJobCount > 0 && !showOnlyRunning && (
+							<button
+								type="button"
+								onClick={handleClearFinished}
+								disabled={isClearing}
+								className="flex items-center gap-2 rounded-md border border-app-line bg-app-box px-3 py-2 text-sm font-medium text-ink transition-colors hover:bg-app-hover disabled:cursor-not-allowed disabled:opacity-50"
+							>
+								{isClearing ? (
+									<CircleNotch className="size-4 animate-spin" />
+								) : (
+									<Trash className="size-4" />
+								)}
+								Clear finished
+							</button>
+						)}
+
 						{/* Filter toggle */}
 						<CircleButton
 							icon={FunnelSimple}
@@ -173,6 +211,24 @@ export function JobsScreen() {
 								count={failedJobs.length}
 							>
 								{failedJobs.map((job) => (
+									<JobRow
+										key={job.id}
+										job={job}
+										onPause={pause}
+										onResume={resume}
+										onCancel={cancel}
+									/>
+								))}
+							</JobSection>
+						)}
+
+						{/* Cancelled Jobs */}
+						{cancelledJobs.length > 0 && (
+							<JobSection
+								title="Cancelled"
+								count={cancelledJobs.length}
+							>
+								{cancelledJobs.map((job) => (
 									<JobRow
 										key={job.id}
 										job={job}
