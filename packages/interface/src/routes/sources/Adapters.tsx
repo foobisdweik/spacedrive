@@ -49,13 +49,13 @@ export function AdaptersScreen() {
 			return;
 		}
 
-		const selected = await platform.openDirectoryPickerDialog({
-			title: "Choose an adapter directory",
-			multiple: false,
-		});
-		if (typeof selected !== "string") return;
-
 		try {
+			const selected = await platform.openDirectoryPickerDialog({
+				title: "Choose an adapter directory",
+				multiple: false,
+			});
+			if (typeof selected !== "string") return;
+
 			const result = await installAdapter.mutateAsync({ directory: selected });
 			await refetch();
 			toast.success({
@@ -65,7 +65,10 @@ export function AdaptersScreen() {
 		} catch (error) {
 			toast.error({
 				title: "Adapter Installation Failed",
-				body: String(error),
+				body:
+					error instanceof Error
+						? error.message.replace(/^Error:\s*/, "")
+						: String(error),
 			});
 		}
 	};

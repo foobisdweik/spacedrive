@@ -27,9 +27,11 @@ export function SourceTypeIcon({
 }: SourceTypeIconProps) {
 	if (svg) {
 		return (
-			<div
-				className={`shrink-0 rounded-lg [&>svg]:h-full [&>svg]:w-full ${SIZE_CLASSES[size]}`}
-				dangerouslySetInnerHTML={{ __html: svg }}
+			<img
+				alt=""
+				aria-hidden="true"
+				className={`shrink-0 rounded-lg ${SIZE_CLASSES[size]}`}
+				src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`}
 			/>
 		);
 	}

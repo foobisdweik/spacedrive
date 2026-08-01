@@ -18,8 +18,9 @@ impl LibraryAction for InstallAdapterAction {
 	type Input = InstallAdapterInput;
 	type Output = InstallAdapterOutput;
 
-	fn from_input(input: Self::Input) -> Result<Self, String> {
-		if input.directory.trim().is_empty() {
+	fn from_input(mut input: Self::Input) -> Result<Self, String> {
+		input.directory = input.directory.trim().to_string();
+		if input.directory.is_empty() {
 			return Err("Adapter directory cannot be empty".to_string());
 		}
 
@@ -31,11 +32,9 @@ impl LibraryAction for InstallAdapterAction {
 		library: Arc<Library>,
 		_context: Arc<CoreContext>,
 	) -> Result<Self::Output, ActionError> {
-		if library.source_manager().is_none() {
-			library.init_source_manager().await.map_err(|error| {
-				ActionError::Internal(format!("Failed to initialize source manager: {error}"))
-			})?;
-		}
+		library.init_source_manager().await.map_err(|error| {
+			ActionError::Internal(format!("Failed to initialize source manager: {error}"))
+		})?;
 
 		let source_manager =
 			Arc::clone(library.source_manager().ok_or_else(|| {
