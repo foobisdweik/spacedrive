@@ -73,7 +73,7 @@ export class TauriTransport implements Transport {
 
 		let active = true;
 		let subscriptionId: any;
-		let closedBeforeReady: any;
+		const closedBeforeReady = new Set<any>();
 		const activeBeforeReady = new Set<any>();
 		let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 		let retryDelay = 250;
@@ -85,8 +85,7 @@ export class TauriTransport implements Transport {
 			if (activeBeforeReady.delete(nextSubscriptionId)) {
 				retryDelay = 250;
 			}
-			if (closedBeforeReady === nextSubscriptionId) {
-				closedBeforeReady = undefined;
+			if (closedBeforeReady.delete(nextSubscriptionId)) {
 				scheduleReconnect();
 			}
 		};
@@ -131,7 +130,7 @@ export class TauriTransport implements Transport {
 			(tauriEvent: any) => {
 				const closedSubscriptionId = tauriEvent.payload?.subscriptionId;
 				if (subscriptionId === undefined) {
-					closedBeforeReady = closedSubscriptionId;
+					closedBeforeReady.add(closedSubscriptionId);
 				} else if (closedSubscriptionId === subscriptionId) {
 					scheduleReconnect();
 				}
