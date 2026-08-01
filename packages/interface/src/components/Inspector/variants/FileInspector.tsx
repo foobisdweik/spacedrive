@@ -1503,7 +1503,10 @@ function SidecarItem({
 					} catch (error) {
 						toast.error({
 							title: 'Sidecar Delete Failed',
-							body: String(error)
+							body:
+								error instanceof Error
+									? error.message
+									: String(error)
 						});
 					}
 				},

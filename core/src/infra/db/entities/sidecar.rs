@@ -103,6 +103,105 @@ impl crate::infra::sync::Syncable for Model {
 		]
 	}
 
+	async fn apply_shared_change(
+		entry: crate::infra::sync::SharedChangeEntry,
+		db: &DatabaseConnection,
+	) -> Result<(), sea_orm::DbErr> {
+		use crate::infra::sync::ChangeType;
+		use sea_orm::{
+			sea_query::OnConflict, ActiveValue::NotSet, ActiveValue::Set, ColumnTrait, EntityTrait,
+			QueryFilter,
+		};
+
+		match entry.change_type {
+			ChangeType::Insert | ChangeType::Update => {
+				#[derive(Deserialize)]
+				struct SyncedSidecar {
+					uuid: Uuid,
+					content_uuid: Uuid,
+					kind: String,
+					variant: String,
+					format: String,
+					rel_path: String,
+					size: i64,
+					checksum: Option<String>,
+					status: String,
+					source: Option<String>,
+					version: i32,
+					created_at: DateTime<Utc>,
+					updated_at: DateTime<Utc>,
+				}
+
+				let sidecar: SyncedSidecar =
+					serde_json::from_value(entry.data).map_err(|error| {
+						sea_orm::DbErr::Custom(format!("Invalid sidecar sync data: {error}"))
+					})?;
+				let active = ActiveModel {
+					id: NotSet,
+					uuid: Set(sidecar.uuid),
+					content_uuid: Set(sidecar.content_uuid),
+					kind: Set(sidecar.kind),
+					variant: Set(sidecar.variant),
+					format: Set(sidecar.format),
+					rel_path: Set(sidecar.rel_path),
+					source_entry_id: Set(None),
+					size: Set(sidecar.size),
+					checksum: Set(sidecar.checksum),
+					status: Set(sidecar.status),
+					source: Set(sidecar.source),
+					version: Set(sidecar.version),
+					created_at: Set(sidecar.created_at),
+					updated_at: Set(sidecar.updated_at),
+				};
+
+				Entity::insert(active)
+					.on_conflict(
+						OnConflict::column(Column::Uuid)
+							.update_columns([
+								Column::ContentUuid,
+								Column::Kind,
+								Column::Variant,
+								Column::Format,
+								Column::RelPath,
+								Column::Size,
+								Column::Checksum,
+								Column::Status,
+								Column::Source,
+								Column::Version,
+								Column::UpdatedAt,
+							])
+							.to_owned(),
+					)
+					.exec(db)
+					.await?;
+			}
+			ChangeType::Delete => {
+				if let Some(sidecar) = Entity::find()
+					.filter(Column::Uuid.eq(entry.record_uuid))
+					.one(db)
+					.await?
+				{
+					super::sidecar_availability::Entity::delete_many()
+						.filter(
+							super::sidecar_availability::Column::ContentUuid
+								.eq(sidecar.content_uuid),
+						)
+						.filter(super::sidecar_availability::Column::Kind.eq(sidecar.kind))
+						.filter(super::sidecar_availability::Column::Variant.eq(sidecar.variant))
+						.exec(db)
+						.await?;
+				}
+
+				Entity::delete_many()
+					.filter(Column::Uuid.eq(entry.record_uuid))
+					.exec(db)
+					.await?;
+			}
+		}
+
+		Ok(())
+	}
+
 	async fn query_for_sync(
 		_device_id: Option<Uuid>,
 		since: Option<chrono::DateTime<chrono::Utc>>,

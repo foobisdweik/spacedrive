@@ -95,12 +95,15 @@ impl LibraryAction for DeleteSidecarAction {
 		};
 
 		if !entry_uuids.is_empty() {
-			ResourceManager::new(Arc::new(db.clone()), context.events.clone())
+			if let Err(error) = ResourceManager::new(Arc::new(db.clone()), context.events.clone())
 				.emit_resource_events("file", entry_uuids)
 				.await
-				.map_err(|error| {
-					ActionError::Internal(format!("Failed to emit sidecar deletion: {error}"))
-				})?;
+			{
+				tracing::warn!(
+					error = %error,
+					"sidecar was deleted but its file resource event could not be emitted"
+				);
+			}
 		}
 
 		Ok(DeleteSidecarOutput {

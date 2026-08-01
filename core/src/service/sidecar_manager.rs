@@ -1,5 +1,5 @@
 use std::{
-	collections::HashMap,
+	collections::{HashMap, HashSet},
 	io::ErrorKind,
 	path::{Component, Path, PathBuf},
 	sync::Arc,
@@ -24,11 +24,11 @@ use crate::{
 	},
 };
 
-fn should_delete_managed_file(source: Option<&str>, relative_path: &str) -> bool {
-	source != Some("reference") && !relative_path.is_empty()
+fn should_delete_managed_file(_source: Option<&str>, relative_path: &str) -> bool {
+	!relative_path.is_empty()
 }
 
-fn resolve_managed_sidecar_path(base: &Path, relative_path: &str) -> Result<PathBuf> {
+async fn resolve_managed_sidecar_path(base: &Path, relative_path: &str) -> Result<Option<PathBuf>> {
 	let relative_path = Path::new(relative_path);
 	if relative_path.is_absolute()
 		|| relative_path.components().any(|component| {
@@ -40,7 +40,25 @@ fn resolve_managed_sidecar_path(base: &Path, relative_path: &str) -> Result<Path
 		anyhow::bail!("Invalid managed sidecar path");
 	}
 
-	Ok(base.join(relative_path))
+	let target = base.join(relative_path);
+	let Some(parent) = target.parent() else {
+		anyhow::bail!("Invalid managed sidecar path");
+	};
+	let canonical_base = tokio::fs::canonicalize(base).await?;
+	let canonical_parent = match tokio::fs::canonicalize(parent).await {
+		Ok(parent) => parent,
+		Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+		Err(error) => return Err(error.into()),
+	};
+
+	if !canonical_parent.starts_with(&canonical_base) {
+		anyhow::bail!("Managed sidecar path escapes the sidecar directory");
+	}
+
+	let file_name = target
+		.file_name()
+		.ok_or_else(|| anyhow::anyhow!("Invalid managed sidecar path"))?;
+	Ok(Some(canonical_parent.join(file_name)))
 }
 
 /// Manages the Virtual Sidecar System
@@ -48,8 +66,12 @@ pub struct SidecarManager {
 	context: Arc<CoreContext>,
 	/// Path builders per library
 	path_builders: RwLock<HashMap<Uuid, Arc<SidecarPathBuilder>>>,
-	/// Active generation tasks
-	active_tasks: Mutex<HashMap<(Uuid, String, String), tokio::task::JoinHandle<()>>>,
+	/// Serializes publication and deletion so a completed generator cannot race
+	/// a user-requested deletion.
+	lifecycle_lock: Mutex<()>,
+	/// Sidecars deleted during this process remain suppressed until explicitly
+	/// requested again through `get_or_enqueue`.
+	deleted_sidecars: Mutex<HashSet<(Uuid, Uuid, String, String)>>,
 }
 
 impl SidecarManager {
@@ -58,7 +80,8 @@ impl SidecarManager {
 		Self {
 			context,
 			path_builders: RwLock::new(HashMap::new()),
-			active_tasks: Mutex::new(HashMap::new()),
+			lifecycle_lock: Mutex::new(()),
+			deleted_sidecars: Mutex::new(HashSet::new()),
 		}
 	}
 
@@ -103,6 +126,12 @@ impl SidecarManager {
 	pub async fn deinit_library(&self, library_id: &Uuid) {
 		let mut builders = self.path_builders.write().await;
 		builders.remove(library_id);
+		drop(builders);
+
+		self.deleted_sidecars
+			.lock()
+			.await
+			.retain(|(deleted_library_id, _, _, _)| deleted_library_id != library_id);
 
 		info!("Deinitialized sidecar manager for library {}", library_id);
 	}
@@ -238,6 +267,13 @@ impl SidecarManager {
 		variant: &SidecarVariant,
 		format: &SidecarFormat,
 	) -> Result<SidecarResult> {
+		self.deleted_sidecars.lock().await.remove(&(
+			library.id(),
+			*content_uuid,
+			kind.as_str().to_string(),
+			variant.as_str().to_string(),
+		));
+
 		let path = self
 			.compute_path(&library.id(), content_uuid, kind, variant, format)
 			.await?;
@@ -515,6 +551,39 @@ impl SidecarManager {
 		size: u64,
 		checksum: Option<String>,
 	) -> Result<()> {
+		let _lifecycle_guard = self.lifecycle_lock.lock().await;
+		let lifecycle_key = (
+			library.id(),
+			*content_uuid,
+			kind.as_str().to_string(),
+			variant.as_str().to_string(),
+		);
+		if self.deleted_sidecars.lock().await.contains(&lifecycle_key) {
+			let path = self
+				.compute_path(&library.id(), content_uuid, kind, variant, format)
+				.await?;
+			let sidecars_dir = self.get_path_builder(&library.id()).await?.sidecars_dir();
+
+			if let Some(path) =
+				resolve_managed_sidecar_path(&sidecars_dir, &path.relative_path.to_string_lossy())
+					.await?
+			{
+				match tokio::fs::remove_file(path).await {
+					Ok(()) => {}
+					Err(error) if error.kind() == ErrorKind::NotFound => {}
+					Err(error) => return Err(error.into()),
+				}
+			}
+
+			info!(
+				content_uuid = %content_uuid,
+				kind = kind.as_str(),
+				variant = variant.as_str(),
+				"discarded sidecar generated after deletion"
+			);
+			return Ok(());
+		}
+
 		self.record_sidecar_internal(
 			library,
 			content_uuid,
@@ -571,10 +640,13 @@ impl SidecarManager {
 
 		if let Some(existing) = result {
 			let mut active: sidecar::ActiveModel = existing.into();
+			active.format = ActiveValue::Set(format.as_str().to_string());
 			active.rel_path = ActiveValue::Set(path.relative_path.to_string_lossy().to_string());
+			active.source_entry_id = ActiveValue::Set(None);
 			active.size = ActiveValue::Set(size as i64);
 			active.checksum = ActiveValue::Set(checksum);
 			active.status = ActiveValue::Set("ready".to_string());
+			active.source = ActiveValue::Set(Some("sidecar_manager".to_string()));
 			active.updated_at = ActiveValue::Set(Utc::now());
 			active.update(db.conn()).await?;
 		} else {
@@ -687,6 +759,7 @@ impl SidecarManager {
 		kind: &SidecarKind,
 		variant: &SidecarVariant,
 	) -> Result<()> {
+		let _lifecycle_guard = self.lifecycle_lock.lock().await;
 		let db = library.db();
 		let sidecars = Sidecar::find()
 			.filter(sidecar::Column::ContentUuid.eq(*content_uuid))
@@ -701,12 +774,14 @@ impl SidecarManager {
 				continue;
 			}
 
-			let path = resolve_managed_sidecar_path(&sidecars_dir, &sidecar.rel_path)?;
-
-			match tokio::fs::remove_file(&path).await {
-				Ok(()) => {}
-				Err(error) if error.kind() == ErrorKind::NotFound => {}
-				Err(error) => return Err(error.into()),
+			if let Some(path) =
+				resolve_managed_sidecar_path(&sidecars_dir, &sidecar.rel_path).await?
+			{
+				match tokio::fs::remove_file(&path).await {
+					Ok(()) => {}
+					Err(error) if error.kind() == ErrorKind::NotFound => {}
+					Err(error) => return Err(error.into()),
+				}
 			}
 		}
 
@@ -721,6 +796,13 @@ impl SidecarManager {
 		// Update availability
 		self.update_local_availability(library, content_uuid, kind, variant, false, None, None)
 			.await?;
+
+		self.deleted_sidecars.lock().await.insert((
+			library.id(),
+			*content_uuid,
+			kind.as_str().to_string(),
+			variant.as_str().to_string(),
+		));
 
 		Ok(())
 	}
@@ -892,8 +974,6 @@ pub struct SidecarPresence {
 
 #[cfg(test)]
 mod tests {
-	use std::path::Path;
-
 	use super::{resolve_managed_sidecar_path, should_delete_managed_file};
 
 	#[test]
@@ -903,21 +983,46 @@ mod tests {
 			"thumb/ab/cd/file.webp"
 		));
 		assert!(!should_delete_managed_file(Some("reference"), ""));
-		assert!(!should_delete_managed_file(
+		assert!(should_delete_managed_file(
 			Some("reference"),
 			"original.mov"
 		));
 		assert!(!should_delete_managed_file(None, ""));
 	}
 
-	#[test]
-	fn managed_sidecar_paths_stay_inside_the_sidecar_directory() {
-		let base = Path::new("/library/sidecars");
+	#[tokio::test]
+	async fn managed_sidecar_paths_stay_inside_the_sidecar_directory() {
+		let temp = tempfile::tempdir().unwrap();
+		let base = temp.path().join("sidecars");
+		let parent = base.join("thumb/ab/cd");
+		tokio::fs::create_dir_all(&parent).await.unwrap();
+
 		assert_eq!(
-			resolve_managed_sidecar_path(base, "thumb/ab/cd/file.jpg").unwrap(),
-			base.join("thumb/ab/cd/file.jpg")
+			resolve_managed_sidecar_path(&base, "thumb/ab/cd/file.jpg")
+				.await
+				.unwrap(),
+			Some(
+				tokio::fs::canonicalize(parent)
+					.await
+					.unwrap()
+					.join("file.jpg")
+			)
 		);
-		assert!(resolve_managed_sidecar_path(base, "../library.db").is_err());
-		assert!(resolve_managed_sidecar_path(base, "/tmp/file.jpg").is_err());
+		assert!(resolve_managed_sidecar_path(&base, "../library.db")
+			.await
+			.is_err());
+		assert!(resolve_managed_sidecar_path(&base, "/tmp/file.jpg")
+			.await
+			.is_err());
+
+		#[cfg(unix)]
+		{
+			let outside = temp.path().join("outside");
+			tokio::fs::create_dir_all(&outside).await.unwrap();
+			std::os::unix::fs::symlink(&outside, base.join("escape")).unwrap();
+			assert!(resolve_managed_sidecar_path(&base, "escape/file.jpg")
+				.await
+				.is_err());
+		}
 	}
 }
