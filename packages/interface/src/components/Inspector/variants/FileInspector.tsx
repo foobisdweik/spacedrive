@@ -30,12 +30,12 @@ import type {File, SdPath} from '@sd/ts-client';
 import {toast} from '@spacedrive/primitives';
 import clsx from 'clsx';
 import {LocationMap} from '../LocationMap';
-import {useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import {useJobsContext} from '../../../components/JobManager/hooks/JobsContext';
 import {TagSelectorButton} from '../../../components/Tags';
 import {usePlatform} from '../../../contexts/PlatformContext';
 import {useServer} from '../../../contexts/ServerContext';
-import { getContentKind } from "@sd/ts-client";
+import {getContentKind, isVirtualFile} from '@sd/ts-client';
 import {
 	getDeviceIcon,
 	useLibraryMutation,
@@ -51,54 +51,66 @@ interface FileInspectorProps {
 	file: File;
 }
 
+function getParentPath(file: File | undefined): SdPath | undefined {
+	const filePath =
+		file?.sd_path && !('Content' in file.sd_path)
+			? file.sd_path
+			: file?.alternate_paths.find((path) => 'Physical' in path || 'Cloud' in path);
+
+	if (!filePath) return undefined;
+
+	if ('Physical' in filePath) {
+		const lastSlash = filePath.Physical.path.lastIndexOf('/');
+		if (lastSlash === -1) return undefined;
+
+		return {
+			Physical: {
+				...filePath.Physical,
+				path: filePath.Physical.path.substring(0, lastSlash)
+			}
+		};
+	}
+
+	if ('Cloud' in filePath) {
+		const lastSlash = filePath.Cloud.path.lastIndexOf('/');
+		if (lastSlash === -1) return undefined;
+
+		return {
+			Cloud: {
+				...filePath.Cloud,
+				path: filePath.Cloud.path.substring(0, lastSlash)
+			}
+		};
+	}
+
+	return undefined;
+}
+
 export function FileInspector({file}: FileInspectorProps) {
 	const [activeTab, setActiveTab] = useState('overview');
+	const [pathScope, setPathScope] = useState<SdPath | undefined>(() => getParentPath(file));
 	const isDev = import.meta.env.DEV;
-
-	// Extract parent directory for pathScope to enable reactive sidecar updates
-	const getParentPath = (): SdPath | undefined => {
-		if (!file.sd_path) return undefined;
-
-		if ('Physical' in file.sd_path) {
-			const fullPath = file.sd_path.Physical.path;
-			const lastSlash = fullPath.lastIndexOf('/');
-			if (lastSlash === -1) return undefined;
-
-			return {
-				Physical: {
-					...file.sd_path.Physical,
-					path: fullPath.substring(0, lastSlash)
-				}
-			};
-		}
-
-		if ('Cloud' in file.sd_path) {
-			const fullPath = file.sd_path.Cloud.path;
-			const lastSlash = fullPath.lastIndexOf('/');
-			if (lastSlash === -1) return undefined;
-
-			return {
-				Cloud: {
-					...file.sd_path.Cloud,
-					path: fullPath.substring(0, lastSlash)
-				}
-			};
-		}
-
-		return undefined;
-	};
 
 	const fileQuery = useNormalizedQuery<{file_id: string}, File>({
 		query: 'files.by_id',
 		input: {file_id: file?.id || ''},
 		resourceType: 'file',
 		resourceId: file?.id,
-		pathScope: getParentPath(),
+		pathScope,
 		includeDescendants: false,
 		enabled: !!file?.id
 	});
 
 	const fileData = fileQuery.data || file;
+
+	useEffect(() => {
+		const nextPathScope = getParentPath(fileData);
+		setPathScope((currentPathScope) =>
+			JSON.stringify(currentPathScope) === JSON.stringify(nextPathScope)
+				? currentPathScope
+				: nextPathScope
+		);
+	}, [fileData]);
 
 	const tabs = [
 		{id: 'overview', label: 'Overview', icon: Info},
@@ -155,7 +167,14 @@ export function FileInspector({file}: FileInspectorProps) {
 // Quick Actions Component - Favorite, Share & Jobs buttons
 function FileQuickActions({file}: {file: File}) {
 	const platform = usePlatform();
-	const [isFavorite, setIsFavorite] = useState(false); // TODO: Get from file metadata
+	const [isFavorite, setIsFavorite] = useState(file.favorite);
+	const currentFileId = useRef(file.id);
+	const setFavorite = useLibraryMutation('metadata.set_favorite');
+
+	useEffect(() => {
+		currentFileId.current = file.id;
+		setIsFavorite(file.favorite);
+	}, [file.favorite, file.id]);
 
 	// AI Processing mutations
 	const extractText = useLibraryMutation('media.ocr.extract');
@@ -170,6 +189,7 @@ function FileQuickActions({file}: {file: File}) {
 	const isVideo = getContentKind(file) === 'video';
 	const isAudio = getContentKind(file) === 'audio';
 	const showJobsButton = isImage || isVideo || isAudio;
+	const canFavorite = !isVirtualFile(file);
 
 	// Get physical path for sharing
 	const getPhysicalPath = (): string | null => {
@@ -183,8 +203,23 @@ function FileQuickActions({file}: {file: File}) {
 	const canShare = !!physicalPath && !!platform.shareFiles;
 
 	const handleFavorite = async () => {
-		setIsFavorite(!isFavorite);
-		// TODO: Wire up to metadata.set_favorite mutation when available
+		const requestFileId = file.id;
+		const nextFavorite = !isFavorite;
+		setIsFavorite(nextFavorite);
+
+		try {
+			await setFavorite.mutateAsync({
+				entry_uuid: file.id,
+				favorite: nextFavorite
+			});
+		} catch (error) {
+			if (currentFileId.current !== requestFileId) return;
+			setIsFavorite(isFavorite);
+			toast.error({
+				title: 'Favorite Update Failed',
+				body: String(error)
+			});
+		}
 	};
 
 	const handleShare = async () => {
@@ -292,20 +327,23 @@ function FileQuickActions({file}: {file: File}) {
 
 	return (
 		<div className="flex items-center gap-1.5">
-			{/* Favorite Button */}
-			<button
-				type="button"
-				onClick={handleFavorite}
-				className={clsx(
-					'flex size-7 items-center justify-center rounded-full border transition-all active:scale-95',
-					isFavorite
-						? 'border-accent/30 bg-accent/20 text-accent'
-						: 'border-sidebar-line/30 bg-sidebar-box/20 text-sidebar-inkDull hover:bg-sidebar-box/30 hover:text-sidebar-ink'
-				)}
-				title={isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-			>
-				<Heart size={14} weight={isFavorite ? 'fill' : 'bold'} />
-			</button>
+			{canFavorite && (
+				<button
+					type="button"
+					onClick={handleFavorite}
+					disabled={setFavorite.isPending}
+					className={clsx(
+						'flex size-7 items-center justify-center rounded-full border transition-all active:scale-95',
+						setFavorite.isPending && 'cursor-wait opacity-60',
+						isFavorite
+							? 'border-accent/30 bg-accent/20 text-accent'
+							: 'border-sidebar-line/30 bg-sidebar-box/20 text-sidebar-inkDull hover:bg-sidebar-box/30 hover:text-sidebar-ink'
+					)}
+					title={isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+				>
+					<Heart size={14} weight={isFavorite ? 'fill' : 'bold'} />
+				</button>
+			)}
 
 			{/* Share Button */}
 			{canShare && (

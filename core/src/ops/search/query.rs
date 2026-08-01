@@ -285,6 +285,13 @@ impl FileSearchQuery {
 			))
 			.await?;
 
+		let favorite_entry_uuids = File::favorite_entry_uuids(
+			db,
+			rows.iter()
+				.filter_map(|row| row.try_get::<Option<Uuid>>("", "entry_uuid").ok().flatten()),
+		)
+		.await?;
+
 		// Collect all content UUIDs for batch sidecar query
 		let content_uuids: Vec<Uuid> = rows
 			.iter()
@@ -410,7 +417,8 @@ impl FileSearchQuery {
 			};
 
 			// Convert to File
-			let mut file = File::from_entity_model(entity_model, sd_path);
+			let favorite = entry_uuid.is_some_and(|uuid| favorite_entry_uuids.contains(&uuid));
+			let mut file = File::from_entity_model(entity_model, sd_path, favorite);
 
 			// Build and set content identity if we have the required fields
 			if let (Some(ci_uuid), Some(ci_hash), Some(ci_first_seen), Some(ci_last_verified)) = (
@@ -865,6 +873,7 @@ impl FileSearchQuery {
 		entry_model: entry::Model,
 		db: &DatabaseConnection,
 		score: f32,
+		favorite: bool,
 	) -> QueryResult<Option<crate::ops::search::output::FileSearchResult>> {
 		// Skip entries without volume_id (can't determine device slug)
 		let Some(volume_id) = entry_model.volume_id else {
@@ -898,7 +907,7 @@ impl FileSearchQuery {
 		};
 
 		// Use File::from_entity_model to properly construct the file
-		let file = crate::domain::File::from_entity_model(entry_model, sd_path);
+		let file = crate::domain::File::from_entity_model(entry_model, sd_path, favorite);
 
 		Ok(Some(crate::ops::search::output::FileSearchResult {
 			file,
@@ -1040,12 +1049,20 @@ impl FileSearchQuery {
 		// Index content identities by entry content_id for per-entry lookup
 		let identities_by_content_id: std::collections::HashMap<i32, &content_identity::Model> =
 			content_identities.iter().map(|ci| (ci.id, ci)).collect();
+		let favorite_entry_uuids =
+			File::favorite_entry_uuids(db, entries.iter().filter_map(|entry| entry.uuid)).await?;
 
 		// Convert entries to FileSearchResult, hydrating each with content_identity
 		let mut results = Vec::new();
 		for entry_model in entries {
 			let content_id = entry_model.content_id;
-			if let Some(mut result) = self.entry_to_search_result(entry_model, db, 1.0).await? {
+			let favorite = entry_model
+				.uuid
+				.is_some_and(|uuid| favorite_entry_uuids.contains(&uuid));
+			if let Some(mut result) = self
+				.entry_to_search_result(entry_model, db, 1.0, favorite)
+				.await?
+			{
 				if let Some(cid) = content_id {
 					if let Some(ci) = identities_by_content_id.get(&cid) {
 						let kind = kinds_by_id

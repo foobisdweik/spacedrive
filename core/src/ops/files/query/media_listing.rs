@@ -302,6 +302,13 @@ impl LibraryQuery for MediaListingQuery {
 				.push(s);
 		}
 
+		let favorite_entry_uuids = File::favorite_entry_uuids(
+			db.conn(),
+			rows.iter()
+				.filter_map(|row| row.try_get::<Option<Uuid>>("", "entry_uuid").ok().flatten()),
+		)
+		.await?;
+
 		// Convert to File objects
 		let mut files = Vec::new();
 		for row in rows {
@@ -436,7 +443,8 @@ impl LibraryQuery for MediaListingQuery {
 			};
 
 			// Convert to File using from_entity_model
-			let mut file = File::from_entity_model(entity_model, entry_sd_path);
+			let favorite = entry_uuid.is_some_and(|uuid| favorite_entry_uuids.contains(&uuid));
+			let mut file = File::from_entity_model(entity_model, entry_sd_path, favorite);
 
 			// Add content identity if available
 			if let (Some(ci_uuid), Some(ci_hash), Some(ci_first_seen), Some(ci_last_verified)) = (

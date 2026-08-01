@@ -68,6 +68,17 @@ impl LibraryQuery for SpaceLayoutQuery {
 			updated_at: space_model.updated_at.into(),
 		};
 
+		let favorite_entry_uuids = File::favorite_entry_uuids(
+			db,
+			space_item::Entity::find()
+				.filter(space_item::Column::SpaceId.eq(space_model.id))
+				.all(db)
+				.await?
+				.into_iter()
+				.filter_map(|item| item.entry_uuid),
+		)
+		.await?;
+
 		// Get space-level items (no group)
 		let space_item_models = crate::infra::db::entities::space_item::Entity::find()
 			.filter(crate::infra::db::entities::space_item::Column::SpaceId.eq(space_model.id))
@@ -94,9 +105,14 @@ impl LibraryQuery for SpaceLayoutQuery {
 					.one(db)
 					.await
 				{
-					let file = build_file_from_entry(entry_model, &item_type, db)
-						.await
-						.map(Box::new);
+					let file = build_file_from_entry(
+						entry_model,
+						&item_type,
+						db,
+						favorite_entry_uuids.contains(&entry_uuid),
+					)
+					.await
+					.map(Box::new);
 					file
 				} else {
 					tracing::warn!("Entry {} not found for space item", entry_uuid);
@@ -174,9 +190,14 @@ impl LibraryQuery for SpaceLayoutQuery {
 						.await
 					{
 						tracing::debug!("Found entry: name={}", entry_model.name);
-						let file = build_file_from_entry(entry_model, &item_type, db)
-							.await
-							.map(Box::new);
+						let file = build_file_from_entry(
+							entry_model,
+							&item_type,
+							db,
+							favorite_entry_uuids.contains(&entry_uuid),
+						)
+						.await
+						.map(Box::new);
 						tracing::info!(
 							"Built file for group item: {:?}",
 							file.as_ref().map(|f| &f.name)
@@ -222,6 +243,7 @@ async fn build_file_from_entry(
 	entry_model: entry::Model,
 	item_type: &ItemType,
 	db: &DatabaseConnection,
+	favorite: bool,
 ) -> Option<File> {
 	// Get the SdPath from item_type
 	let sd_path = match item_type {
@@ -272,7 +294,7 @@ async fn build_file_from_entry(
 		Vec::new()
 	};
 
-	let mut file = File::from_entity_model(entry_model, sd_path);
+	let mut file = File::from_entity_model(entry_model, sd_path, favorite);
 	file.content_identity = content_identity;
 	file.sidecars = sidecars;
 	if let Some(ref ci) = file.content_identity {

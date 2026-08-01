@@ -1083,7 +1083,16 @@ impl IndexerJob {
 		let event_bus = ctx.library().event_bus().clone();
 		let total_batches = state.entry_batches.len();
 		let mut batch_number = 0;
-
+		let persistent_entry_uuids = super::reconciliation::extract_persistent_uuids_for_path(
+			ctx.library().db().conn(),
+			root_path,
+		)
+		.await
+		.map_err(|error| {
+			JobError::execution(format!(
+				"Failed to load persistent entry UUIDs for favorite state: {error}"
+			))
+		})?;
 		while let Some(batch) = state.entry_batches.pop() {
 			ctx.check_interrupt().await?;
 
@@ -1158,6 +1167,19 @@ impl IndexerJob {
 			// Volume indexing only needs job progress events (emitted above)
 			// Directory browsing needs ResourceChangedBatch events to populate UI
 			if !is_volume_indexing {
+				let favorite_entry_uuids = File::favorite_entry_uuids(
+					ctx.library().db().conn(),
+					batch
+						.iter()
+						.filter_map(|entry| persistent_entry_uuids.get(&entry.path).copied()),
+				)
+				.await
+				.map_err(|error| {
+					JobError::execution(format!(
+						"Failed to load favorites for index events: {error}"
+					))
+				})?;
+
 				// Build event files using the UUID map (no lock acquisitions)
 				let files_for_event: Vec<File> = batch
 					.iter()
@@ -1200,6 +1222,9 @@ impl IndexerJob {
 							content_identity: None,
 							alternate_paths: vec![],
 							tags: vec![],
+							favorite: persistent_entry_uuids
+								.get(&entry.path)
+								.is_some_and(|uuid| favorite_entry_uuids.contains(uuid)),
 							sidecars: vec![],
 							image_media_data: None,
 							video_media_data: None,
@@ -1305,7 +1330,7 @@ async fn reconcile_ephemeral_uuids_with_libraries(
 					path = %root_path.display(),
 					"reconciled UUIDs for ephemeral path"
 				);
-				emit_uuid_reconciliation_events(&cache, &event_bus, &changes).await;
+				emit_uuid_reconciliation_events(&cache, &event_bus, &db, &changes).await;
 			}
 			Ok(_) => {}
 			Err(e) => {
@@ -1324,6 +1349,7 @@ async fn reconcile_ephemeral_uuids_with_libraries(
 async fn emit_uuid_reconciliation_events(
 	cache: &crate::ops::indexing::ephemeral::EphemeralIndexCache,
 	event_bus: &crate::infra::event::EventBus,
+	db: &sea_orm::DatabaseConnection,
 	changes: &[crate::ops::indexing::reconciliation::ReconciledUuid],
 ) {
 	// Only entries that previously had a different UUID can be cached by the
@@ -1332,6 +1358,20 @@ async fn emit_uuid_reconciliation_events(
 	if stale.is_empty() {
 		return;
 	}
+
+	let favorite_entry_uuids =
+		match crate::domain::File::favorite_entry_uuids(db, stale.iter().map(|change| change.uuid))
+			.await
+		{
+			Ok(favorites) => favorites,
+			Err(error) => {
+				tracing::warn!(
+					error = %error,
+					"failed to load favorites for UUID reconciliation events"
+				);
+				Default::default()
+			}
+		};
 
 	let index = cache.get_global_index();
 	let index = index.read().await;
@@ -1345,6 +1385,7 @@ async fn emit_uuid_reconciliation_events(
 		let sd_path = crate::domain::addressing::SdPath::local(change.path.clone());
 		let mut file = crate::domain::File::from_ephemeral(change.uuid, &metadata, sd_path);
 		file.content_kind = index.get_content_kind(&change.path);
+		file.favorite = favorite_entry_uuids.contains(&change.uuid);
 		files.push(file);
 		if let Some(previous) = change.previous {
 			alternate_ids.push(previous);

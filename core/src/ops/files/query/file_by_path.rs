@@ -167,8 +167,15 @@ impl LibraryQuery for FileByPathQuery {
 					(None, Vec::new(), None, None, None)
 				};
 
+			let favorite = match entry_model.uuid {
+				Some(entry_uuid) => File::favorite_entry_uuids(db.conn(), [entry_uuid])
+					.await?
+					.contains(&entry_uuid),
+				None => false,
+			};
+
 			// Convert to File using from_entity_model
-			let mut file = File::from_entity_model(entry_model.clone(), sd_path);
+			let mut file = File::from_entity_model(entry_model.clone(), sd_path, favorite);
 			file.sidecars = sidecars;
 			file.content_identity = content_identity_domain;
 			file.image_media_data = image_media;
