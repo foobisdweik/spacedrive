@@ -2,12 +2,15 @@ use std::{
 	collections::{HashMap, HashSet},
 	io::ErrorKind,
 	path::{Component, Path, PathBuf},
-	sync::Arc,
+	sync::{Arc, LazyLock},
 };
 
 use anyhow::Result;
 use chrono::Utc;
-use sea_orm::{entity::prelude::*, ActiveValue, QueryFilter, QuerySelect, TransactionTrait};
+use sea_orm::{
+	entity::prelude::*, ActiveValue, ConnectionTrait, DatabaseBackend, QueryFilter, QuerySelect,
+	Statement, TransactionTrait,
+};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -26,6 +29,35 @@ use crate::{
 
 fn should_delete_managed_file(_source: Option<&str>, relative_path: &str) -> bool {
 	!relative_path.is_empty()
+}
+
+type SyncedDeletionKey = (Uuid, String, String);
+
+static SYNCED_DELETED_SIDECARS: LazyLock<Mutex<HashSet<SyncedDeletionKey>>> =
+	LazyLock::new(|| Mutex::new(HashSet::new()));
+
+pub(crate) async fn mark_synced_sidecar_deleted(content_uuid: Uuid, kind: &str, variant: &str) {
+	SYNCED_DELETED_SIDECARS.lock().await.insert((
+		content_uuid,
+		kind.to_string(),
+		variant.to_string(),
+	));
+}
+
+async fn clear_synced_sidecar_deletion(content_uuid: Uuid, kind: &str, variant: &str) {
+	SYNCED_DELETED_SIDECARS.lock().await.remove(&(
+		content_uuid,
+		kind.to_string(),
+		variant.to_string(),
+	));
+}
+
+async fn was_synced_sidecar_deleted(content_uuid: Uuid, kind: &str, variant: &str) -> bool {
+	SYNCED_DELETED_SIDECARS.lock().await.contains(&(
+		content_uuid,
+		kind.to_string(),
+		variant.to_string(),
+	))
 }
 
 async fn resolve_managed_sidecar_path(base: &Path, relative_path: &str) -> Result<Option<PathBuf>> {
@@ -59,6 +91,46 @@ async fn resolve_managed_sidecar_path(base: &Path, relative_path: &str) -> Resul
 		.file_name()
 		.ok_or_else(|| anyhow::anyhow!("Invalid managed sidecar path"))?;
 	Ok(Some(canonical_parent.join(file_name)))
+}
+
+pub(crate) async fn remove_synced_managed_sidecar(
+	db: &DatabaseConnection,
+	sidecar: &sidecar::Model,
+) -> Result<(), DbErr> {
+	mark_synced_sidecar_deleted(sidecar.content_uuid, &sidecar.kind, &sidecar.variant).await;
+
+	if !should_delete_managed_file(sidecar.source.as_deref(), &sidecar.rel_path) {
+		return Ok(());
+	}
+
+	let database = db
+		.query_one(Statement::from_string(
+			DatabaseBackend::Sqlite,
+			"PRAGMA database_list".to_string(),
+		))
+		.await?
+		.ok_or_else(|| DbErr::Custom("Library database path is unavailable".to_string()))?;
+	let database_path: String = database.try_get("", "file")?;
+	if database_path.is_empty() {
+		return Ok(());
+	}
+	let library_path = Path::new(&database_path)
+		.parent()
+		.ok_or_else(|| DbErr::Custom("Library database has no parent directory".to_string()))?;
+	let sidecars_dir = library_path.join("sidecars");
+
+	if let Some(path) = resolve_managed_sidecar_path(&sidecars_dir, &sidecar.rel_path)
+		.await
+		.map_err(|error| DbErr::Custom(error.to_string()))?
+	{
+		match tokio::fs::remove_file(path).await {
+			Ok(()) => {}
+			Err(error) if error.kind() == ErrorKind::NotFound => {}
+			Err(error) => return Err(DbErr::Custom(error.to_string())),
+		}
+	}
+
+	Ok(())
 }
 
 /// Manages the Virtual Sidecar System
@@ -273,6 +345,7 @@ impl SidecarManager {
 			kind.as_str().to_string(),
 			variant.as_str().to_string(),
 		));
+		clear_synced_sidecar_deletion(*content_uuid, kind.as_str(), variant.as_str()).await;
 
 		let path = self
 			.compute_path(&library.id(), content_uuid, kind, variant, format)
@@ -581,6 +654,25 @@ impl SidecarManager {
 				variant = variant.as_str(),
 				"discarded sidecar generated after deletion"
 			);
+			return Ok(());
+		}
+		if was_synced_sidecar_deleted(*content_uuid, kind.as_str(), variant.as_str()).await {
+			let path = self
+				.compute_path(&library.id(), content_uuid, kind, variant, format)
+				.await?;
+			let sidecars_dir = self.get_path_builder(&library.id()).await?.sidecars_dir();
+
+			if let Some(path) =
+				resolve_managed_sidecar_path(&sidecars_dir, &path.relative_path.to_string_lossy())
+					.await?
+			{
+				match tokio::fs::remove_file(path).await {
+					Ok(()) => {}
+					Err(error) if error.kind() == ErrorKind::NotFound => {}
+					Err(error) => return Err(error.into()),
+				}
+			}
+
 			return Ok(());
 		}
 

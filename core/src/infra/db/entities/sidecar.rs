@@ -113,29 +113,48 @@ impl crate::infra::sync::Syncable for Model {
 			QueryFilter,
 		};
 
+		#[derive(Deserialize)]
+		struct SyncedSidecar {
+			uuid: Uuid,
+			content_uuid: Uuid,
+			kind: String,
+			variant: String,
+			format: String,
+			rel_path: String,
+			size: i64,
+			checksum: Option<String>,
+			status: String,
+			source: Option<String>,
+			version: i32,
+			created_at: DateTime<Utc>,
+			updated_at: DateTime<Utc>,
+		}
+
 		match entry.change_type {
 			ChangeType::Insert | ChangeType::Update => {
-				#[derive(Deserialize)]
-				struct SyncedSidecar {
-					uuid: Uuid,
-					content_uuid: Uuid,
-					kind: String,
-					variant: String,
-					format: String,
-					rel_path: String,
-					size: i64,
-					checksum: Option<String>,
-					status: String,
-					source: Option<String>,
-					version: i32,
-					created_at: DateTime<Utc>,
-					updated_at: DateTime<Utc>,
-				}
-
 				let sidecar: SyncedSidecar =
 					serde_json::from_value(entry.data).map_err(|error| {
 						sea_orm::DbErr::Custom(format!("Invalid sidecar sync data: {error}"))
 					})?;
+				let is_locally_available = super::sidecar_availability::Entity::find()
+					.filter(
+						super::sidecar_availability::Column::ContentUuid.eq(sidecar.content_uuid),
+					)
+					.filter(super::sidecar_availability::Column::Kind.eq(&sidecar.kind))
+					.filter(super::sidecar_availability::Column::Variant.eq(&sidecar.variant))
+					.filter(
+						super::sidecar_availability::Column::DeviceUuid
+							.eq(crate::device::get_current_device_id()),
+					)
+					.filter(super::sidecar_availability::Column::Has.eq(true))
+					.one(db)
+					.await?
+					.is_some();
+				let local_status = if is_locally_available {
+					sidecar.status
+				} else {
+					"pending".to_string()
+				};
 				let active = ActiveModel {
 					id: NotSet,
 					uuid: Set(sidecar.uuid),
@@ -147,7 +166,7 @@ impl crate::infra::sync::Syncable for Model {
 					source_entry_id: Set(None),
 					size: Set(sidecar.size),
 					checksum: Set(sidecar.checksum),
-					status: Set(sidecar.status),
+					status: Set(local_status),
 					source: Set(sidecar.source),
 					version: Set(sidecar.version),
 					created_at: Set(sidecar.created_at),
@@ -156,11 +175,8 @@ impl crate::infra::sync::Syncable for Model {
 
 				Entity::insert(active)
 					.on_conflict(
-						OnConflict::column(Column::Uuid)
+						OnConflict::columns([Column::ContentUuid, Column::Kind, Column::Variant])
 							.update_columns([
-								Column::ContentUuid,
-								Column::Kind,
-								Column::Variant,
 								Column::Format,
 								Column::RelPath,
 								Column::Size,
@@ -176,11 +192,25 @@ impl crate::infra::sync::Syncable for Model {
 					.await?;
 			}
 			ChangeType::Delete => {
+				let synced: SyncedSidecar =
+					serde_json::from_value(entry.data).map_err(|error| {
+						sea_orm::DbErr::Custom(format!("Invalid sidecar sync data: {error}"))
+					})?;
+				crate::service::sidecar_manager::mark_synced_sidecar_deleted(
+					synced.content_uuid,
+					&synced.kind,
+					&synced.variant,
+				)
+				.await;
 				if let Some(sidecar) = Entity::find()
-					.filter(Column::Uuid.eq(entry.record_uuid))
+					.filter(Column::ContentUuid.eq(synced.content_uuid))
+					.filter(Column::Kind.eq(&synced.kind))
+					.filter(Column::Variant.eq(&synced.variant))
 					.one(db)
 					.await?
 				{
+					crate::service::sidecar_manager::remove_synced_managed_sidecar(db, &sidecar)
+						.await?;
 					super::sidecar_availability::Entity::delete_many()
 						.filter(
 							super::sidecar_availability::Column::ContentUuid
@@ -193,7 +223,9 @@ impl crate::infra::sync::Syncable for Model {
 				}
 
 				Entity::delete_many()
-					.filter(Column::Uuid.eq(entry.record_uuid))
+					.filter(Column::ContentUuid.eq(synced.content_uuid))
+					.filter(Column::Kind.eq(synced.kind))
+					.filter(Column::Variant.eq(synced.variant))
 					.exec(db)
 					.await?;
 			}

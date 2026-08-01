@@ -58,15 +58,6 @@ impl LibraryAction for DeleteSidecarAction {
 			));
 		}
 
-		let manager = context
-			.get_sidecar_manager()
-			.await
-			.ok_or_else(|| ActionError::Internal("Sidecar manager is unavailable".to_string()))?;
-		manager
-			.remove_sidecar(&library, &self.input.content_uuid, &kind, &variant)
-			.await
-			.map_err(|error| ActionError::Internal(format!("Failed to delete sidecar: {error}")))?;
-
 		for sidecar in &sidecars {
 			library
 				.sync_model(sidecar, ChangeType::Delete)
@@ -75,6 +66,15 @@ impl LibraryAction for DeleteSidecarAction {
 					ActionError::Internal(format!("Failed to sync sidecar deletion: {error}"))
 				})?;
 		}
+
+		let manager = context
+			.get_sidecar_manager()
+			.await
+			.ok_or_else(|| ActionError::Internal("Sidecar manager is unavailable".to_string()))?;
+		manager
+			.remove_sidecar(&library, &self.input.content_uuid, &kind, &variant)
+			.await
+			.map_err(|error| ActionError::Internal(format!("Failed to delete sidecar: {error}")))?;
 
 		let entry_uuids = if let Some(content) = content_identity::Entity::find()
 			.filter(content_identity::Column::Uuid.eq(self.input.content_uuid))
