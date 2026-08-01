@@ -670,6 +670,10 @@ export type DeleteItemInput = { item_id: string };
 
 export type DeleteItemOutput = { success: boolean };
 
+export type DeleteSidecarInput = { content_uuid: string; kind: string; variant: string };
+
+export type DeleteSidecarOutput = { content_uuid: string; kind: string; variant: string; deleted_count: number };
+
 export type DeleteSourceInput = { source_id: string };
 
 export type DeleteSourceOutput = { deleted: boolean };
@@ -5439,6 +5443,7 @@ export type LibraryAction =
   |  { type: 'media.thumbnail'; input: ThumbnailInput; output: JobReceipt }
   |  { type: 'media.thumbnail.regenerate'; input: RegenerateThumbnailInput; output: RegenerateThumbnailOutput }
   |  { type: 'media.thumbstrip.generate'; input: GenerateThumbstripInput; output: GenerateThumbstripOutput }
+  |  { type: 'sidecar.delete'; input: DeleteSidecarInput; output: DeleteSidecarOutput }
   |  { type: 'sources.create'; input: CreateSourceInput; output: CreateSourceOutput }
   |  { type: 'sources.delete'; input: DeleteSourceInput; output: DeleteSourceOutput }
   |  { type: 'sources.sync'; input: SyncSourceInput; output: JobReceipt }
@@ -5597,6 +5602,7 @@ export const WIRE_METHODS = {
     'media.thumbnail': 'action:media.thumbnail.input',
     'media.thumbnail.regenerate': 'action:media.thumbnail.regenerate.input',
     'media.thumbstrip.generate': 'action:media.thumbstrip.generate.input',
+    'sidecar.delete': 'action:sidecar.delete.input',
     'sources.create': 'action:sources.create.input',
     'sources.delete': 'action:sources.delete.input',
     'sources.sync': 'action:sources.sync.input',

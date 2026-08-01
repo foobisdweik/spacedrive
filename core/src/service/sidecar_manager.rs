@@ -1,6 +1,7 @@
 use std::{
 	collections::HashMap,
-	path::{Path, PathBuf},
+	io::ErrorKind,
+	path::{Component, Path, PathBuf},
 	sync::Arc,
 };
 
@@ -22,6 +23,25 @@ use crate::{
 		SidecarFormat, SidecarKind, SidecarPath, SidecarPathBuilder, SidecarStatus, SidecarVariant,
 	},
 };
+
+fn should_delete_managed_file(source: Option<&str>, relative_path: &str) -> bool {
+	source != Some("reference") && !relative_path.is_empty()
+}
+
+fn resolve_managed_sidecar_path(base: &Path, relative_path: &str) -> Result<PathBuf> {
+	let relative_path = Path::new(relative_path);
+	if relative_path.is_absolute()
+		|| relative_path.components().any(|component| {
+			matches!(
+				component,
+				Component::ParentDir | Component::RootDir | Component::Prefix(_)
+			)
+		}) {
+		anyhow::bail!("Invalid managed sidecar path");
+	}
+
+	Ok(base.join(relative_path))
+}
 
 /// Manages the Virtual Sidecar System
 pub struct SidecarManager {
@@ -668,6 +688,27 @@ impl SidecarManager {
 		variant: &SidecarVariant,
 	) -> Result<()> {
 		let db = library.db();
+		let sidecars = Sidecar::find()
+			.filter(sidecar::Column::ContentUuid.eq(*content_uuid))
+			.filter(sidecar::Column::Kind.eq(kind.as_str()))
+			.filter(sidecar::Column::Variant.eq(variant.as_str()))
+			.all(db.conn())
+			.await?;
+		let sidecars_dir = self.get_path_builder(&library.id()).await?.sidecars_dir();
+
+		for sidecar in &sidecars {
+			if !should_delete_managed_file(sidecar.source.as_deref(), &sidecar.rel_path) {
+				continue;
+			}
+
+			let path = resolve_managed_sidecar_path(&sidecars_dir, &sidecar.rel_path)?;
+
+			match tokio::fs::remove_file(&path).await {
+				Ok(()) => {}
+				Err(error) if error.kind() == ErrorKind::NotFound => {}
+				Err(error) => return Err(error.into()),
+			}
+		}
 
 		// Delete from database
 		Sidecar::delete_many()
@@ -847,4 +888,36 @@ pub struct SidecarPresence {
 	pub status: SidecarStatus,
 	/// Remote devices that have this sidecar
 	pub devices: Vec<Uuid>,
+}
+
+#[cfg(test)]
+mod tests {
+	use std::path::Path;
+
+	use super::{resolve_managed_sidecar_path, should_delete_managed_file};
+
+	#[test]
+	fn managed_sidecar_files_are_deleted_but_references_are_preserved() {
+		assert!(should_delete_managed_file(
+			Some("sidecar_manager"),
+			"thumb/ab/cd/file.webp"
+		));
+		assert!(!should_delete_managed_file(Some("reference"), ""));
+		assert!(!should_delete_managed_file(
+			Some("reference"),
+			"original.mov"
+		));
+		assert!(!should_delete_managed_file(None, ""));
+	}
+
+	#[test]
+	fn managed_sidecar_paths_stay_inside_the_sidecar_directory() {
+		let base = Path::new("/library/sidecars");
+		assert_eq!(
+			resolve_managed_sidecar_path(base, "thumb/ab/cd/file.jpg").unwrap(),
+			base.join("thumb/ab/cd/file.jpg")
+		);
+		assert!(resolve_managed_sidecar_path(base, "../library.db").is_err());
+		assert!(resolve_managed_sidecar_path(base, "/tmp/file.jpg").is_err());
+	}
 }
