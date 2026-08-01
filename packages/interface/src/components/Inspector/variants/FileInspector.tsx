@@ -51,54 +51,66 @@ interface FileInspectorProps {
 	file: File;
 }
 
+function getParentPath(file: File | undefined): SdPath | undefined {
+	const filePath =
+		file?.sd_path && !('Content' in file.sd_path)
+			? file.sd_path
+			: file?.alternate_paths.find((path) => 'Physical' in path || 'Cloud' in path);
+
+	if (!filePath) return undefined;
+
+	if ('Physical' in filePath) {
+		const lastSlash = filePath.Physical.path.lastIndexOf('/');
+		if (lastSlash === -1) return undefined;
+
+		return {
+			Physical: {
+				...filePath.Physical,
+				path: filePath.Physical.path.substring(0, lastSlash)
+			}
+		};
+	}
+
+	if ('Cloud' in filePath) {
+		const lastSlash = filePath.Cloud.path.lastIndexOf('/');
+		if (lastSlash === -1) return undefined;
+
+		return {
+			Cloud: {
+				...filePath.Cloud,
+				path: filePath.Cloud.path.substring(0, lastSlash)
+			}
+		};
+	}
+
+	return undefined;
+}
+
 export function FileInspector({file}: FileInspectorProps) {
 	const [activeTab, setActiveTab] = useState('overview');
+	const [pathScope, setPathScope] = useState<SdPath | undefined>(() => getParentPath(file));
 	const isDev = import.meta.env.DEV;
-
-	// Extract parent directory for pathScope to enable reactive sidecar updates
-	const getParentPath = (): SdPath | undefined => {
-		if (!file.sd_path) return undefined;
-
-		if ('Physical' in file.sd_path) {
-			const fullPath = file.sd_path.Physical.path;
-			const lastSlash = fullPath.lastIndexOf('/');
-			if (lastSlash === -1) return undefined;
-
-			return {
-				Physical: {
-					...file.sd_path.Physical,
-					path: fullPath.substring(0, lastSlash)
-				}
-			};
-		}
-
-		if ('Cloud' in file.sd_path) {
-			const fullPath = file.sd_path.Cloud.path;
-			const lastSlash = fullPath.lastIndexOf('/');
-			if (lastSlash === -1) return undefined;
-
-			return {
-				Cloud: {
-					...file.sd_path.Cloud,
-					path: fullPath.substring(0, lastSlash)
-				}
-			};
-		}
-
-		return undefined;
-	};
 
 	const fileQuery = useNormalizedQuery<{file_id: string}, File>({
 		query: 'files.by_id',
 		input: {file_id: file?.id || ''},
 		resourceType: 'file',
 		resourceId: file?.id,
-		pathScope: getParentPath(),
+		pathScope,
 		includeDescendants: false,
 		enabled: !!file?.id
 	});
 
 	const fileData = fileQuery.data || file;
+
+	useEffect(() => {
+		const nextPathScope = getParentPath(fileData);
+		setPathScope((currentPathScope) =>
+			JSON.stringify(currentPathScope) === JSON.stringify(nextPathScope)
+				? currentPathScope
+				: nextPathScope
+		);
+	}, [fileData]);
 
 	const tabs = [
 		{id: 'overview', label: 'Overview', icon: Info},

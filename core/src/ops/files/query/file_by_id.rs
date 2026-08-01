@@ -167,7 +167,7 @@ impl LibraryQuery for FileByIdQuery {
 				};
 
 			// Convert to File using from_entity_model
-			let mut file = File::from_entity_model(entry_model.clone(), sd_path.clone());
+			let mut file = File::from_entity_model(entry_model.clone(), sd_path.clone(), false);
 			file.sidecars = sidecars;
 			file.content_identity = content_identity_domain;
 			file.image_media_data = image_media;
@@ -204,7 +204,9 @@ impl LibraryQuery for FileByIdQuery {
 					.await?;
 
 				if !metadata_records.is_empty() {
-					file.favorite = metadata_records.iter().any(|metadata| metadata.favorite);
+					file.favorite = metadata_records.iter().any(|metadata| {
+						metadata.favorite && metadata.entry_uuid == Some(entry_uuid)
+					});
 					let metadata_ids: Vec<i32> = metadata_records.iter().map(|m| m.id).collect();
 
 					// Load user_metadata_tag records

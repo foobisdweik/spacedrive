@@ -285,6 +285,13 @@ impl FileSearchQuery {
 			))
 			.await?;
 
+		let favorite_entry_uuids = File::favorite_entry_uuids(
+			db,
+			rows.iter()
+				.filter_map(|row| row.try_get::<Option<Uuid>>("", "entry_uuid").ok().flatten()),
+		)
+		.await?;
+
 		// Collect all content UUIDs for batch sidecar query
 		let content_uuids: Vec<Uuid> = rows
 			.iter()
@@ -418,7 +425,8 @@ impl FileSearchQuery {
 			};
 
 			// Convert to File
-			let mut file = File::from_entity_model(entity_model, sd_path);
+			let favorite = entry_uuid.is_some_and(|uuid| favorite_entry_uuids.contains(&uuid));
+			let mut file = File::from_entity_model(entity_model, sd_path, favorite);
 
 			// Build and set content identity if we have the required fields
 			if let (Some(ci_uuid), Some(ci_hash), Some(ci_first_seen), Some(ci_last_verified)) = (
@@ -905,8 +913,16 @@ impl FileSearchQuery {
 			path: full_path.into(),
 		};
 
+		let favorite = if let Some(entry_uuid) = entry_model.uuid {
+			crate::domain::File::favorite_entry_uuids(db, [entry_uuid])
+				.await?
+				.contains(&entry_uuid)
+		} else {
+			false
+		};
+
 		// Use File::from_entity_model to properly construct the file
-		let file = crate::domain::File::from_entity_model(entry_model, sd_path);
+		let file = crate::domain::File::from_entity_model(entry_model, sd_path, favorite);
 
 		Ok(Some(crate::ops::search::output::FileSearchResult {
 			file,

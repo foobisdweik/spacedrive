@@ -281,7 +281,14 @@ async fn build_file_from_entry(
 		Vec::new()
 	};
 
-	let mut file = File::from_entity_model(entry_model, sd_path);
+	let favorite = match entry_model.uuid {
+		Some(entry_uuid) => File::favorite_entry_uuids(db, [entry_uuid])
+			.await
+			.ok()
+			.is_some_and(|entry_uuids| entry_uuids.contains(&entry_uuid)),
+		None => false,
+	};
+	let mut file = File::from_entity_model(entry_model, sd_path, favorite);
 	file.content_identity = content_identity;
 	file.sidecars = sidecars;
 	if let Some(ref ci) = file.content_identity {

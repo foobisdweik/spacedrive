@@ -423,6 +423,9 @@ impl DirectoryListingQuery {
 			}
 		}
 
+		let favorite_entry_uuids =
+			File::favorite_entry_uuids(db, entry_uuids.iter().copied()).await?;
+
 		// Convert to File objects
 		let mut files = Vec::new();
 		for row in rows {
@@ -528,7 +531,8 @@ impl DirectoryListingQuery {
 			};
 
 			// Convert to File using from_entity_model
-			let mut file = File::from_entity_model(entity_model, entry_sd_path);
+			let favorite = entry_uuid.is_some_and(|uuid| favorite_entry_uuids.contains(&uuid));
+			let mut file = File::from_entity_model(entity_model, entry_sd_path, favorite);
 
 			// Add content identity if available
 			if let (Some(ci_uuid), Some(ci_hash), Some(ci_first_seen), Some(ci_last_verified)) = (

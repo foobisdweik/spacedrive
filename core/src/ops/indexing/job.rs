@@ -1083,6 +1083,26 @@ impl IndexerJob {
 		let event_bus = ctx.library().event_bus().clone();
 		let total_batches = state.entry_batches.len();
 		let mut batch_number = 0;
+		let persistent_entry_uuids = super::reconciliation::extract_persistent_uuids_for_path(
+			ctx.library().db().conn(),
+			root_path,
+		)
+		.await
+		.map_err(|error| {
+			JobError::execution(format!(
+				"Failed to load persistent entry UUIDs for favorite state: {error}"
+			))
+		})?;
+		let favorite_entry_uuids = File::favorite_entry_uuids(
+			ctx.library().db().conn(),
+			persistent_entry_uuids.values().copied(),
+		)
+		.await
+		.map_err(|error| {
+			JobError::execution(format!(
+				"Failed to load favorites for index events: {error}"
+			))
+		})?;
 
 		while let Some(batch) = state.entry_batches.pop() {
 			ctx.check_interrupt().await?;
@@ -1200,7 +1220,9 @@ impl IndexerJob {
 							content_identity: None,
 							alternate_paths: vec![],
 							tags: vec![],
-							favorite: false,
+							favorite: persistent_entry_uuids
+								.get(&entry.path)
+								.is_some_and(|uuid| favorite_entry_uuids.contains(uuid)),
 							sidecars: vec![],
 							image_media_data: None,
 							video_media_data: None,
