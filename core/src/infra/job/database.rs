@@ -290,14 +290,37 @@ impl JobDb {
 
 	/// Delete jobs that have reached a terminal state.
 	pub async fn clear_finished_jobs(&self) -> JobResult<u64> {
-		let result = jobs::Entity::delete_many()
+		let txn = self.conn.begin().await?;
+		let terminal_jobs = jobs::Entity::find()
 			.filter(jobs::Column::Status.is_in([
 				JobStatus::Completed.to_string(),
 				JobStatus::Failed.to_string(),
 				JobStatus::Cancelled.to_string(),
 			]))
-			.exec(&self.conn)
+			.all(&txn)
 			.await?;
+
+		if terminal_jobs.is_empty() {
+			txn.commit().await?;
+			return Ok(0);
+		}
+
+		let terminal_job_ids = terminal_jobs
+			.into_iter()
+			.map(|job| job.id)
+			.collect::<Vec<_>>();
+
+		checkpoint::Entity::delete_many()
+			.filter(checkpoint::Column::JobId.is_in(terminal_job_ids.clone()))
+			.exec(&txn)
+			.await?;
+
+		let result = jobs::Entity::delete_many()
+			.filter(jobs::Column::Id.is_in(terminal_job_ids))
+			.exec(&txn)
+			.await?;
+
+		txn.commit().await?;
 
 		Ok(result.rows_affected)
 	}
@@ -336,6 +359,17 @@ mod tests {
 		.unwrap();
 	}
 
+	async fn insert_checkpoint(conn: &DatabaseConnection, status: JobStatus) {
+		checkpoint::ActiveModel {
+			job_id: Set(status.to_string()),
+			checkpoint_data: Set(vec![1, 2, 3]),
+			created_at: Set(Utc::now()),
+		}
+		.insert(conn)
+		.await
+		.unwrap();
+	}
+
 	#[tokio::test]
 	async fn clear_finished_jobs_preserves_active_jobs() {
 		let conn = Database::connect("sqlite::memory:").await.unwrap();
@@ -350,6 +384,7 @@ mod tests {
 			JobStatus::Cancelled,
 		] {
 			insert_job(&conn, status).await;
+			insert_checkpoint(&conn, status).await;
 		}
 
 		let db = JobDb::new(conn);
@@ -369,5 +404,15 @@ mod tests {
 		expected_statuses.sort();
 
 		assert_eq!(remaining_statuses, expected_statuses);
+
+		let remaining_checkpoints = checkpoint::Entity::find().all(db.conn()).await.unwrap();
+		let mut remaining_checkpoint_ids = remaining_checkpoints
+			.into_iter()
+			.map(|checkpoint| checkpoint.job_id)
+			.collect::<Vec<_>>();
+		remaining_checkpoint_ids.sort();
+		expected_statuses.sort();
+
+		assert_eq!(remaining_checkpoint_ids, expected_statuses);
 	}
 }

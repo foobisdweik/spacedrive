@@ -228,9 +228,7 @@ impl DynJob for IndexerJob {
 	}
 
 	fn should_emit_events(&self) -> bool {
-		// Background indexers are ephemeral, but their lifecycle must remain
-		// visible so clients can show progress and completion reliably.
-		true
+		self.config.is_volume_indexing || self.config.run_in_background || self.should_persist()
 	}
 }
 
@@ -1393,6 +1391,20 @@ mod tests {
 		background_config.run_in_background = true;
 		let background_job = IndexerJob::new(background_config);
 		assert!(!background_job.should_update_persistent_location_record());
+	}
+
+	#[test]
+	fn background_indexers_emit_events_without_exposing_internal_browses() {
+		let location_id = Uuid::new_v4();
+		let mut background_config =
+			IndexerJobConfig::new(location_id, test_path(), IndexMode::Deep);
+		background_config.run_in_background = true;
+
+		assert!(IndexerJob::new(background_config).should_emit_events());
+		assert!(
+			!IndexerJob::ephemeral_browse(test_path(), IndexScope::Current, false)
+				.should_emit_events()
+		);
 	}
 
 	#[test]
