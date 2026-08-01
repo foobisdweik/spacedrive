@@ -109,7 +109,13 @@ impl LibraryAction for EnableIndexingAction {
 			&[updated_location.uuid],
 		)
 		.await
-		.map_err(|e| ActionError::Internal(format!("Failed to emit location event: {}", e)))?;
+		.unwrap_or_else(|error| {
+			tracing::warn!(
+				location_id = %updated_location.uuid,
+				%error,
+				"Failed to emit the persisted location index-mode update"
+			);
+		});
 
 		// Get the entry and directory path for the location
 		let entry_id = updated_location

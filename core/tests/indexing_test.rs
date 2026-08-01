@@ -190,6 +190,7 @@ async fn test_enable_indexing_emits_mode_before_single_scanning_transition() -> 
 			&failure_harness.core.context.volume_manager,
 		)
 		.await?;
+	tokio::fs::remove_dir_all(failure_location.path()).await?;
 	let mut failure_events = subscribe_to_location_events(failure_harness.library.event_bus());
 
 	failure_harness
@@ -239,8 +240,9 @@ async fn test_enable_indexing_emits_mode_before_single_scanning_transition() -> 
 		failure_location_events.iter().any(|location| {
 			location.index_mode == sd_core::domain::IndexMode::Content
 				&& location.scan_state == ScanState::Idle
+				&& !location.is_available
 		}),
-		"dispatch failure must not hide the durable index-mode update"
+		"dispatch failure must emit the durable mode and unavailable path state"
 	);
 
 	failure_harness.shutdown().await?;
