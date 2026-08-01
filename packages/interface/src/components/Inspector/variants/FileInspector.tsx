@@ -30,7 +30,7 @@ import type {File, SdPath} from '@sd/ts-client';
 import {toast} from '@spacedrive/primitives';
 import clsx from 'clsx';
 import {LocationMap} from '../LocationMap';
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import {useJobsContext} from '../../../components/JobManager/hooks/JobsContext';
 import {TagSelectorButton} from '../../../components/Tags';
 import {usePlatform} from '../../../contexts/PlatformContext';
@@ -155,7 +155,12 @@ export function FileInspector({file}: FileInspectorProps) {
 // Quick Actions Component - Favorite, Share & Jobs buttons
 function FileQuickActions({file}: {file: File}) {
 	const platform = usePlatform();
-	const [isFavorite, setIsFavorite] = useState(false); // TODO: Get from file metadata
+	const [isFavorite, setIsFavorite] = useState(file.favorite);
+	const setFavorite = useLibraryMutation('metadata.set_favorite');
+
+	useEffect(() => {
+		setIsFavorite(file.favorite);
+	}, [file.favorite, file.id]);
 
 	// AI Processing mutations
 	const extractText = useLibraryMutation('media.ocr.extract');
@@ -183,8 +188,21 @@ function FileQuickActions({file}: {file: File}) {
 	const canShare = !!physicalPath && !!platform.shareFiles;
 
 	const handleFavorite = async () => {
-		setIsFavorite(!isFavorite);
-		// TODO: Wire up to metadata.set_favorite mutation when available
+		const nextFavorite = !isFavorite;
+		setIsFavorite(nextFavorite);
+
+		try {
+			await setFavorite.mutateAsync({
+				entry_uuid: file.id,
+				favorite: nextFavorite
+			});
+		} catch (error) {
+			setIsFavorite(isFavorite);
+			toast.error({
+				title: 'Favorite Update Failed',
+				body: String(error)
+			});
+		}
 	};
 
 	const handleShare = async () => {
@@ -296,8 +314,10 @@ function FileQuickActions({file}: {file: File}) {
 			<button
 				type="button"
 				onClick={handleFavorite}
+				disabled={setFavorite.isPending}
 				className={clsx(
 					'flex size-7 items-center justify-center rounded-full border transition-all active:scale-95',
+					setFavorite.isPending && 'cursor-wait opacity-60',
 					isFavorite
 						? 'border-accent/30 bg-accent/20 text-accent'
 						: 'border-sidebar-line/30 bg-sidebar-box/20 text-sidebar-inkDull hover:bg-sidebar-box/30 hover:text-sidebar-ink'

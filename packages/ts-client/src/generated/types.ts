@@ -1338,6 +1338,10 @@ alternate_paths: SdPath[];
  */
 tags: Tag[];
 /**
+ * Whether the file is marked as a favorite
+ */
+favorite: boolean;
+/**
  * A list of sidecars associated with this file
  */
 sidecars: Sidecar[];
@@ -3983,6 +3987,10 @@ export type ServiceState = { running: boolean; details: string | null };
 
 export type ServiceStatus = { location_watcher: ServiceState; networking: ServiceState; volume_monitor: ServiceState; file_sharing: ServiceState };
 
+export type SetFavoriteInput = { entry_uuid: string; favorite: boolean };
+
+export type SetFavoriteOutput = { entry_uuid: string; favorite: boolean };
+
 /**
  * Domain representation of a sidecar
  */
@@ -5439,6 +5447,7 @@ export type LibraryAction =
   |  { type: 'media.thumbnail'; input: ThumbnailInput; output: JobReceipt }
   |  { type: 'media.thumbnail.regenerate'; input: RegenerateThumbnailInput; output: RegenerateThumbnailOutput }
   |  { type: 'media.thumbstrip.generate'; input: GenerateThumbstripInput; output: GenerateThumbstripOutput }
+  |  { type: 'metadata.set_favorite'; input: SetFavoriteInput; output: SetFavoriteOutput }
   |  { type: 'sources.create'; input: CreateSourceInput; output: CreateSourceOutput }
   |  { type: 'sources.delete'; input: DeleteSourceInput; output: DeleteSourceOutput }
   |  { type: 'sources.sync'; input: SyncSourceInput; output: JobReceipt }
@@ -5597,6 +5606,7 @@ export const WIRE_METHODS = {
     'media.thumbnail': 'action:media.thumbnail.input',
     'media.thumbnail.regenerate': 'action:media.thumbnail.regenerate.input',
     'media.thumbstrip.generate': 'action:media.thumbstrip.generate.input',
+    'metadata.set_favorite': 'action:metadata.set_favorite.input',
     'sources.create': 'action:sources.create.input',
     'sources.delete': 'action:sources.delete.input',
     'sources.sync': 'action:sources.sync.input',

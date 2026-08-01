@@ -204,6 +204,7 @@ impl LibraryQuery for FileByIdQuery {
 					.await?;
 
 				if !metadata_records.is_empty() {
+					file.favorite = metadata_records.iter().any(|metadata| metadata.favorite);
 					let metadata_ids: Vec<i32> = metadata_records.iter().map(|m| m.id).collect();
 
 					// Load user_metadata_tag records

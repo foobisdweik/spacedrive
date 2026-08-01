@@ -64,6 +64,9 @@ pub struct File {
 	/// The semantic tags associated with this file
 	pub tags: Vec<Tag>,
 
+	/// Whether the file is marked as a favorite
+	pub favorite: bool,
+
 	/// A list of sidecars associated with this file
 	pub sidecars: Vec<Sidecar>,
 
@@ -479,6 +482,7 @@ impl File {
 			content_identity: None,
 			alternate_paths: Vec::new(),
 			tags: Vec::new(),
+			favorite: false,
 			sidecars: Vec::new(),
 			image_media_data: None,
 			video_media_data: None,
@@ -573,6 +577,7 @@ impl File {
 			content_identity: None,
 			alternate_paths: Vec::new(),
 			tags: Vec::new(),
+			favorite: false,
 			sidecars: Vec::new(),
 			image_media_data: None,
 			video_media_data: None,
@@ -1003,6 +1008,15 @@ impl File {
 			if let Some(tags) = tags_by_entry.get(&entry_uuid) {
 				file.tags = tags.clone();
 			}
+			file.favorite = metadata_records.iter().any(|metadata| {
+				metadata.favorite
+					&& (metadata.entry_uuid == Some(entry_uuid)
+						|| entry_model
+							.content_id
+							.and_then(|content_id| content_by_id.get(&content_id))
+							.and_then(|content| content.uuid)
+							== metadata.content_identity_uuid)
+			});
 
 			files.push(file);
 		}

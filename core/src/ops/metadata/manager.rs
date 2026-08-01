@@ -500,31 +500,56 @@ impl UserMetadataManager {
 		Ok(())
 	}
 
-	/// Set favorite status for an entry
-	pub async fn set_favorite(&self, entry_id: i32, is_favorite: bool) -> Result<(), TagError> {
+	/// Set favorite status for an indexed entry.
+	///
+	/// Returns the persisted model and whether this call created the entry-scoped
+	/// metadata record.
+	pub async fn set_favorite(
+		&self,
+		entry_uuid: Uuid,
+		is_favorite: bool,
+	) -> Result<(user_metadata::Model, bool), TagError> {
 		let db = &*self.db;
-
-		let metadata = self.get_or_create_metadata(Uuid::new_v4()).await?; // TODO: Look up actual UUID
-
-		let metadata_model = user_metadata::Entity::find()
-			.filter(user_metadata::Column::Uuid.eq(metadata.id))
+		let existing = user_metadata::Entity::find()
+			.filter(user_metadata::Column::EntryUuid.eq(entry_uuid))
 			.one(&*db)
-			.await
-			.map_err(|e| TagError::DatabaseError(e.to_string()))?
-			.ok_or(TagError::DatabaseError(
-				"UserMetadata not found".to_string(),
-			))?;
-
-		let mut active_model: user_metadata::ActiveModel = metadata_model.into();
-		active_model.favorite = Set(is_favorite);
-		active_model.updated_at = Set(Utc::now());
-
-		active_model
-			.update(&*db)
 			.await
 			.map_err(|e| TagError::DatabaseError(e.to_string()))?;
 
-		Ok(())
+		match existing {
+			Some(metadata_model) => {
+				let mut active_model: user_metadata::ActiveModel = metadata_model.into();
+				active_model.favorite = Set(is_favorite);
+				active_model.updated_at = Set(Utc::now());
+
+				let updated = active_model
+					.update(&*db)
+					.await
+					.map_err(|e| TagError::DatabaseError(e.to_string()))?;
+
+				Ok((updated, false))
+			}
+			None => {
+				let now = Utc::now();
+				let created = user_metadata::ActiveModel {
+					id: NotSet,
+					uuid: Set(Uuid::new_v4()),
+					entry_uuid: Set(Some(entry_uuid)),
+					content_identity_uuid: Set(None),
+					notes: Set(None),
+					favorite: Set(is_favorite),
+					hidden: Set(false),
+					custom_data: Set(serde_json::json!({})),
+					created_at: Set(now),
+					updated_at: Set(now),
+				}
+				.insert(&*db)
+				.await
+				.map_err(|e| TagError::DatabaseError(e.to_string()))?;
+
+				Ok((created, true))
+			}
+		}
 	}
 
 	/// Apply a single semantic tag to an entry
@@ -673,6 +698,7 @@ impl TagSource {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::path::Path;
 
 	#[tokio::test]
 	async fn test_tag_application_creation() {
@@ -686,5 +712,32 @@ mod tests {
 		let ai_app = TagApplication::ai_applied(tag_id, 0.85, device_id);
 		assert_eq!(ai_app.source, TagSource::AI);
 		assert_eq!(ai_app.confidence, 0.85);
+	}
+
+	#[tokio::test]
+	async fn set_favorite_reuses_entry_metadata() {
+		let db = crate::infra::db::Database::create(Path::new(":memory:"))
+			.await
+			.expect("create database");
+		db.migrate().await.expect("migrate database");
+
+		let manager = UserMetadataManager::new(Arc::new(db.conn().clone()));
+		let entry_uuid = Uuid::new_v4();
+
+		let (created, was_created) = manager
+			.set_favorite(entry_uuid, true)
+			.await
+			.expect("favorite entry");
+		assert!(was_created);
+		assert!(created.favorite);
+		assert_eq!(created.entry_uuid, Some(entry_uuid));
+
+		let (updated, was_created) = manager
+			.set_favorite(entry_uuid, false)
+			.await
+			.expect("unfavorite entry");
+		assert!(!was_created);
+		assert_eq!(updated.uuid, created.uuid);
+		assert!(!updated.favorite);
 	}
 }
