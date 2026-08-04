@@ -17,19 +17,35 @@ const commandExists = (command) =>
 
 /*
  * Icon art is drawn for light backgrounds: the document family's body sits
- * around #232635, which is only 1.4:1 against a true-black OLED panel — below
- * the 3:1 WCAG floor for non-text graphics before any processing runs. Darkening
- * (what this script used to do) drove those icons to 1.2:1 and they vanished.
+ * around #232635 — hsl(230, 20%, 17%), the design system's own 235° hue family
+ * at dark-theme surface lightness. On a true-black OLED panel that is 1.4:1,
+ * below the 3:1 WCAG floor for non-text graphics before any processing runs.
+ * Darkening (what this script used to do) drove it to 1.2:1 and the icons
+ * vanished outright.
  *
- * So lift the shadows instead: `+level FLOOR%,100%` maps input 0 to FLOOR and
- * leaves 1 at 1, i.e. `out = floor + in * (1 - floor)`. Dark fills clear the
- * threshold while highlights stay put, so already-bright icons (Key, Package)
- * are left essentially untouched rather than washing out.
+ * So lift instead of crush. `+level FLOOR%,100%` maps input 0 to FLOOR and holds
+ * 1 at 1, i.e. `out = floor + in * (1 - floor)`: dark fills clear the threshold
+ * while highlights stay put, so already-bright icons are left alone rather than
+ * washing out.
  *
- * 24% is the smallest floor that carries the worst case over 3:1 (document body
- * #232635 -> #585A65, 3.07:1). Raising it greys the whole set down for no gain.
+ * The channel that lift runs on matters more than the floor value:
+ *
+ *   per-RGB  lifts each channel independently, which drags the three toward each
+ *            other and desaturates. #232635 -> #585A65 clears 3:1 but collapses
+ *            hsl saturation 20% -> 7%, so the whole set reads as flat grey and
+ *            loses the 235° family identity.
+ *   HSL L    preserves hue and saturation but HSL "lightness" is not luminance —
+ *            a saturated dark blue at L=37% still carries almost none. Document
+ *            lands at 4.3% of pixels clearing 3:1. Looks right, fails the job.
+ *   LCH L    perceptual lightness, so lifting it buys real luminance while hue
+ *            and chroma ride along untouched. This is the one that satisfies
+ *            both constraints.
+ *
+ * 32% is the smallest LCH floor carrying the worst case clear of 3:1 with margin
+ * (#232635 -> #616475, 3.59:1). Verified no sRGB gamut clipping and hue held to
+ * within 1° on the bright icons (Package 34°, Key 205° -> 204°).
  */
-const SHADOW_FLOOR_PERCENT = 24;
+const LIGHTNESS_FLOOR_PERCENT = 32;
 
 const magick = commandExists('magick') ? 'magick' : null;
 const avifenc = commandExists('avifenc') ? 'avifenc' : null;
@@ -71,13 +87,17 @@ for (const folder of folders) {
 				input,
 				'-alpha',
 				'on',
+				// In ImageMagick's LCH colorspace the R channel carries
+				// perceptual lightness; chroma and hue are left untouched.
+				'-colorspace',
+				'LCH',
+				'-channel',
+				'R',
+				'+level',
+				`${LIGHTNESS_FLOOR_PERCENT}%,100%`,
+				'+channel',
 				'-colorspace',
 				'sRGB',
-				'-channel',
-				'RGB',
-				'+level',
-				`${SHADOW_FLOOR_PERCENT}%,100%`,
-				'+channel',
 				// The lift also raises RGB under fully-transparent pixels; left
 				// alone those bleed a grey halo when the browser scales the icon
 				// down, so flatten them back to black.
