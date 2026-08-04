@@ -78,15 +78,27 @@ import BookBlue from './BookBlue.png';
 import Box_OLED_HDR from './Box_OLED_HDR.avif';
 import Box_OLED from './Box_OLED.png';
 import Box from './Box.png';
+import Calendar_Light_OLED_HDR from './Calendar_Light_OLED_HDR.avif';
+import Calendar_Light_OLED from './Calendar_Light_OLED.png';
+import Calendar_Light from './Calendar_Light.png';
+import Calendar_OLED_HDR from './Calendar_OLED_HDR.avif';
+import Calendar_OLED from './Calendar_OLED.png';
+import Calendar from './Calendar.png';
 import CloudSync_Light_OLED_HDR from './CloudSync_Light_OLED_HDR.avif';
 import CloudSync_Light_OLED from './CloudSync_Light_OLED.png';
 import CloudSync_Light from './CloudSync_Light.png';
 import CloudSync_OLED_HDR from './CloudSync_OLED_HDR.avif';
 import CloudSync_OLED from './CloudSync_OLED.png';
 import CloudSync from './CloudSync.png';
+import Code_Light_OLED_HDR from './Code_Light_OLED_HDR.avif';
+import Code_Light_OLED from './Code_Light_OLED.png';
+import Code_Light from './Code_Light.png';
+import Code_OLED_HDR from './Code_OLED_HDR.avif';
+import Code_OLED from './Code_OLED.png';
 import Code20_OLED_HDR from './Code-20_OLED_HDR.avif';
 import Code20_OLED from './Code-20_OLED.png';
 import Code20 from './Code-20.png';
+import Code from './Code.png';
 import Collection_Light_OLED_HDR from './Collection_Light_OLED_HDR.avif';
 import Collection_Light_OLED from './Collection_Light_OLED.png';
 import Collection_Light from './Collection_Light.png';
@@ -105,9 +117,21 @@ import CollectionSparkle from './CollectionSparkle.png';
 import Compute_OLED_HDR from './Compute_OLED_HDR.avif';
 import Compute_OLED from './Compute_OLED.png';
 import Compute from './Compute.png';
+import Config_Light_OLED_HDR from './Config_Light_OLED_HDR.avif';
+import Config_Light_OLED from './Config_Light_OLED.png';
+import Config_Light from './Config_Light.png';
+import Config_OLED_HDR from './Config_OLED_HDR.avif';
+import Config_OLED from './Config_OLED.png';
 import Config20_OLED_HDR from './Config-20_OLED_HDR.avif';
 import Config20_OLED from './Config-20_OLED.png';
 import Config20 from './Config-20.png';
+import Config from './Config.png';
+import Contact_Light_OLED_HDR from './Contact_Light_OLED_HDR.avif';
+import Contact_Light_OLED from './Contact_Light_OLED.png';
+import Contact_Light from './Contact_Light.png';
+import Contact_OLED_HDR from './Contact_OLED_HDR.avif';
+import Contact_OLED from './Contact_OLED.png';
+import Contact from './Contact.png';
 import Database_Light_OLED_HDR from './Database_Light_OLED_HDR.avif';
 import Database_Light_OLED from './Database_Light_OLED.png';
 import Database_Light from './Database_Light.png';
@@ -237,6 +261,12 @@ import Drive from './Drive.png';
 import Dropbox_OLED_HDR from './Dropbox_OLED_HDR.avif';
 import Dropbox_OLED from './Dropbox_OLED.png';
 import Dropbox from './Dropbox.png';
+import Email_Light_OLED_HDR from './Email_Light_OLED_HDR.avif';
+import Email_Light_OLED from './Email_Light_OLED.png';
+import Email_Light from './Email_Light.png';
+import Email_OLED_HDR from './Email_OLED_HDR.avif';
+import Email_OLED from './Email_OLED.png';
+import Email from './Email.png';
 import Encrypted_Light_OLED_HDR from './Encrypted_Light_OLED_HDR.avif';
 import Encrypted_Light_OLED from './Encrypted_Light_OLED.png';
 import Encrypted_Light from './Encrypted_Light.png';
@@ -294,9 +324,15 @@ import FolderNoSpace_Light from './FolderNoSpace_Light.png';
 import FolderNoSpace_OLED_HDR from './FolderNoSpace_OLED_HDR.avif';
 import FolderNoSpace_OLED from './FolderNoSpace_OLED.png';
 import FolderNoSpace from './FolderNoSpace.png';
+import Font_Light_OLED_HDR from './Font_Light_OLED_HDR.avif';
+import Font_Light_OLED from './Font_Light_OLED.png';
+import Font_Light from './Font_Light.png';
+import Font_OLED_HDR from './Font_OLED_HDR.avif';
+import Font_OLED from './Font_OLED.png';
 import Font20_OLED_HDR from './Font-20_OLED_HDR.avif';
 import Font20_OLED from './Font-20_OLED.png';
 import Font20 from './Font-20.png';
+import Font from './Font.png';
 import Game_Light_OLED_HDR from './Game_Light_OLED_HDR.avif';
 import Game_Light_OLED from './Game_Light_OLED.png';
 import Game_Light from './Game_Light.png';
@@ -456,6 +492,12 @@ import PC from './PC.png';
 import PCloud_OLED_HDR from './PCloud_OLED_HDR.avif';
 import PCloud_OLED from './PCloud_OLED.png';
 import PCloud from './PCloud.png';
+import Presentation_Light_OLED_HDR from './Presentation_Light_OLED_HDR.avif';
+import Presentation_Light_OLED from './Presentation_Light_OLED.png';
+import Presentation_Light from './Presentation_Light.png';
+import Presentation_OLED_HDR from './Presentation_OLED_HDR.avif';
+import Presentation_OLED from './Presentation_OLED.png';
+import Presentation from './Presentation.png';
 import Scrapbook_Light_OLED_HDR from './Scrapbook_Light_OLED_HDR.avif';
 import Scrapbook_Light_OLED from './Scrapbook_Light_OLED.png';
 import Scrapbook_Light from './Scrapbook_Light.png';
@@ -507,6 +549,12 @@ import Spacedrop1_OLED_HDR from './Spacedrop-1_OLED_HDR.avif';
 import Spacedrop1_OLED from './Spacedrop-1_OLED.png';
 import Spacedrop1 from './Spacedrop-1.png';
 import Spacedrop from './Spacedrop.png';
+import Spreadsheet_Light_OLED_HDR from './Spreadsheet_Light_OLED_HDR.avif';
+import Spreadsheet_Light_OLED from './Spreadsheet_Light_OLED.png';
+import Spreadsheet_Light from './Spreadsheet_Light.png';
+import Spreadsheet_OLED_HDR from './Spreadsheet_OLED_HDR.avif';
+import Spreadsheet_OLED from './Spreadsheet_OLED.png';
+import Spreadsheet from './Spreadsheet.png';
 import Storage_OLED_HDR from './Storage_OLED_HDR.avif';
 import Storage_OLED from './Storage_OLED.png';
 import Storage from './Storage.png';
@@ -570,9 +618,15 @@ import Undefined_Light from './Undefined_Light.png';
 import Undefined_OLED_HDR from './Undefined_OLED_HDR.avif';
 import Undefined_OLED from './Undefined_OLED.png';
 import Undefined from './Undefined.png';
+import Unknown_Light_OLED_HDR from './Unknown_Light_OLED_HDR.avif';
+import Unknown_Light_OLED from './Unknown_Light_OLED.png';
+import Unknown_Light from './Unknown_Light.png';
+import Unknown_OLED_HDR from './Unknown_OLED_HDR.avif';
+import Unknown_OLED from './Unknown_OLED.png';
 import Unknown20_OLED_HDR from './Unknown-20_OLED_HDR.avif';
 import Unknown20_OLED from './Unknown-20_OLED.png';
 import Unknown20 from './Unknown-20.png';
+import Unknown from './Unknown.png';
 import Video_Light_OLED_HDR from './Video_Light_OLED_HDR.avif';
 import Video_Light_OLED from './Video_Light_OLED.png';
 import Video_Light from './Video_Light.png';
@@ -671,6 +725,12 @@ export {
 	Box,
 	Box_OLED,
 	Box_OLED_HDR,
+	Calendar,
+	Calendar_Light,
+	Calendar_Light_OLED,
+	Calendar_Light_OLED_HDR,
+	Calendar_OLED,
+	Calendar_OLED_HDR,
 	CloudSync,
 	CloudSync_Light,
 	CloudSync_Light_OLED,
@@ -680,6 +740,12 @@ export {
 	Code20,
 	Code20_OLED,
 	Code20_OLED_HDR,
+	Code,
+	Code_Light,
+	Code_Light_OLED,
+	Code_Light_OLED_HDR,
+	Code_OLED,
+	Code_OLED_HDR,
 	Collection20,
 	Collection20_OLED,
 	Collection20_OLED_HDR,
@@ -701,6 +767,18 @@ export {
 	Config20,
 	Config20_OLED,
 	Config20_OLED_HDR,
+	Config,
+	Config_Light,
+	Config_Light_OLED,
+	Config_Light_OLED_HDR,
+	Config_OLED,
+	Config_OLED_HDR,
+	Contact,
+	Contact_Light,
+	Contact_Light_OLED,
+	Contact_Light_OLED_HDR,
+	Contact_OLED,
+	Contact_OLED_HDR,
 	DAV,
 	DAV_OLED,
 	DAV_OLED_HDR,
@@ -830,6 +908,12 @@ export {
 	Dropbox,
 	Dropbox_OLED,
 	Dropbox_OLED_HDR,
+	Email,
+	Email_Light,
+	Email_Light_OLED,
+	Email_Light_OLED_HDR,
+	Email_OLED,
+	Email_OLED_HDR,
 	Encrypted20,
 	Encrypted20_OLED,
 	Encrypted20_OLED_HDR,
@@ -890,6 +974,12 @@ export {
 	Font20,
 	Font20_OLED,
 	Font20_OLED_HDR,
+	Font,
+	Font_Light,
+	Font_Light_OLED,
+	Font_Light_OLED_HDR,
+	Font_OLED,
+	Font_OLED_HDR,
 	Game,
 	Game_Light,
 	Game_Light_OLED,
@@ -1049,6 +1139,12 @@ export {
 	Package_Light_OLED_HDR,
 	Package_OLED,
 	Package_OLED_HDR,
+	Presentation,
+	Presentation_Light,
+	Presentation_Light_OLED,
+	Presentation_Light_OLED_HDR,
+	Presentation_OLED,
+	Presentation_OLED_HDR,
 	SD,
 	SD_Light,
 	SD_Light_OLED,
@@ -1100,6 +1196,12 @@ export {
 	Spacedrop_Light_OLED_HDR,
 	Spacedrop_OLED,
 	Spacedrop_OLED_HDR,
+	Spreadsheet,
+	Spreadsheet_Light,
+	Spreadsheet_Light_OLED,
+	Spreadsheet_Light_OLED_HDR,
+	Spreadsheet_OLED,
+	Spreadsheet_OLED_HDR,
 	Storage,
 	Storage_OLED,
 	Storage_OLED_HDR,
@@ -1166,6 +1268,12 @@ export {
 	Unknown20,
 	Unknown20_OLED,
 	Unknown20_OLED_HDR,
+	Unknown,
+	Unknown_Light,
+	Unknown_Light_OLED,
+	Unknown_Light_OLED_HDR,
+	Unknown_OLED,
+	Unknown_OLED_HDR,
 	Video20,
 	Video20_OLED,
 	Video20_OLED_HDR,
