@@ -1,16 +1,36 @@
+/*
+ * OLED theme — maximum-luminance text on a true-black panel.
+ *
+ * Luminance ladder
+ * ----------------
+ * CSS colors top out at HDR reference white: `color(display-p3 ...)` components
+ * outside 0–1 are gamut-mapped back into range at computed-value time, and
+ * `dynamic-range-limit` only lifts HDR *media* (images/video) into the display's
+ * headroom — it does not push text past reference white. So the brightest a font
+ * can render is reference white itself, and the tiers below climb toward it
+ * rather than beyond it. Actual nits scale with the panel's SDR white level.
+ *
+ *   --oled-ink-peak  100% — reference white, the highest configuration
+ *   --oled-ink-mid    80% — secondary text
+ *   --oled-ink-low    62% — tertiary / disabled text
+ */
 .oled-theme {
+	--oled-ink-peak: hsl(0, 0%, 100%);
+	--oled-ink-mid: hsl(0, 0%, 80%);
+	--oled-ink-low: hsl(0, 0%, 62%);
+
 	--color-accent: hsl(205, 100%, 62%);
 	--color-accent-faint: hsl(205, 100%, 70%);
 	--color-accent-deep: hsl(205, 100%, 46%);
-	--color-ink: hsl(0, 0%, 96%);
-	--color-ink-dull: hsl(0, 0%, 72%);
-	--color-ink-faint: hsl(0, 0%, 46%);
+	--color-ink: var(--oled-ink-peak);
+	--color-ink-dull: var(--oled-ink-mid);
+	--color-ink-faint: var(--oled-ink-low);
 	--color-sidebar: #000;
 	--color-sidebar-box: hsl(0, 0%, 2%);
 	--color-sidebar-line: hsl(0, 0%, 8%);
-	--color-sidebar-ink: hsl(0, 0%, 94%);
-	--color-sidebar-ink-dull: hsl(0, 0%, 68%);
-	--color-sidebar-ink-faint: hsl(0, 0%, 44%);
+	--color-sidebar-ink: var(--oled-ink-peak);
+	--color-sidebar-ink-dull: var(--oled-ink-mid);
+	--color-sidebar-ink-faint: var(--oled-ink-low);
 	--color-sidebar-divider: #000;
 	--color-sidebar-button: hsl(0, 0%, 4%);
 	--color-sidebar-selected: hsl(0, 0%, 8%);
@@ -36,10 +56,21 @@
 	--color-app-explorer-scrollbar: hsl(0, 0%, 12%);
 	--color-menu: #000;
 	--color-menu-line: hsl(0, 0%, 8%);
-	--color-menu-ink: hsl(0, 0%, 94%);
-	--color-menu-faint: hsl(0, 0%, 68%);
+	--color-menu-ink: var(--oled-ink-peak);
+	--color-menu-faint: var(--oled-ink-mid);
 	--color-menu-hover: hsl(0, 0%, 8%);
 	--color-menu-selected: hsl(0, 0%, 10%);
 	--color-menu-shade: #000;
 	color-scheme: dark;
+}
+
+/*
+ * The apps set `-webkit-font-smoothing: antialiased` on `body`, which thins
+ * glyph strokes on macOS. Against a true-black panel that reads as dimmer text,
+ * so OLED mode returns to the heavier default rendering. The theme class lands
+ * on <html>, so this has to out-specify the bare `body` rule.
+ */
+.oled-theme body {
+	-webkit-font-smoothing: auto;
+	-moz-osx-font-smoothing: auto;
 }
