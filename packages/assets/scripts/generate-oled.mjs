@@ -15,6 +15,22 @@ const commandExists = (command) =>
 	spawnSync('zsh', ['-lc', `command -v ${command}`], {stdio: 'ignore'})
 		.status === 0;
 
+/*
+ * Icon art is drawn for light backgrounds: the document family's body sits
+ * around #232635, which is only 1.4:1 against a true-black OLED panel — below
+ * the 3:1 WCAG floor for non-text graphics before any processing runs. Darkening
+ * (what this script used to do) drove those icons to 1.2:1 and they vanished.
+ *
+ * So lift the shadows instead: `+level FLOOR%,100%` maps input 0 to FLOOR and
+ * leaves 1 at 1, i.e. `out = floor + in * (1 - floor)`. Dark fills clear the
+ * threshold while highlights stay put, so already-bright icons (Key, Package)
+ * are left essentially untouched rather than washing out.
+ *
+ * 24% is the smallest floor that carries the worst case over 3:1 (document body
+ * #232635 -> #585A65, 3.07:1). Raising it greys the whole set down for no gain.
+ */
+const SHADOW_FLOOR_PERCENT = 24;
+
 const magick = commandExists('magick') ? 'magick' : null;
 const avifenc = commandExists('avifenc') ? 'avifenc' : null;
 
@@ -59,10 +75,16 @@ for (const folder of folders) {
 				'sRGB',
 				'-channel',
 				'RGB',
-				'-evaluate',
-				'multiply',
-				'0.62',
+				'+level',
+				`${SHADOW_FLOOR_PERCENT}%,100%`,
 				'+channel',
+				// The lift also raises RGB under fully-transparent pixels; left
+				// alone those bleed a grey halo when the browser scales the icon
+				// down, so flatten them back to black.
+				'-background',
+				'black',
+				'-alpha',
+				'background',
 				'PNG32:' + oledPng
 			]);
 		}
@@ -71,34 +93,31 @@ for (const folder of folders) {
 			const tmpDir = mkdtempSync(join(os.tmpdir(), 'spacedrive-oled-'));
 			const hdrPng = join(tmpDir, `${stem}.png`);
 
-			run(magick, [
-				oledPng,
-				'-alpha',
-				'on',
-				'-colorspace',
-				'RGB',
-				'-channel',
-				'RGB',
-				'-sigmoidal-contrast',
-				'4x45%',
-				'-evaluate',
-				'multiply',
-				'1.8',
-				'+channel',
-				'PNG64:' + hdrPng
-			]);
+			/*
+			 * This variant used to be tagged `--cicp 9/16/9` (BT.2020 primaries,
+			 * PQ transfer) while the pixels were only ever sigmoidal-contrasted
+			 * sRGB — nothing converted them to BT.2020 or PQ-encoded them. Players
+			 * trusted the tag, so sRGB primaries got stretched across BT.2020 and
+			 * the icons came back wrong: blues turned fluorescent, Package's tan
+			 * #F8EAD8 skewed red. On an HDR panel this is the variant actually
+			 * shown, which is why OLED mode looked worse than a plain darkening.
+			 *
+			 * Real PQ output needs a genuine linear -> BT.2020 -> ST.2084 pipeline,
+			 * which neither ImageMagick nor avifenc will do for us. Until that
+			 * exists, emit an honestly-tagged sRGB AVIF: no extra headroom, but
+			 * the colours are correct.
+			 */
+			run(magick, [oledPng, '-alpha', 'on', '-colorspace', 'sRGB', 'PNG32:' + hdrPng]);
 
 			run(avifenc, [
 				'-d',
-				'10',
+				'8',
 				'-y',
 				'444',
 				'--cicp',
-				'9/16/9',
+				'1/13/1',
 				'--range',
 				'full',
-				'--clli',
-				'1000,400',
 				'-q',
 				'90',
 				hdrPng,
