@@ -21,7 +21,10 @@ use sd_core::{
 	},
 	location::IndexMode,
 	ops::{
-		files::query::{DirectoryListingQuery, FileByIdQuery, FileByPathQuery},
+		files::query::{
+			AlternateInstancesQuery, DirectoryListingQuery, FileByIdQuery, FileByPathQuery,
+			UniqueToLocationQuery,
+		},
 		metadata::set_favorite::{action::SetFavoriteAction, input::SetFavoriteInput},
 		search::{
 			input::{
@@ -30,9 +33,14 @@ use sd_core::{
 			},
 			query::FileSearchQuery,
 		},
+		tags::{
+			apply::{action::ApplyTagsAction, input::ApplyTagsInput},
+			create::{action::CreateTagAction, input::CreateTagInput},
+			files_by_tag::{GetFilesByTagInput, GetFilesByTagQuery},
+		},
 	},
 };
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use std::path::{Path, PathBuf};
 use tokio::time::Duration;
 
@@ -75,6 +83,51 @@ async fn entry_uuid_for(harness: &IndexingHarness, name: &str) -> anyhow::Result
 	model
 		.uuid
 		.ok_or_else(|| anyhow::anyhow!("entry {name} exists but has no uuid"))
+}
+
+/// Wait until content identification has linked a content identity to `entry_uuid`.
+///
+/// Discovery inserts entries with `content_id = NULL`; a later indexing phase
+/// hashes the bytes and fills it in (only for `IndexMode >= Content`).
+/// `files.unique_to_location` joins through that column and
+/// `files.alternate_instances` refuses to run without it, so querying too early
+/// yields an empty result that looks exactly like a favorites bug. Waiting here
+/// keeps a slow content phase from being misread as a missing lookup.
+async fn wait_for_content_id(
+	harness: &IndexingHarness,
+	entry_uuid: uuid::Uuid,
+	timeout: Duration,
+) -> anyhow::Result<()> {
+	let db = harness.library.db().conn();
+	let deadline = tokio::time::Instant::now() + timeout;
+
+	loop {
+		let linked = entry::Entity::find()
+			.filter(entry::Column::Uuid.eq(entry_uuid))
+			.one(db)
+			.await?
+			.is_some_and(|model| model.content_id.is_some());
+
+		if linked {
+			return Ok(());
+		}
+
+		if tokio::time::Instant::now() >= deadline {
+			let with_content = entry::Entity::find()
+				.filter(entry::Column::ContentId.is_not_null())
+				.count(db)
+				.await?;
+			anyhow::bail!(
+				"entry {entry_uuid} still has no content_id after {timeout:?} \
+				 ({with_content} entr(ies) in the library have one). Both \
+				 files.unique_to_location and files.alternate_instances resolve files \
+				 through content identity, so neither can return this file until the \
+				 indexer's content phase has run."
+			);
+		}
+
+		tokio::time::sleep(Duration::from_millis(50)).await;
+	}
 }
 
 /// Read `favorite` for one file through every query path that exposes it.
@@ -145,6 +198,40 @@ async fn favorite_across_paths(
 		observed.push(("search.files", hit.favorite));
 	}
 
+	let unique = UniqueToLocationQuery::new(location_uuid)
+		.execute(harness.core.context.clone(), session_for(harness))
+		.await?;
+	let unique_hit = unique
+		.unique_files
+		.iter()
+		.find(|f| f.name == file_stem)
+		.ok_or_else(|| {
+			anyhow::anyhow!(
+				"{file_stem} missing from files.unique_to_location, which returned {} file(s); \
+				 the harness indexes a single location, so every file in it is unique to it",
+				unique.unique_files.len()
+			)
+		})?;
+	observed.push(("files.unique_to_location", unique_hit.favorite));
+
+	// Returns every entry sharing this file's content identity, so the file itself
+	// comes back even with no duplicates present.
+	let alternates = AlternateInstancesQuery::new(entry_uuid)
+		.execute(harness.core.context.clone(), session_for(harness))
+		.await?;
+	let alternate_hit = alternates
+		.instances
+		.iter()
+		.find(|f| f.name == file_stem)
+		.ok_or_else(|| {
+			anyhow::anyhow!(
+				"{file_stem} missing from files.alternate_instances, which returned {} \
+				 instance(s); the file must list itself among its own instances",
+				alternates.instances.len()
+			)
+		})?;
+	observed.push(("files.alternate_instances", alternate_hit.favorite));
+
 	Ok(observed)
 }
 
@@ -163,9 +250,13 @@ fn assert_all(observed: &[(&'static str, bool)], expected: bool, stage: &str) {
 		disagreeing,
 		observed
 	);
+	// Must track the number of paths in `favorite_across_paths`. Without it a path
+	// that stops returning the file drops silently out of `observed` and this test
+	// keeps passing while covering less than it claims.
 	assert!(
-		observed.len() >= 4,
-		"{stage}: only {} query paths were exercised; the coverage this test claims is not real",
+		observed.len() >= 6,
+		"{stage}: only {} query paths were exercised, expected 6; the coverage this test \
+		 claims is not real",
 		observed.len()
 	);
 }
@@ -189,6 +280,7 @@ async fn favorite_is_consistent_across_every_query_path() -> anyhow::Result<()> 
 
 	let dir = target.parent().unwrap().to_path_buf();
 	let entry_uuid = entry_uuid_for(&harness, "keeper").await?;
+	wait_for_content_id(&harness, entry_uuid, Duration::from_secs(10)).await?;
 	let action_manager = harness.core.context.get_action_manager().await.unwrap();
 	let library_id = harness.library.id();
 
@@ -288,6 +380,198 @@ async fn favoriting_one_file_does_not_favorite_its_neighbours() -> anyhow::Resul
 			file.name
 		);
 	}
+
+	harness.shutdown().await?;
+	Ok(())
+}
+
+#[tokio::test]
+async fn favorite_does_not_leak_between_content_identical_files() -> anyhow::Result<()> {
+	let harness = IndexingHarnessBuilder::new("favorite_content_identity")
+		.build()
+		.await?;
+
+	let test_location = harness.create_test_location("favorites_duplicates").await?;
+	// Byte-identical, so both entries end up on one content identity. Favorite is
+	// keyed by entry uuid but tags on this same path are resolved content-scoped,
+	// so a favorite lookup that drifted onto the content key would light up both.
+	test_location
+		.write_file("original.txt", "identical bytes")
+		.await?;
+	test_location
+		.write_file("duplicate.txt", "identical bytes")
+		.await?;
+
+	test_location.index("Duplicates", IndexMode::Deep).await?;
+	tokio::time::sleep(Duration::from_millis(500)).await;
+
+	let entry_uuid = entry_uuid_for(&harness, "original").await?;
+	wait_for_content_id(&harness, entry_uuid, Duration::from_secs(10)).await?;
+
+	let action_manager = harness.core.context.get_action_manager().await.unwrap();
+	action_manager
+		.dispatch_library(
+			Some(harness.library.id()),
+			SetFavoriteAction::from_input(SetFavoriteInput {
+				entry_uuid,
+				favorite: true,
+			})
+			.unwrap(),
+		)
+		.await?;
+
+	let alternates = AlternateInstancesQuery::new(entry_uuid)
+		.execute(harness.core.context.clone(), session_for(&harness))
+		.await?;
+
+	// Without this the per-file assertion below passes vacuously: if the two files
+	// never shared a content identity the query returns just the original, and a
+	// leak between instances could not be observed at all.
+	assert!(
+		alternates.instances.len() >= 2,
+		"files.alternate_instances returned {} instance(s); the two files have identical \
+		 bytes and must share one content identity for this test to prove anything",
+		alternates.instances.len()
+	);
+
+	for file in &alternates.instances {
+		let expected = file.name == "original";
+		assert_eq!(
+			file.favorite, expected,
+			"{} should have favorite={expected}; only the favorited entry may report true, \
+			 even though every instance here shares one content identity",
+			file.name
+		);
+	}
+
+	harness.shutdown().await?;
+	Ok(())
+}
+
+/// `files.by_tag` is the tag-sidebar's listing path.
+///
+/// It builds its `File`s from a tag join rather than a directory walk, so it
+/// resolves `favorite` through its own `File::favorite_entry_uuids` call. It
+/// can't be folded into `favorite_across_paths` because it only returns files
+/// that carry a tag, which the shared fixture deliberately doesn't set up.
+#[tokio::test]
+async fn favorite_survives_the_tag_listing_path() -> anyhow::Result<()> {
+	let harness = IndexingHarnessBuilder::new("favorite_by_tag").build().await?;
+
+	let test_location = harness.create_test_location("favorites_tagged").await?;
+	test_location.write_file("tagged.txt", "favorited and tagged").await?;
+	test_location.write_file("untagged.txt", "neither").await?;
+
+	test_location.index("Tagged", IndexMode::Deep).await?;
+	tokio::time::sleep(Duration::from_millis(500)).await;
+
+	let db = harness.library.db().conn();
+	let entry_model = entry::Entity::find()
+		.filter(entry::Column::Name.eq("tagged"))
+		.one(db)
+		.await?
+		.ok_or_else(|| anyhow::anyhow!("no indexed entry named tagged"))?;
+	let entry_uuid = entry_model
+		.uuid
+		.ok_or_else(|| anyhow::anyhow!("entry tagged exists but has no uuid"))?;
+
+	let action_manager = harness.core.context.get_action_manager().await.unwrap();
+	let library_id = harness.library.id();
+
+	let tag = action_manager
+		.dispatch_library(
+			Some(library_id),
+			CreateTagAction::from_input(CreateTagInput::simple("Keepers".to_string())).unwrap(),
+		)
+		.await?;
+
+	action_manager
+		.dispatch_library(
+			Some(library_id),
+			ApplyTagsAction::from_input(ApplyTagsInput::user_tags_entry(
+				vec![entry_model.id],
+				vec![tag.tag_id],
+			))
+			.unwrap(),
+		)
+		.await?;
+
+	// Applying a tag writes the same user_metadata row that favorite lives on, so
+	// read the flag back before setting it: if tagging alone flipped it, the
+	// assertion after favoriting would pass for the wrong reason.
+	let by_tag = |harness: &IndexingHarness| {
+		GetFilesByTagQuery::from_input(GetFilesByTagInput {
+			tag_id: tag.tag_id,
+			include_children: false,
+			min_confidence: 0.0,
+		})
+		.unwrap()
+		.execute(harness.core.context.clone(), session_for(harness))
+	};
+
+	let tagged_only = by_tag(&harness).await?;
+	let hit = tagged_only
+		.files
+		.iter()
+		.find(|f| f.name == "tagged")
+		.ok_or_else(|| {
+			anyhow::anyhow!(
+				"tagged missing from files.by_tag, which returned {} file(s); the tag was \
+				 just applied to this entry",
+				tagged_only.files.len()
+			)
+		})?;
+	assert!(
+		!hit.favorite,
+		"files.by_tag reports favorite=true before anything was favorited; applying a tag \
+		 must not set the favorite flag on the shared user_metadata row"
+	);
+
+	action_manager
+		.dispatch_library(
+			Some(library_id),
+			SetFavoriteAction::from_input(SetFavoriteInput {
+				entry_uuid,
+				favorite: true,
+			})
+			.unwrap(),
+		)
+		.await?;
+
+	let after = by_tag(&harness).await?;
+	let hit = after
+		.files
+		.iter()
+		.find(|f| f.name == "tagged")
+		.ok_or_else(|| anyhow::anyhow!("tagged disappeared from files.by_tag after favoriting"))?;
+	assert!(
+		hit.favorite,
+		"files.by_tag reports favorite=false after the flag was set; the tag sidebar would \
+		 show this file as un-favorited while every other view shows it favorited"
+	);
+
+	// Un-favoriting must propagate here too.
+	action_manager
+		.dispatch_library(
+			Some(library_id),
+			SetFavoriteAction::from_input(SetFavoriteInput {
+				entry_uuid,
+				favorite: false,
+			})
+			.unwrap(),
+		)
+		.await?;
+
+	let cleared = by_tag(&harness).await?;
+	let hit = cleared
+		.files
+		.iter()
+		.find(|f| f.name == "tagged")
+		.ok_or_else(|| anyhow::anyhow!("tagged disappeared from files.by_tag after clearing"))?;
+	assert!(
+		!hit.favorite,
+		"files.by_tag still reports favorite=true after it was cleared"
+	);
 
 	harness.shutdown().await?;
 	Ok(())
