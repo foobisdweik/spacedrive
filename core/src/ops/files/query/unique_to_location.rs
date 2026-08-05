@@ -132,12 +132,17 @@ impl UniqueToLocationQuery {
 				  AND e.kind = 0  -- Files only
 			),
 			other_locations_content AS (
-				-- Get all content hashes from other locations
+				-- Get all content hashes from other locations.
+				-- The ancestor has to be another location's root entry. Filtering on
+				-- `ec.ancestor_id != ?1` alone also matches every non-root ancestor of
+				-- our own files -- including each entry's own depth-0 closure row --
+				-- so every file looks present elsewhere and nothing is ever unique.
 				SELECT DISTINCT ci.content_hash
 				FROM content_identities ci
 				JOIN entries e ON e.content_id = ci.id
 				JOIN entry_closure ec ON ec.descendant_id = e.id
-				WHERE ec.ancestor_id != ?1
+				JOIN locations l ON l.entry_id = ec.ancestor_id
+				WHERE l.entry_id != ?1
 				  AND e.kind = 0  -- Files only
 			)
 			-- Find content hashes that are in our location but not in others
@@ -170,7 +175,7 @@ impl UniqueToLocationQuery {
 				e.name,
 				e.size,
 				e.created_at,
-				e.updated_at,
+				e.modified_at,
 				ci.content_hash,
 				ci.uuid as content_uuid
 			FROM entries e
@@ -186,11 +191,14 @@ impl UniqueToLocationQuery {
 				WHERE ec2.ancestor_id = ?1
 				  AND e2.kind = 0
 				  AND ci2.content_hash NOT IN (
+					-- Same location-root scoping as other_locations_content above;
+					-- a bare `ancestor_id != ?1` excludes every file from its own location.
 					SELECT DISTINCT ci3.content_hash
 					FROM content_identities ci3
 					JOIN entries e3 ON e3.content_id = ci3.id
 					JOIN entry_closure ec3 ON ec3.descendant_id = e3.id
-					WHERE ec3.ancestor_id != ?1
+					JOIN locations l3 ON l3.entry_id = ec3.ancestor_id
+					WHERE l3.entry_id != ?1
 					  AND e3.kind = 0
 				  )
 			  )
